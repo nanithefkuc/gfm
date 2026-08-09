@@ -1,0 +1,92 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+
+jobs:
+  check:
+    name: fmt, clippy, test, doc
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy --all-targets --all-features -- -D warnings
+      - run: cargo clippy --all-targets --no-default-features -- -D warnings
+      - run: cargo test
+      - run: cargo test --all-features
+      - name: forced-backend panel twins
+        run: |
+          for backend in v3_gfni_crypto v3 v2 v1 scalar; do
+            SIMD_BACKEND=$backend cargo test --all-features --test ple panel_widths_agree_byte_for_byte
+          done
+      - run: cargo test --all-features --test backend backend_fingerprint_is_stable
+        env:
+          SIMD_BACKEND: scalar
+      - run: cargo test --no-default-features
+      - run: cargo doc --all-features --no-deps
+        env:
+          RUSTDOCFLAGS: -D warnings
+
+  cross:
+    name: cross-build ${{ matrix.target }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [aarch64-unknown-linux-gnu, wasm32-wasip1]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - run: cargo build --target ${{ matrix.target }} --no-default-features
+
+  msrv:
+    name: msrv 1.89.0
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.89.0
+      - run: cargo build --all-features
+
+  deps:
+    name: dependency boundary
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      # fgf is always present; rayon enters only with the parallel feature.
+      # sgraph/lattica/cafft cross the stack's layering, while
+      # simdispatch/archmage are reached through fgf, never directly.
+      - name: assert dependency set
+        run: |
+          base=$(cargo tree --no-default-features --edges normal --depth 1 --prefix none --no-dedupe \
+                   | awk 'NF {print $1}' | sort -u | grep -v '^gfm$' || true)
+          all=$(cargo tree --all-features --edges normal --depth 1 --prefix none --no-dedupe \
+                   | awk 'NF {print $1}' | sort -u | grep -v '^gfm$' || true)
+          echo "base direct dependencies: ${base:-<none>}"
+          echo "all-feature direct dependencies: ${all:-<none>}"
+          if [ "$base" != "fgf" ]; then
+            echo "::error::expected only fgf without features, got: $base"
+            exit 1
+          fi
+          if [ "$all" != "$(printf 'fgf\nrayon')" ]; then
+            echo "::error::expected fgf and rayon with all features, got: $all"
+            exit 1
+          fi
+          for forbidden in sgraph lattica cafft simdispatch archmage; do
+            if echo "$all" | grep -qx "$forbidden"; then
+              echo "::error::forbidden direct dependency: $forbidden"
+              exit 1
+            fi
+          done

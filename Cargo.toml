@@ -1,0 +1,69 @@
+[package]
+name = "gfm"
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.89"
+license = "MIT"
+publish = false
+description = "Dense, structured, and hybrid sparse/dense linear algebra over GF(2) and GF(2^m)."
+repository = "https://github.com/nanithefkuc/gfm"
+readme = "README.md"
+homepage = "https://github.com/nanithefkuc/gfm"
+categories = ["algorithms", "mathematics", "no-std"]
+exclude = ["/.github"]
+
+[features]
+default = ["std", "simd"]
+std = ["fgf/std"]
+# Runtime-dispatched SIMD through fgf's kernels. Implies std: fgf's backend
+# cache is a LazyLock, and a simd-without-std combination would compile and
+# silently run scalar.
+simd = ["std", "fgf/simd"]
+# Optional symbol-axis parallelism. Off by default; the dependency must not
+# enter default or no-std builds.
+parallel = ["std", "dep:rayon"]
+# gfm's own unstable surface, for benchmarks and downstream experimentation.
+# Not a compatibility promise. Distinct from fgf's `internals`, which this
+# crate deliberately does not take.
+internals = []
+
+[dependencies]
+# Field arithmetic and packed-buffer vector kernels, pinned by rev: a
+# floating dependency is a format-break risk when the dependency feeds wire
+# bytes. Swap this rev with the other ecosystem consumers in the same sitting.
+fgf = { git = "https://github.com/nanithefkuc/fgf", rev = "d0e331cec2e6ae5645e529597fa913db467a44cd" }
+rayon = { version = "1.11", optional = true }
+
+[dev-dependencies]
+# Default features pull in plotters + rayon, which this harness does not use.
+criterion = { version = "0.8", default-features = false, features = ["cargo_bench_support"] }
+
+[[bench]]
+name = "cauchy_inverse"
+harness = false
+
+[[bench]]
+name = "hybrid"
+harness = false
+
+[[bench]]
+name = "competitors"
+harness = false
+
+[[bench]]
+name = "tuning"
+harness = false
+required-features = ["internals"]
+
+[[bench]]
+name = "parallel"
+harness = false
+required-features = ["parallel", "internals"]
+
+[profile.bench]
+lto = "thin"
+codegen-units = 1
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
