@@ -6,7 +6,11 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
-### Added
+
+- Incremental leading-position tracking in `weak_popov_basis_with_scratch`:
+  after each row reduction the schedule updates only the changed row's
+  leading-term slot instead of re-scanning every row, falling back to a
+  partial rebuild only when the target lands on a free column.
 
 - Reusable `WeakPopovScratch`, row-based `weak_popov_with_scratch`, and indexed
   `weak_popov_basis_with_scratch` storage for allocation-free repeated
