@@ -15,7 +15,7 @@
 2. **No `unsafe`.** Forbidden at the crate root. Vector kernels come from
    `fgf`.
 3. **One dependency.** `fgf`, pinned by rev. `rayon` optional and off. Adding
-   `sgraph`, `lattica`, `cafft`, `simdispatch`, or `archmage` inverts or
+   `sgraph`, `lattica`, `butterfly-fft`, `simdispatch`, or `archmage` inverts or
    crosses the stack's layering; CI fails the build.
 4. **Never re-host field arithmetic.** Call `fgf::ops` directly. Do not wrap,
    rename, or re-export it under a new name.
