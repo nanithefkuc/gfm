@@ -6,7 +6,6 @@
 //! and allocation errors stay in that type.
 
 use alloc::vec::Vec;
-use core::fmt;
 
 use fgf::FieldKernels;
 use fgf::field::Elem;
@@ -22,6 +21,37 @@ pub struct PopovLeadingTerm {
     pub column: usize,
     /// `degree + shifts[column]`.
     pub shifted_degree: usize,
+}
+/// Reusable leading-row schedule for shifted weak-Popov reduction.
+#[derive(Debug, Default)]
+pub struct WeakPopovScratch {
+    leading_rows: Vec<Option<usize>>,
+}
+
+impl WeakPopovScratch {
+    /// Construct empty reduction scratch.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            leading_rows: Vec::new(),
+        }
+    }
+
+    /// Retained schedule capacity available to a later reduction.
+    #[must_use]
+    pub fn capacity(&self) -> usize {
+        self.leading_rows.capacity()
+    }
+
+    fn prepare(&mut self, columns: usize) -> Result<(), ReduceError> {
+        if self.leading_rows.capacity() < columns {
+            self.leading_rows
+                .try_reserve_exact(columns - self.leading_rows.len())
+                .map_err(|_| ReduceError::AllocationFailed { entries: columns })?;
+        }
+        self.leading_rows.resize(columns, None);
+        Ok(())
+    }
 }
 
 /// One row accepted by [`weak_popov`].
@@ -73,39 +103,112 @@ pub trait WeakPopovRow<F: FieldKernels> {
     ) -> Result<(), Self::Error>;
 }
 
-/// Reusable per-column collision-tracking storage for
-/// [`weak_popov_with_scratch`].
+/// A polynomial basis whose rows may share one backing allocation.
 ///
-/// [`weak_popov`] needs one leading-row slot per polynomial column. Holding
-/// that buffer in a caller-owned scratch lets a consumer reduce many bases of
-/// the same width in sequence without reallocating it: a warmed scratch reduces
-/// with no `gfm`-owned allocation. The buffer is grow-only and its contents
-/// carry no state between calls.
-pub struct WeakPopovScratch {
-    leading_rows: Vec<Option<usize>>,
-}
+/// Unlike [`WeakPopovRow`], this interface identifies rows by index, allowing a
+/// consumer to expose a contiguous slab without manufacturing aliased mutable
+/// row views.
+pub trait WeakPopovBasis<F: FieldKernels> {
+    /// Consumer error type.
+    type Error: From<ReduceError>;
 
-impl WeakPopovScratch {
-    /// A fresh, empty scratch.
-    #[must_use]
-    pub const fn new() -> Self {
-        Self {
-            leading_rows: Vec::new(),
-        }
+    /// Number of basis rows.
+    fn row_count(&self) -> usize;
+
+    /// Number of polynomial columns in one row.
+    fn column_count(&self, row: usize) -> usize;
+
+    /// Degree of one polynomial column, or `None` when it is zero.
+    fn degree(&self, row: usize, column: usize) -> Option<usize>;
+
+    /// Coefficient of `X^degree` in one polynomial column.
+    fn coefficient(&self, row: usize, column: usize, degree: usize) -> F::Elem;
+
+    /// Leading term under `shifts`.
+    ///
+    /// Implementations with cached leading metadata should override this
+    /// default scan.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ReduceError::DegreeOverflow`] if a shifted degree cannot be
+    /// represented.
+    fn leading_term(
+        &self,
+        row: usize,
+        shifts: &[usize],
+    ) -> Result<Option<PopovLeadingTerm>, Self::Error> {
+        basis_leading_term::<F, Self>(self, row, shifts)
     }
+
+    /// Adds `scale * X^shift * pivot` to `target`.
+    ///
+    /// `shifts` is supplied so implementations can refresh cached leading
+    /// metadata without retaining a second copy.
+    ///
+    /// # Errors
+    ///
+    /// Returns the basis-native error when the shifted update cannot be
+    /// represented or applied.
+    fn add_scaled_shifted_assign(
+        &mut self,
+        target: usize,
+        pivot: usize,
+        scale: F::Elem,
+        shift: usize,
+        shifts: &[usize],
+    ) -> Result<(), Self::Error>;
 }
 
-impl Default for WeakPopovScratch {
-    fn default() -> Self {
-        Self::new()
+struct RowBasis<'a, R>(&'a mut [R]);
+
+impl<F, R> WeakPopovBasis<F> for RowBasis<'_, R>
+where
+    F: FieldKernels,
+    R: WeakPopovRow<F>,
+{
+    type Error = R::Error;
+
+    fn row_count(&self) -> usize {
+        self.0.len()
     }
-}
 
-impl fmt::Debug for WeakPopovScratch {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("WeakPopovScratch")
-            .field("columns", &self.leading_rows.len())
-            .finish()
+    fn column_count(&self, row: usize) -> usize {
+        self.0[row].column_count()
+    }
+
+    fn degree(&self, row: usize, column: usize) -> Option<usize> {
+        self.0[row].degree(column)
+    }
+
+    fn coefficient(&self, row: usize, column: usize, degree: usize) -> F::Elem {
+        self.0[row].coefficient(column, degree)
+    }
+
+    fn leading_term(
+        &self,
+        row: usize,
+        shifts: &[usize],
+    ) -> Result<Option<PopovLeadingTerm>, Self::Error> {
+        self.0[row].leading_term(shifts)
+    }
+
+    fn add_scaled_shifted_assign(
+        &mut self,
+        target: usize,
+        pivot: usize,
+        scale: F::Elem,
+        shift: usize,
+        _shifts: &[usize],
+    ) -> Result<(), Self::Error> {
+        let (target_row, pivot_row) = if target < pivot {
+            let (lower, upper) = self.0.split_at_mut(pivot);
+            (&mut lower[target], &upper[0])
+        } else {
+            let (lower, upper) = self.0.split_at_mut(target);
+            (&mut upper[0], &lower[pivot])
+        };
+        target_row.add_scaled_shifted_assign(scale, pivot_row, shift)
     }
 }
 
@@ -114,43 +217,24 @@ impl fmt::Debug for WeakPopovScratch {
 ///
 /// `shifts[column]` is added to every degree in that polynomial column. Ties in
 /// shifted degree choose the larger column, making the result deterministic.
-/// The iteration ceiling is the initial sum of
-/// `columns * shifted_degree + leading_column + 1`: every valid row reduction
-/// strictly decreases that measure, so reaching the ceiling signals a broken
-/// row implementation rather than a difficult input.
 ///
 /// # Errors
 ///
-/// Returns the row's native error, [`ReduceError::ShiftCount`] for a shape
-/// mismatch, [`ReduceError::DegreeOverflow`] when a shifted degree cannot be
-/// represented, or [`ReduceError::Diverged`] if a row update fails to decrease
-/// the termination measure.
+/// Returns the row's native error or a checked reduction error.
 pub fn weak_popov<F, R>(basis: &mut [R], shifts: &[usize]) -> Result<(), R::Error>
 where
     F: FieldKernels,
     R: WeakPopovRow<F>,
 {
-    let mut scratch = WeakPopovScratch::new();
-    weak_popov_with_scratch::<F, R>(basis, shifts, &mut scratch)
+    weak_popov_with_scratch::<F, R>(basis, shifts, &mut WeakPopovScratch::new())
 }
 
-/// Reduces `basis` to shifted weak Popov form, reusing `scratch` for the
-/// per-column collision-tracking buffer.
-///
-/// This is identical in behavior and result to [`weak_popov`]; the only
-/// difference is that the one buffer the reducer owns is taken from `scratch`
-/// instead of allocated per call. Reusing a single scratch across reductions of
-/// the same column count therefore performs no `gfm`-owned allocation after the
-/// first, which lets a consumer reduce a stream of equally shaped bases in a
-/// zero-allocation steady state. Consumer row updates still allocate through the
-/// [`WeakPopovRow`] implementation.
+/// Reduces row objects to shifted weak Popov form using caller-owned schedule
+/// storage.
 ///
 /// # Errors
 ///
-/// Returns the row's native error, [`ReduceError::ShiftCount`] for a shape
-/// mismatch, [`ReduceError::DegreeOverflow`] when a shifted degree cannot be
-/// represented, or [`ReduceError::Diverged`] if a row update fails to decrease
-/// the termination measure.
+/// Returns the same errors as [`weak_popov`].
 pub fn weak_popov_with_scratch<F, R>(
     basis: &mut [R],
     shifts: &[usize],
@@ -160,9 +244,29 @@ where
     F: FieldKernels,
     R: WeakPopovRow<F>,
 {
+    weak_popov_basis_with_scratch::<F, _>(&mut RowBasis(basis), shifts, scratch)
+}
+
+/// Reduces an indexed, potentially slab-backed basis to shifted weak Popov form
+/// using caller-owned schedule storage.
+///
+/// # Errors
+///
+/// Returns [`ReduceError::ShiftCount`] for a shape mismatch,
+/// [`ReduceError::DegreeOverflow`] for unrepresentable shifted degrees,
+/// [`ReduceError::Diverged`] for a broken non-decreasing row update, or the
+/// basis-native update error.
+pub fn weak_popov_basis_with_scratch<F, B>(
+    basis: &mut B,
+    shifts: &[usize],
+    scratch: &mut WeakPopovScratch,
+) -> Result<(), B::Error>
+where
+    F: FieldKernels,
+    B: WeakPopovBasis<F> + ?Sized,
+{
     let columns = shifts.len();
-    scratch.leading_rows.clear();
-    scratch.leading_rows.resize(columns, None);
+    scratch.prepare(columns).map_err(B::Error::from)?;
     let leading_rows = &mut scratch.leading_rows;
     let mut ceiling = 0usize;
     let mut iterations = 0usize;
@@ -170,9 +274,9 @@ where
         let initial_scan = iterations == 0;
         leading_rows.fill(None);
         let mut collision = None;
-        for (row, polynomial) in basis.iter().enumerate() {
+        for row in 0..basis.row_count() {
             if initial_scan {
-                let row_columns = polynomial.column_count();
+                let row_columns = basis.column_count(row);
                 if row_columns > columns {
                     return Err(ReduceError::ShiftCount {
                         columns: row_columns,
@@ -181,7 +285,7 @@ where
                     .into());
                 }
             }
-            let Some(leading) = polynomial.leading_term(shifts)? else {
+            let Some(leading) = basis.leading_term(row, shifts)? else {
                 continue;
             };
             if initial_scan {
@@ -213,9 +317,40 @@ where
             }
             .into());
         }
-        reduce_pair::<F, R>(basis, left, right, shifts)?;
+        reduce_basis_pair::<F, B>(basis, left, right, shifts)?;
         iterations += 1;
     }
+}
+
+fn basis_leading_term<F, B>(
+    basis: &B,
+    row: usize,
+    shifts: &[usize],
+) -> Result<Option<PopovLeadingTerm>, B::Error>
+where
+    F: FieldKernels,
+    B: WeakPopovBasis<F> + ?Sized,
+{
+    let mut leading = None;
+    for (column, &shift) in shifts.iter().enumerate() {
+        let Some(degree) = basis.degree(row, column) else {
+            continue;
+        };
+        let shifted_degree = degree
+            .checked_add(shift)
+            .ok_or(ReduceError::DegreeOverflow { degree, shift })?;
+        let candidate = PopovLeadingTerm {
+            degree,
+            column,
+            shifted_degree,
+        };
+        if leading.is_none_or(|current: PopovLeadingTerm| {
+            (candidate.shifted_degree, candidate.column) > (current.shifted_degree, current.column)
+        }) {
+            leading = Some(candidate);
+        }
+    }
+    Ok(leading)
 }
 
 fn leading_term<F, R>(row: &R, shifts: &[usize]) -> Result<Option<PopovLeadingTerm>, R::Error>
@@ -245,21 +380,21 @@ where
     Ok(leading)
 }
 
-fn reduce_pair<F, R>(
-    basis: &mut [R],
+fn reduce_basis_pair<F, B>(
+    basis: &mut B,
     left: usize,
     right: usize,
     shifts: &[usize],
-) -> Result<(), R::Error>
+) -> Result<(), B::Error>
 where
     F: FieldKernels,
-    R: WeakPopovRow<F>,
+    B: WeakPopovBasis<F> + ?Sized,
 {
-    let left_leading = basis[left]
-        .leading_term(shifts)?
+    let left_leading = basis
+        .leading_term(left, shifts)?
         .expect("a colliding row has a leading term");
-    let right_leading = basis[right]
-        .leading_term(shifts)?
+    let right_leading = basis
+        .leading_term(right, shifts)?
         .expect("a colliding row has a leading term");
     let (target, pivot, target_leading, pivot_leading) =
         if left_leading.degree >= right_leading.degree {
@@ -268,18 +403,11 @@ where
             (right, left, right_leading, left_leading)
         };
     let target_coefficient =
-        basis[target].coefficient(target_leading.column, target_leading.degree);
-    let pivot_coefficient = basis[pivot].coefficient(pivot_leading.column, pivot_leading.degree);
+        basis.coefficient(target, target_leading.column, target_leading.degree);
+    let pivot_coefficient = basis.coefficient(pivot, pivot_leading.column, pivot_leading.degree);
     let scale = target_coefficient.mul(pivot_coefficient.inv());
     let shift = target_leading.degree - pivot_leading.degree;
-    let (target_row, pivot_row) = if target < pivot {
-        let (lower, upper) = basis.split_at_mut(pivot);
-        (&mut lower[target], &upper[0])
-    } else {
-        let (lower, upper) = basis.split_at_mut(target);
-        (&mut upper[0], &lower[pivot])
-    };
-    target_row.add_scaled_shifted_assign(scale, pivot_row, shift)
+    basis.add_scaled_shifted_assign(target, pivot, scale, shift, shifts)
 }
 
 #[cfg(test)]
@@ -351,6 +479,19 @@ mod tests {
             update,
         }
     }
+    #[test]
+    fn caller_scratch_reuses_leading_row_storage() {
+        let mut scratch = WeakPopovScratch::new();
+        let mut first = [row(&[&[0, 1], &[1]], true), row(&[&[1], &[]], true)];
+        weak_popov_with_scratch::<Gf8, _>(&mut first, &[0, 0], &mut scratch).unwrap();
+        let capacity = scratch.capacity();
+
+        let mut second = [row(&[&[0, 1], &[1]], true), row(&[&[1], &[]], true)];
+        weak_popov_with_scratch::<Gf8, _>(&mut second, &[0, 0], &mut scratch).unwrap();
+
+        assert_eq!(scratch.capacity(), capacity);
+        assert!(capacity >= 2);
+    }
 
     #[test]
     fn resolves_leading_position_collision() {
@@ -378,28 +519,13 @@ mod tests {
     }
 
     #[test]
-    fn scratch_variant_matches_plain_and_reuses_across_bases() {
-        let leading_columns = |basis: &[Row]| -> Vec<usize> {
-            basis
-                .iter()
-                .filter_map(|row| leading_term::<Gf8, _>(row, &[0, 0]).unwrap())
-                .map(|term| term.column)
-                .collect()
-        };
-
-        let mut plain = [row(&[&[0, 1], &[1]], true), row(&[&[1], &[]], true)];
-        weak_popov::<Gf8, _>(&mut plain, &[0, 0]).unwrap();
-
+    fn impossible_cold_scratch_reservation_is_checked() {
         let mut scratch = WeakPopovScratch::new();
-        let mut scratched = [row(&[&[0, 1], &[1]], true), row(&[&[1], &[]], true)];
-        weak_popov_with_scratch::<Gf8, _>(&mut scratched, &[0, 0], &mut scratch).unwrap();
-        assert_eq!(leading_columns(&scratched), leading_columns(&plain));
-
-        // The same scratch reduces a second basis of the same column count.
-        let mut second = [row(&[&[1, 1], &[1]], true), row(&[&[0, 1], &[1]], true)];
-        weak_popov_with_scratch::<Gf8, _>(&mut second, &[0, 0], &mut scratch).unwrap();
-        let mut second_plain = [row(&[&[1, 1], &[1]], true), row(&[&[0, 1], &[1]], true)];
-        weak_popov::<Gf8, _>(&mut second_plain, &[0, 0]).unwrap();
-        assert_eq!(leading_columns(&second), leading_columns(&second_plain));
+        assert_eq!(
+            scratch.prepare(usize::MAX),
+            Err(ReduceError::AllocationFailed {
+                entries: usize::MAX
+            })
+        );
     }
 }
