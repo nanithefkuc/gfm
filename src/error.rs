@@ -150,6 +150,11 @@ pub enum ReduceError {
         /// Shift assigned to that polynomial column.
         shift: usize,
     },
+    /// Storage for the leading-row schedule could not be reserved.
+    AllocationFailed {
+        /// Number of schedule entries requested.
+        entries: usize,
+    },
 }
 
 impl fmt::Display for ReduceError {
@@ -170,6 +175,12 @@ impl fmt::Display for ReduceError {
                 f,
                 "shifted polynomial degree overflows usize: {degree} + {shift}"
             ),
+            Self::AllocationFailed { entries } => {
+                write!(
+                    f,
+                    "failed to reserve {entries} polynomial reduction entries"
+                )
+            }
         }
     }
 }
