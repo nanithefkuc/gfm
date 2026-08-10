@@ -14,6 +14,7 @@
 
 mod common;
 
+#[cfg(any(gfm_flint, gfm_m4ri, gfm_m4rie, gfm_fflas))]
 use common::{draw, noise};
 
 #[cfg(not(gfm_flint))]
