@@ -103,22 +103,124 @@ pub trait WeakPopovRow<F: FieldKernels> {
     ) -> Result<(), Self::Error>;
 }
 
+/// A polynomial basis whose rows may share one backing allocation.
+///
+/// Unlike [`WeakPopovRow`], this interface identifies rows by index, allowing a
+/// consumer to expose a contiguous slab without manufacturing aliased mutable
+/// row views.
+pub trait WeakPopovBasis<F: FieldKernels> {
+    /// Consumer error type.
+    type Error: From<ReduceError>;
+
+    /// Number of basis rows.
+    fn row_count(&self) -> usize;
+
+    /// Number of polynomial columns in one row.
+    fn column_count(&self, row: usize) -> usize;
+
+    /// Degree of one polynomial column, or `None` when it is zero.
+    fn degree(&self, row: usize, column: usize) -> Option<usize>;
+
+    /// Coefficient of `X^degree` in one polynomial column.
+    fn coefficient(&self, row: usize, column: usize, degree: usize) -> F::Elem;
+
+    /// Leading term under `shifts`.
+    ///
+    /// Implementations with cached leading metadata should override this
+    /// default scan.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ReduceError::DegreeOverflow`] if a shifted degree cannot be
+    /// represented.
+    fn leading_term(
+        &self,
+        row: usize,
+        shifts: &[usize],
+    ) -> Result<Option<PopovLeadingTerm>, Self::Error> {
+        basis_leading_term::<F, Self>(self, row, shifts)
+    }
+
+    /// Adds `scale * X^shift * pivot` to `target`.
+    ///
+    /// `shifts` is supplied so implementations can refresh cached leading
+    /// metadata without retaining a second copy.
+    ///
+    /// # Errors
+    ///
+    /// Returns the basis-native error when the shifted update cannot be
+    /// represented or applied.
+    fn add_scaled_shifted_assign(
+        &mut self,
+        target: usize,
+        pivot: usize,
+        scale: F::Elem,
+        shift: usize,
+        shifts: &[usize],
+    ) -> Result<(), Self::Error>;
+}
+
+struct RowBasis<'a, R>(&'a mut [R]);
+
+impl<F, R> WeakPopovBasis<F> for RowBasis<'_, R>
+where
+    F: FieldKernels,
+    R: WeakPopovRow<F>,
+{
+    type Error = R::Error;
+
+    fn row_count(&self) -> usize {
+        self.0.len()
+    }
+
+    fn column_count(&self, row: usize) -> usize {
+        self.0[row].column_count()
+    }
+
+    fn degree(&self, row: usize, column: usize) -> Option<usize> {
+        self.0[row].degree(column)
+    }
+
+    fn coefficient(&self, row: usize, column: usize, degree: usize) -> F::Elem {
+        self.0[row].coefficient(column, degree)
+    }
+
+    fn leading_term(
+        &self,
+        row: usize,
+        shifts: &[usize],
+    ) -> Result<Option<PopovLeadingTerm>, Self::Error> {
+        self.0[row].leading_term(shifts)
+    }
+
+    fn add_scaled_shifted_assign(
+        &mut self,
+        target: usize,
+        pivot: usize,
+        scale: F::Elem,
+        shift: usize,
+        _shifts: &[usize],
+    ) -> Result<(), Self::Error> {
+        let (target_row, pivot_row) = if target < pivot {
+            let (lower, upper) = self.0.split_at_mut(pivot);
+            (&mut lower[target], &upper[0])
+        } else {
+            let (lower, upper) = self.0.split_at_mut(target);
+            (&mut upper[0], &lower[pivot])
+        };
+        target_row.add_scaled_shifted_assign(scale, pivot_row, shift)
+    }
+}
+
 /// Reduces `basis` to shifted weak Popov form with Mulders–Storjohann row
 /// reductions.
 ///
 /// `shifts[column]` is added to every degree in that polynomial column. Ties in
 /// shifted degree choose the larger column, making the result deterministic.
-/// The iteration ceiling is the initial sum of
-/// `columns * shifted_degree + leading_column + 1`: every valid row reduction
-/// strictly decreases that measure, so reaching the ceiling signals a broken
-/// row implementation rather than a difficult input.
 ///
 /// # Errors
 ///
-/// Returns the row's native error, [`ReduceError::ShiftCount`] for a shape
-/// mismatch, [`ReduceError::DegreeOverflow`] when a shifted degree cannot be
-/// represented, or [`ReduceError::Diverged`] if a row update fails to decrease
-/// the termination measure.
+/// Returns the row's native error or a checked reduction error.
 pub fn weak_popov<F, R>(basis: &mut [R], shifts: &[usize]) -> Result<(), R::Error>
 where
     F: FieldKernels,
@@ -127,16 +229,12 @@ where
     weak_popov_with_scratch::<F, R>(basis, shifts, &mut WeakPopovScratch::new())
 }
 
-/// Reduces `basis` to shifted weak Popov form using caller-owned schedule
+/// Reduces row objects to shifted weak Popov form using caller-owned schedule
 /// storage.
-///
-/// Reusing the same scratch avoids schedule allocation after its capacity has
-/// reached the shift count.
 ///
 /// # Errors
 ///
-/// Returns the same shape, degree, termination, allocation, and row-native
-/// errors as [`weak_popov`].
+/// Returns the same errors as [`weak_popov`].
 pub fn weak_popov_with_scratch<F, R>(
     basis: &mut [R],
     shifts: &[usize],
@@ -146,8 +244,29 @@ where
     F: FieldKernels,
     R: WeakPopovRow<F>,
 {
+    weak_popov_basis_with_scratch::<F, _>(&mut RowBasis(basis), shifts, scratch)
+}
+
+/// Reduces an indexed, potentially slab-backed basis to shifted weak Popov form
+/// using caller-owned schedule storage.
+///
+/// # Errors
+///
+/// Returns [`ReduceError::ShiftCount`] for a shape mismatch,
+/// [`ReduceError::DegreeOverflow`] for unrepresentable shifted degrees,
+/// [`ReduceError::Diverged`] for a broken non-decreasing row update, or the
+/// basis-native update error.
+pub fn weak_popov_basis_with_scratch<F, B>(
+    basis: &mut B,
+    shifts: &[usize],
+    scratch: &mut WeakPopovScratch,
+) -> Result<(), B::Error>
+where
+    F: FieldKernels,
+    B: WeakPopovBasis<F> + ?Sized,
+{
     let columns = shifts.len();
-    scratch.prepare(columns).map_err(R::Error::from)?;
+    scratch.prepare(columns).map_err(B::Error::from)?;
     let leading_rows = &mut scratch.leading_rows;
     let mut ceiling = 0usize;
     let mut iterations = 0usize;
@@ -155,9 +274,9 @@ where
         let initial_scan = iterations == 0;
         leading_rows.fill(None);
         let mut collision = None;
-        for (row, polynomial) in basis.iter().enumerate() {
+        for row in 0..basis.row_count() {
             if initial_scan {
-                let row_columns = polynomial.column_count();
+                let row_columns = basis.column_count(row);
                 if row_columns > columns {
                     return Err(ReduceError::ShiftCount {
                         columns: row_columns,
@@ -166,7 +285,7 @@ where
                     .into());
                 }
             }
-            let Some(leading) = polynomial.leading_term(shifts)? else {
+            let Some(leading) = basis.leading_term(row, shifts)? else {
                 continue;
             };
             if initial_scan {
@@ -198,9 +317,40 @@ where
             }
             .into());
         }
-        reduce_pair::<F, R>(basis, left, right, shifts)?;
+        reduce_basis_pair::<F, B>(basis, left, right, shifts)?;
         iterations += 1;
     }
+}
+
+fn basis_leading_term<F, B>(
+    basis: &B,
+    row: usize,
+    shifts: &[usize],
+) -> Result<Option<PopovLeadingTerm>, B::Error>
+where
+    F: FieldKernels,
+    B: WeakPopovBasis<F> + ?Sized,
+{
+    let mut leading = None;
+    for (column, &shift) in shifts.iter().enumerate() {
+        let Some(degree) = basis.degree(row, column) else {
+            continue;
+        };
+        let shifted_degree = degree
+            .checked_add(shift)
+            .ok_or(ReduceError::DegreeOverflow { degree, shift })?;
+        let candidate = PopovLeadingTerm {
+            degree,
+            column,
+            shifted_degree,
+        };
+        if leading.is_none_or(|current: PopovLeadingTerm| {
+            (candidate.shifted_degree, candidate.column) > (current.shifted_degree, current.column)
+        }) {
+            leading = Some(candidate);
+        }
+    }
+    Ok(leading)
 }
 
 fn leading_term<F, R>(row: &R, shifts: &[usize]) -> Result<Option<PopovLeadingTerm>, R::Error>
@@ -230,21 +380,21 @@ where
     Ok(leading)
 }
 
-fn reduce_pair<F, R>(
-    basis: &mut [R],
+fn reduce_basis_pair<F, B>(
+    basis: &mut B,
     left: usize,
     right: usize,
     shifts: &[usize],
-) -> Result<(), R::Error>
+) -> Result<(), B::Error>
 where
     F: FieldKernels,
-    R: WeakPopovRow<F>,
+    B: WeakPopovBasis<F> + ?Sized,
 {
-    let left_leading = basis[left]
-        .leading_term(shifts)?
+    let left_leading = basis
+        .leading_term(left, shifts)?
         .expect("a colliding row has a leading term");
-    let right_leading = basis[right]
-        .leading_term(shifts)?
+    let right_leading = basis
+        .leading_term(right, shifts)?
         .expect("a colliding row has a leading term");
     let (target, pivot, target_leading, pivot_leading) =
         if left_leading.degree >= right_leading.degree {
@@ -253,18 +403,11 @@ where
             (right, left, right_leading, left_leading)
         };
     let target_coefficient =
-        basis[target].coefficient(target_leading.column, target_leading.degree);
-    let pivot_coefficient = basis[pivot].coefficient(pivot_leading.column, pivot_leading.degree);
+        basis.coefficient(target, target_leading.column, target_leading.degree);
+    let pivot_coefficient = basis.coefficient(pivot, pivot_leading.column, pivot_leading.degree);
     let scale = target_coefficient.mul(pivot_coefficient.inv());
     let shift = target_leading.degree - pivot_leading.degree;
-    let (target_row, pivot_row) = if target < pivot {
-        let (lower, upper) = basis.split_at_mut(pivot);
-        (&mut lower[target], &upper[0])
-    } else {
-        let (lower, upper) = basis.split_at_mut(target);
-        (&mut upper[0], &lower[pivot])
-    };
-    target_row.add_scaled_shifted_assign(scale, pivot_row, shift)
+    basis.add_scaled_shifted_assign(target, pivot, scale, shift, shifts)
 }
 
 #[cfg(test)]
