@@ -270,43 +270,40 @@ where
     let leading_rows = &mut scratch.leading_rows;
     let mut ceiling = 0usize;
     let mut iterations = 0usize;
-    loop {
-        let initial_scan = iterations == 0;
-        leading_rows.fill(None);
-        let mut collision = None;
-        for row in 0..basis.row_count() {
-            if initial_scan {
-                let row_columns = basis.column_count(row);
-                if row_columns > columns {
-                    return Err(ReduceError::ShiftCount {
-                        columns: row_columns,
-                        shifts: columns,
-                    }
-                    .into());
-                }
+
+    // First pass: scan every row once, build the leading-position map, and
+    // compute the termination ceiling. Subsequent iterations update only the
+    // slot of the row that changed, avoiding a full rescan per reduction.
+    leading_rows.fill(None);
+    let mut collision = None;
+    for row in 0..basis.row_count() {
+        let row_columns = basis.column_count(row);
+        if row_columns > columns {
+            return Err(ReduceError::ShiftCount {
+                columns: row_columns,
+                shifts: columns,
             }
-            let Some(leading) = basis.leading_term(row, shifts)? else {
-                continue;
-            };
-            if initial_scan {
-                let measure = columns
-                    .saturating_mul(leading.shifted_degree)
-                    .saturating_add(leading.column)
-                    .saturating_add(1);
-                ceiling = ceiling.saturating_add(measure);
-            }
-            if collision.is_some() {
-                continue;
-            }
-            if let Some(previous) = leading_rows[leading.column] {
-                collision = Some((previous, row));
-                if !initial_scan {
-                    break;
-                }
-            } else {
-                leading_rows[leading.column] = Some(row);
-            }
+            .into());
         }
+        let Some(leading) = basis.leading_term(row, shifts)? else {
+            continue;
+        };
+        let measure = columns
+            .saturating_mul(leading.shifted_degree)
+            .saturating_add(leading.column)
+            .saturating_add(1);
+        ceiling = ceiling.saturating_add(measure);
+        if collision.is_some() {
+            continue;
+        }
+        if let Some(previous) = leading_rows[leading.column] {
+            collision = Some((previous, row));
+        } else {
+            leading_rows[leading.column] = Some(row);
+        }
+    }
+
+    loop {
         let Some((left, right)) = collision else {
             return Ok(());
         };
@@ -317,9 +314,56 @@ where
             }
             .into());
         }
-        reduce_basis_pair::<F, B>(basis, left, right, shifts)?;
+        let target = reduce_basis_pair::<F, B>(basis, left, right, shifts)?;
         iterations += 1;
+
+        // Only the target row changed; recompute its leading term and update
+        // its slot. Clear the target's old column slot first, then insert the
+        // new leading term. If the new column already holds another row, that
+        // is the next collision — no full rescan needed.
+        if let Some(old_column) = basis_leading_column_at(leading_rows, target) {
+            leading_rows[old_column] = None;
+        }
+        let new_leading = basis.leading_term(target, shifts)?;
+        collision = match new_leading {
+            None => None,
+            Some(leading) => {
+                if let Some(other) = leading_rows[leading.column] {
+                    Some((other, target))
+                } else {
+                    leading_rows[leading.column] = Some(target);
+                    None
+                }
+            }
+        };
+        if collision.is_some() {
+            continue;
+        }
+
+        // The target landed on a free column. Re-scan for any remaining
+        // collision among the other rows. This refills slots that the target
+        // vacated, so it is a partial rebuild rather than the full rescan the
+        // previous implementation performed every iteration.
+        for row in 0..basis.row_count() {
+            let Some(leading) = basis.leading_term(row, shifts)? else {
+                continue;
+            };
+            if leading_rows[leading.column] == Some(row) {
+                continue;
+            }
+            if let Some(previous) = leading_rows[leading.column] {
+                collision = Some((previous, row));
+                break;
+            }
+            leading_rows[leading.column] = Some(row);
+        }
     }
+}
+
+/// Return the column index whose slot in `leading_rows` points at `target`,
+/// if any.
+fn basis_leading_column_at(leading_rows: &[Option<usize>], target: usize) -> Option<usize> {
+    leading_rows.iter().position(|slot| *slot == Some(target))
 }
 
 fn basis_leading_term<F, B>(
@@ -385,7 +429,7 @@ fn reduce_basis_pair<F, B>(
     left: usize,
     right: usize,
     shifts: &[usize],
-) -> Result<(), B::Error>
+) -> Result<usize, B::Error>
 where
     F: FieldKernels,
     B: WeakPopovBasis<F> + ?Sized,
@@ -407,7 +451,8 @@ where
     let pivot_coefficient = basis.coefficient(pivot, pivot_leading.column, pivot_leading.degree);
     let scale = target_coefficient.mul(pivot_coefficient.inv());
     let shift = target_leading.degree - pivot_leading.degree;
-    basis.add_scaled_shifted_assign(target, pivot, scale, shift, shifts)
+    basis.add_scaled_shifted_assign(target, pivot, scale, shift, shifts)?;
+    Ok(target)
 }
 
 #[cfg(test)]
