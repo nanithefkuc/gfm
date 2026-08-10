@@ -7,6 +7,12 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- Reusable weak-Popov reduction scratch. `weak_popov_with_scratch` reduces a
+  basis to shifted weak Popov form using a caller-owned `WeakPopovScratch` for
+  the per-column collision buffer; `weak_popov` is unchanged and delegates to it
+  with a fresh scratch. Reusing one scratch across reductions of the same column
+  count performs no `gfm`-owned allocation after the first, so a consumer can
+  reduce a stream of equally shaped bases in a zero-allocation steady state.
 
 - The streaming accumulator. `Echelon<F>` absorbs one equation at a time,
   returning an `Innovation` verdict (`Innovative { pivot }` / `Dependent` /
