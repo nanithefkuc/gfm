@@ -5,7 +5,7 @@
 //! Consumers implement [`WeakPopovRow`] for their row type; coefficient storage
 //! and allocation errors stay in that type.
 
-use alloc::vec;
+use alloc::vec::Vec;
 
 use fgf::FieldKernels;
 use fgf::field::Elem;
@@ -21,6 +21,37 @@ pub struct PopovLeadingTerm {
     pub column: usize,
     /// `degree + shifts[column]`.
     pub shifted_degree: usize,
+}
+/// Reusable leading-row schedule for shifted weak-Popov reduction.
+#[derive(Debug, Default)]
+pub struct WeakPopovScratch {
+    leading_rows: Vec<Option<usize>>,
+}
+
+impl WeakPopovScratch {
+    /// Construct empty reduction scratch.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            leading_rows: Vec::new(),
+        }
+    }
+
+    /// Retained schedule capacity available to a later reduction.
+    #[must_use]
+    pub fn capacity(&self) -> usize {
+        self.leading_rows.capacity()
+    }
+
+    fn prepare(&mut self, columns: usize) -> Result<(), ReduceError> {
+        if self.leading_rows.capacity() < columns {
+            self.leading_rows
+                .try_reserve_exact(columns - self.leading_rows.len())
+                .map_err(|_| ReduceError::AllocationFailed { entries: columns })?;
+        }
+        self.leading_rows.resize(columns, None);
+        Ok(())
+    }
 }
 
 /// One row accepted by [`weak_popov`].
@@ -93,8 +124,31 @@ where
     F: FieldKernels,
     R: WeakPopovRow<F>,
 {
+    weak_popov_with_scratch::<F, R>(basis, shifts, &mut WeakPopovScratch::new())
+}
+
+/// Reduces `basis` to shifted weak Popov form using caller-owned schedule
+/// storage.
+///
+/// Reusing the same scratch avoids schedule allocation after its capacity has
+/// reached the shift count.
+///
+/// # Errors
+///
+/// Returns the same shape, degree, termination, allocation, and row-native
+/// errors as [`weak_popov`].
+pub fn weak_popov_with_scratch<F, R>(
+    basis: &mut [R],
+    shifts: &[usize],
+    scratch: &mut WeakPopovScratch,
+) -> Result<(), R::Error>
+where
+    F: FieldKernels,
+    R: WeakPopovRow<F>,
+{
     let columns = shifts.len();
-    let mut leading_rows = vec![None; columns];
+    scratch.prepare(columns).map_err(R::Error::from)?;
+    let leading_rows = &mut scratch.leading_rows;
     let mut ceiling = 0usize;
     let mut iterations = 0usize;
     loop {
@@ -282,6 +336,19 @@ mod tests {
             update,
         }
     }
+    #[test]
+    fn caller_scratch_reuses_leading_row_storage() {
+        let mut scratch = WeakPopovScratch::new();
+        let mut first = [row(&[&[0, 1], &[1]], true), row(&[&[1], &[]], true)];
+        weak_popov_with_scratch::<Gf8, _>(&mut first, &[0, 0], &mut scratch).unwrap();
+        let capacity = scratch.capacity();
+
+        let mut second = [row(&[&[0, 1], &[1]], true), row(&[&[1], &[]], true)];
+        weak_popov_with_scratch::<Gf8, _>(&mut second, &[0, 0], &mut scratch).unwrap();
+
+        assert_eq!(scratch.capacity(), capacity);
+        assert!(capacity >= 2);
+    }
 
     #[test]
     fn resolves_leading_position_collision() {
@@ -306,5 +373,16 @@ mod tests {
             weak_popov::<Gf8, _>(&mut basis, &[0, 0]),
             Err(ReduceError::Diverged { .. })
         ));
+    }
+
+    #[test]
+    fn impossible_cold_scratch_reservation_is_checked() {
+        let mut scratch = WeakPopovScratch::new();
+        assert_eq!(
+            scratch.prepare(usize::MAX),
+            Err(ReduceError::AllocationFailed {
+                entries: usize::MAX
+            })
+        );
     }
 }

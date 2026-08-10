@@ -8,6 +8,9 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- Reusable `WeakPopovScratch` and `weak_popov_with_scratch` storage for
+  allocation-free repeated polynomial-module reduction.
+
 - The streaming accumulator. `Echelon<F>` absorbs one equation at a time,
   returning an `Innovation` verdict (`Innovative { pivot }` / `Dependent` /
   `Inconsistent`), maintaining rank and — with its `reduced` flag —
