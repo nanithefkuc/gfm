@@ -5,7 +5,8 @@
 //! Consumers implement [`WeakPopovRow`] for their row type; coefficient storage
 //! and allocation errors stay in that type.
 
-use alloc::vec;
+use alloc::vec::Vec;
+use core::fmt;
 
 use fgf::FieldKernels;
 use fgf::field::Elem;
@@ -72,6 +73,42 @@ pub trait WeakPopovRow<F: FieldKernels> {
     ) -> Result<(), Self::Error>;
 }
 
+/// Reusable per-column collision-tracking storage for
+/// [`weak_popov_with_scratch`].
+///
+/// [`weak_popov`] needs one leading-row slot per polynomial column. Holding
+/// that buffer in a caller-owned scratch lets a consumer reduce many bases of
+/// the same width in sequence without reallocating it: a warmed scratch reduces
+/// with no `gfm`-owned allocation. The buffer is grow-only and its contents
+/// carry no state between calls.
+pub struct WeakPopovScratch {
+    leading_rows: Vec<Option<usize>>,
+}
+
+impl WeakPopovScratch {
+    /// A fresh, empty scratch.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            leading_rows: Vec::new(),
+        }
+    }
+}
+
+impl Default for WeakPopovScratch {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl fmt::Debug for WeakPopovScratch {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("WeakPopovScratch")
+            .field("columns", &self.leading_rows.len())
+            .finish()
+    }
+}
+
 /// Reduces `basis` to shifted weak Popov form with Mulders–Storjohann row
 /// reductions.
 ///
@@ -93,8 +130,40 @@ where
     F: FieldKernels,
     R: WeakPopovRow<F>,
 {
+    let mut scratch = WeakPopovScratch::new();
+    weak_popov_with_scratch::<F, R>(basis, shifts, &mut scratch)
+}
+
+/// Reduces `basis` to shifted weak Popov form, reusing `scratch` for the
+/// per-column collision-tracking buffer.
+///
+/// This is identical in behavior and result to [`weak_popov`]; the only
+/// difference is that the one buffer the reducer owns is taken from `scratch`
+/// instead of allocated per call. Reusing a single scratch across reductions of
+/// the same column count therefore performs no `gfm`-owned allocation after the
+/// first, which lets a consumer reduce a stream of equally shaped bases in a
+/// zero-allocation steady state. Consumer row updates still allocate through the
+/// [`WeakPopovRow`] implementation.
+///
+/// # Errors
+///
+/// Returns the row's native error, [`ReduceError::ShiftCount`] for a shape
+/// mismatch, [`ReduceError::DegreeOverflow`] when a shifted degree cannot be
+/// represented, or [`ReduceError::Diverged`] if a row update fails to decrease
+/// the termination measure.
+pub fn weak_popov_with_scratch<F, R>(
+    basis: &mut [R],
+    shifts: &[usize],
+    scratch: &mut WeakPopovScratch,
+) -> Result<(), R::Error>
+where
+    F: FieldKernels,
+    R: WeakPopovRow<F>,
+{
     let columns = shifts.len();
-    let mut leading_rows = vec![None; columns];
+    scratch.leading_rows.clear();
+    scratch.leading_rows.resize(columns, None);
+    let leading_rows = &mut scratch.leading_rows;
     let mut ceiling = 0usize;
     let mut iterations = 0usize;
     loop {
@@ -306,5 +375,31 @@ mod tests {
             weak_popov::<Gf8, _>(&mut basis, &[0, 0]),
             Err(ReduceError::Diverged { .. })
         ));
+    }
+
+    #[test]
+    fn scratch_variant_matches_plain_and_reuses_across_bases() {
+        let leading_columns = |basis: &[Row]| -> Vec<usize> {
+            basis
+                .iter()
+                .filter_map(|row| leading_term::<Gf8, _>(row, &[0, 0]).unwrap())
+                .map(|term| term.column)
+                .collect()
+        };
+
+        let mut plain = [row(&[&[0, 1], &[1]], true), row(&[&[1], &[]], true)];
+        weak_popov::<Gf8, _>(&mut plain, &[0, 0]).unwrap();
+
+        let mut scratch = WeakPopovScratch::new();
+        let mut scratched = [row(&[&[0, 1], &[1]], true), row(&[&[1], &[]], true)];
+        weak_popov_with_scratch::<Gf8, _>(&mut scratched, &[0, 0], &mut scratch).unwrap();
+        assert_eq!(leading_columns(&scratched), leading_columns(&plain));
+
+        // The same scratch reduces a second basis of the same column count.
+        let mut second = [row(&[&[1, 1], &[1]], true), row(&[&[0, 1], &[1]], true)];
+        weak_popov_with_scratch::<Gf8, _>(&mut second, &[0, 0], &mut scratch).unwrap();
+        let mut second_plain = [row(&[&[1, 1], &[1]], true), row(&[&[0, 1], &[1]], true)];
+        weak_popov::<Gf8, _>(&mut second_plain, &[0, 0]).unwrap();
+        assert_eq!(leading_columns(&second), leading_columns(&second_plain));
     }
 }

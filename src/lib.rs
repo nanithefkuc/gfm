@@ -39,7 +39,9 @@ pub use dense::{
 pub use error::{GeometryError, ReduceError, SolveError};
 pub use hybrid::{DenseRow, DenseRows, Hybrid, Solution, SolveStats};
 pub use incremental::{Echelon, Innovation};
-pub use poly::{PopovLeadingTerm, WeakPopovRow, weak_popov};
+pub use poly::{
+    PopovLeadingTerm, WeakPopovRow, WeakPopovScratch, weak_popov, weak_popov_with_scratch,
+};
 #[cfg(all(feature = "parallel", feature = "internals"))]
 #[doc(hidden)]
 pub use row_ops::benchmark_mul_add;
