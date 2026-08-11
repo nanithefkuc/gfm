@@ -587,6 +587,47 @@ mod byte_for_byte {
     }
 }
 
+#[test]
+fn redecompose_with_matches_a_fresh_decomposition() {
+    let mut scratch = PleScratch::<Gf8>::new();
+    let mut reused = Ple::decompose(Matrix::<Gf8>::identity(3).unwrap(), &mut scratch);
+    reused.redecompose_with(&mut scratch, |matrix| {
+        for (row, col, value) in [
+            (0, 0, 1),
+            (0, 1, 2),
+            (0, 2, 3),
+            (1, 1, 1),
+            (1, 2, 4),
+            (2, 2, 1),
+        ] {
+            matrix.set(row, col, Gf8::read(&[value]));
+        }
+    });
+
+    let mut input = Matrix::<Gf8>::zeros(3, 3).unwrap();
+    for (row, col, value) in [
+        (0, 0, 1),
+        (0, 1, 2),
+        (0, 2, 3),
+        (1, 1, 1),
+        (1, 2, 4),
+        (2, 2, 1),
+    ] {
+        input.set(row, col, Gf8::read(&[value]));
+    }
+    let fresh = Ple::decompose(input, &mut PleScratch::new());
+    assert_eq!(reused.rank(), fresh.rank());
+    assert_eq!(reused.det(), fresh.det());
+
+    let mut reused_inverse = Matrix::<Gf8>::zeros(3, 3).unwrap();
+    let mut fresh_inverse = Matrix::<Gf8>::zeros(3, 3).unwrap();
+    reused.inverse_into(&mut reused_inverse).unwrap();
+    fresh.inverse_into(&mut fresh_inverse).unwrap();
+    for row in 0..3 {
+        assert_eq!(reused_inverse.row(row), fresh_inverse.row(row));
+    }
+}
+
 /// The one-elimination invariant, checked mechanically: the pivot search
 /// `find_pivot` appears in `dense/ple.rs` and nowhere else in the crate.
 #[test]

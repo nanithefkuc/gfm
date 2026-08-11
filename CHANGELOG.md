@@ -14,6 +14,10 @@ All notable changes to this project are documented here. The format follows
 - Reusable `WeakPopovScratch`, row-based `weak_popov_with_scratch`, and indexed
   `weak_popov_basis_with_scratch` storage for allocation-free repeated
   polynomial-module reduction, including slab-backed consumer layouts.
+- `Ple::redecompose_with` reuses a fixed-shape decomposition's matrix,
+  permutation, and rank-profile storage for allocation-free repeated
+  decompositions. The replacement matrix is supplied through a zeroed
+  closure-bound view, preventing stale factors from entering the next solve.
 
 - The streaming accumulator. `Echelon<F>` absorbs one equation at a time,
   returning an `Innovation` verdict (`Innovative { pivot }` / `Dependent` /
