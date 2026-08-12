@@ -105,6 +105,25 @@ impl<F: FieldKernels> Ple<F> {
         Self::decompose_impl(a, panel_width::<F>(rows, cols), TrailingMode::Axpy, scratch)
     }
 
+    /// Reuses this decomposition's storage for another matrix of the same
+    /// shape.
+    ///
+    /// `fill` receives a zeroed matrix and must write the next input. The
+    /// decomposition, permutation vectors, and rank-profile allocations are
+    /// then recomputed in place. This is the allocation-free counterpart of
+    /// repeated [`Ple::decompose`] calls for fixed-geometry workloads.
+    pub fn redecompose_with(
+        &mut self,
+        scratch: &mut PleScratch<F>,
+        fill: impl FnOnce(&mut Matrix<F>),
+    ) {
+        for row in 0..self.rows() {
+            self.lu.row_mut(row).fill(0);
+        }
+        fill(&mut self.lu);
+        self.redecompose(scratch);
+    }
+
     /// Decomposes with an explicit panel width. The result is independent of
     /// the width, byte for byte.
     #[cfg(feature = "internals")]
