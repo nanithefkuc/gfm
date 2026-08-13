@@ -6,22 +6,33 @@
 mod common;
 
 use std::alloc::{GlobalAlloc, Layout, System};
+use std::cell::Cell;
 use std::hint::black_box;
-use std::sync::atomic::{AtomicUsize, Ordering};
 
 use common::noise;
 use fgf::Gf8;
 use gfm::bits::{Ple as BitPle, PleScratch as BitPleScratch, SolveScratch as BitSolveScratch};
 use gfm::{BitMatrix, Echelon, Hybrid, Matrix, Perm, Ple, PleScratch, SolveScratch};
 
-/// A global allocator that counts calls to `alloc`.
+/// A global allocator that counts calls to `alloc` on the current thread.
 struct CountingAllocator;
 
-static ALLOCATIONS: AtomicUsize = AtomicUsize::new(0);
+thread_local! {
+    // Per-thread tally: libtest runs each `#[test]` on its own worker thread,
+    // so a process-global counter would also see the harness thread's
+    // allocations and flake. A const initializer keeps this off the lazy-init
+    // path, so touching it inside the allocator hook never re-enters `alloc`.
+    static ALLOCATIONS: Cell<usize> = const { Cell::new(0) };
+}
+
+/// The current thread's allocation tally since process start.
+fn alloc_count() -> usize {
+    ALLOCATIONS.with(Cell::get)
+}
 
 unsafe impl GlobalAlloc for CountingAllocator {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        ALLOCATIONS.fetch_add(1, Ordering::SeqCst);
+        ALLOCATIONS.with(|n| n.set(n.get() + 1));
         unsafe { System.alloc(layout) }
     }
 
@@ -54,7 +65,7 @@ fn steady_state_ops_do_not_allocate() {
     }
     let mut probe: Vec<usize> = (0..rows).collect();
 
-    let start = ALLOCATIONS.load(Ordering::SeqCst);
+    let start = alloc_count();
 
     // The measured section: every non-constructor container operation.
     {
@@ -85,7 +96,7 @@ fn steady_state_ops_do_not_allocate() {
     black_box(bm.row(4));
 
     assert_eq!(
-        ALLOCATIONS.load(Ordering::SeqCst) - start,
+        alloc_count() - start,
         0,
         "steady-state container operations allocated",
     );
@@ -109,7 +120,7 @@ fn steady_state_ops_do_not_allocate() {
     // Warm the scratch: the first solve sizes its workspace.
     let _ = ple.solve_into(&rhs, &mut sol, &mut solve_scratch);
 
-    let start = ALLOCATIONS.load(Ordering::SeqCst);
+    let start = alloc_count();
 
     ple.rref_into(&mut rref_out);
     ple.kernel_into(&mut kernel_out);
@@ -120,7 +131,7 @@ fn steady_state_ops_do_not_allocate() {
     let _ = ple.solve_into(&rhs, &mut sol, &mut solve_scratch);
 
     assert_eq!(
-        ALLOCATIONS.load(Ordering::SeqCst) - start,
+        alloc_count() - start,
         0,
         "derived queries allocated in steady state",
     );
@@ -152,7 +163,7 @@ fn steady_state_ops_do_not_allocate() {
     // Warm the scratch: the first solve sizes its workspace.
     let _ = bple.solve_into(&brhs, &mut bsol, &mut bscratch);
 
-    let start = ALLOCATIONS.load(Ordering::SeqCst);
+    let start = alloc_count();
 
     bple.rref_into(&mut brref);
     bple.kernel_into(&mut bkernel);
@@ -163,7 +174,7 @@ fn steady_state_ops_do_not_allocate() {
     let _ = bple.solve_into(&brhs, &mut bsol, &mut bscratch);
 
     assert_eq!(
-        ALLOCATIONS.load(Ordering::SeqCst) - start,
+        alloc_count() - start,
         0,
         "bit-domain derived queries allocated in steady state",
     );
@@ -180,7 +191,7 @@ fn steady_state_ops_do_not_allocate() {
     // measured window (there is none, but this matches the other sections).
     ech.absorb(&rows[0], &payloads[0]);
 
-    let start = ALLOCATIONS.load(Ordering::SeqCst);
+    let start = alloc_count();
 
     for r in 1..cols {
         black_box(ech.absorb(&rows[r], &payloads[r]));
@@ -190,7 +201,7 @@ fn steady_state_ops_do_not_allocate() {
     }
 
     assert_eq!(
-        ALLOCATIONS.load(Ordering::SeqCst) - start,
+        alloc_count() - start,
         0,
         "streaming absorb allocated in steady state",
     );
@@ -214,14 +225,14 @@ fn steady_state_ops_do_not_allocate() {
         .solve_into(&mut hybrid_values, &mut hybrid_determined)
         .unwrap();
 
-    let start = ALLOCATIONS.load(Ordering::SeqCst);
+    let start = alloc_count();
     black_box(
         hybrid
             .solve_into(&mut hybrid_values, &mut hybrid_determined)
             .unwrap(),
     );
     assert_eq!(
-        ALLOCATIONS.load(Ordering::SeqCst) - start,
+        alloc_count() - start,
         0,
         "hybrid solve allocated in steady state",
     );
