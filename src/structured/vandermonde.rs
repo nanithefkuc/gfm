@@ -20,11 +20,12 @@
 
 use core::marker::PhantomData;
 
-use alloc::vec;
 use alloc::vec::Vec;
 
 use fgf::FieldKernels;
 use fgf::field::Elem;
+
+use univariate::Polynomial;
 
 use crate::GeometryError;
 use crate::dense::Matrix;
@@ -130,32 +131,22 @@ impl<F: FieldKernels> Vandermonde<F> {
         if n == 0 {
             return;
         }
-        // Master polynomial P(x) = ∏_m (x + x_m), degree n, monic.
-        let mut p = vec![F::Elem::ZERO; n + 1];
-        p[0] = F::Elem::ONE;
-        let mut deg = 0usize;
+        // Master polynomial P(x) = ∏_m (x + x_m), degree n, monic, built
+        // through the shared univariate ring.
+        let mut master = Polynomial::<F>::one().expect("one is a constant");
         for &xm in &self.points {
-            deg += 1;
-            for k in (1..=deg).rev() {
-                p[k] = p[k - 1].add(xm.mul(p[k]));
-            }
-            p[0] = xm.mul(p[0]);
+            master = master.multiply_x_plus(xm).expect("master product");
         }
-        // For each point, N_i(x) = P(x) / (x + x_i) by synthetic division, and
-        // the normalizer d_i = N_i(x_i) = ∏_{m≠i}(x_i + x_m).
-        let mut q = vec![F::Elem::ZERO; n];
+        // For each point, N_i(x) = P(x) / (x + x_i) and the normalizer
+        // d_i = N_i(x_i) = ∏_{m≠i}(x_i + x_m).
         for (i, &xi) in self.points.iter().enumerate() {
-            q[n - 1] = p[n];
-            for k in (0..n - 1).rev() {
-                q[k] = p[k + 1].add(xi.mul(q[k + 1]));
-            }
-            let mut di = F::Elem::ZERO;
-            for k in (0..n).rev() {
-                di = di.mul(xi).add(q[k]);
-            }
-            let inv_di = di.inv();
-            for (j, &qj) in q.iter().enumerate() {
-                out.set(j, i, qj.mul(inv_di));
+            let linear =
+                Polynomial::<F>::from_coefficients(&[xi, F::Elem::ONE]).expect("linear factor");
+            let (quotient, remainder) = master.div_rem(&linear).expect("exact linear factor");
+            debug_assert!(remainder.is_zero());
+            let inv_di = quotient.evaluate(xi).inv();
+            for j in 0..n {
+                out.set(j, i, quotient.coefficient(j).mul(inv_di));
             }
         }
     }

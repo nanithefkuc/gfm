@@ -32,6 +32,9 @@ internals = []
 # floating dependency is a format-break risk when the dependency feeds wire
 # bytes. Swap this rev with the other ecosystem consumers in the same sitting.
 fgf = { git = "https://github.com/nanithefkuc/fgf", rev = "d0e331cec2e6ae5645e529597fa913db467a44cd" }
+# The univariate polynomial ring supplies the master/quotient algebra for the
+# Vandermonde inverse; local path until univariate is published.
+univariate = { path = "../univariate", default-features = false }
 rayon = { version = "1.11", optional = true }
 
 [dev-dependencies]
