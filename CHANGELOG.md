@@ -7,6 +7,12 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- `Hybrid::with_initial_inactive`: solver input that places a validated,
+  sorted, distinct column set into the inactive set before sparse-phase
+  scheduling, persisting across repeated solves. Permanently-inactive (PI)
+  constructions pass their pre-inactivated columns here instead of relying
+  on dynamic inactivation to find them. `SolveStats` gains
+  `initial_inactivations` separating those from dynamic ones.
 - Incremental leading-position tracking in `weak_popov_basis_with_scratch`:
   after each row reduction the schedule updates only the changed row's
   leading-term slot instead of re-scanning every row, falling back to a

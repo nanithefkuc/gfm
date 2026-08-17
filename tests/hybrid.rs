@@ -57,7 +57,13 @@ impl<F: FieldKernels> System<F> {
     }
 
     fn build_hybrid(&self) -> Hybrid<F> {
-        let mut hybrid = Hybrid::<F>::new(self.n, self.sym_len());
+        self.build_hybrid_with(&[])
+    }
+
+    /// Builds the solver with `initial_inactive` pre-inactivated.
+    fn build_hybrid_with(&self, initial_inactive: &[u32]) -> Hybrid<F> {
+        let mut hybrid =
+            Hybrid::<F>::with_initial_inactive(self.n, self.sym_len(), initial_inactive);
         hybrid.extend_rows(self);
         hybrid
     }
@@ -161,8 +167,14 @@ fn ple_reference<F: FieldKernels>(sys: &System<F>) -> (usize, bool, Option<Matri
 
 /// The whole property, on one system.
 fn assert_matches_ple<F: FieldKernels>(sys: &System<F>) {
+    assert_matches_ple_with(sys, &[])
+}
+
+/// The whole property, on one system whose `initial_inactive` columns start
+/// in the inactive set.
+fn assert_matches_ple_with<F: FieldKernels>(sys: &System<F>, initial_inactive: &[u32]) {
     let (rank_p, consistent_p, sol_p, determined_p) = ple_reference(sys);
-    let mut hybrid = sys.build_hybrid();
+    let mut hybrid = sys.build_hybrid_with(initial_inactive);
     match hybrid.solve() {
         Ok(sol) => {
             assert!(consistent_p, "hybrid solved an inconsistent system");
@@ -492,4 +504,195 @@ fn rfc_degree_inactivation_scales_with_square_root() {
         eprintln!("k={columns} max_g={maximum} g/sqrt(k)={ratio:.3}");
     }
     assert!(worst <= 3.0, "g/sqrt(k) grew to {worst:.3}");
+}
+
+/// A sorted, distinct random subset of `0..n`.
+fn subset(n: usize, size: usize, st: &mut u64) -> Vec<u32> {
+    let size = size.min(n);
+    let mut pool: Vec<u32> = (0..n as u32).collect();
+    for i in 0..size {
+        let j = i + draw(st, n - i);
+        pool.swap(i, j);
+    }
+    pool.truncate(size);
+    pool.sort_unstable();
+    pool
+}
+
+#[test]
+fn initial_inactive_matches_ple() {
+    // Random sparse systems with a random pre-inactivated subset, mixing
+    // binary and field-valued rows, rectangular and rank-deficient shapes:
+    // the answer must still match a dense Ple.
+    for seed in 0..40u64 {
+        let mut st = 0x6330_0000 ^ seed;
+        let n = 8 + draw(&mut st, 40);
+        let m = n / 2 + draw(&mut st, n);
+        let sym = 1 + draw(&mut st, 3);
+        let x = random_solution::<Gf8>(n, sym, seed ^ 0x6330);
+        let mut sys = System::<Gf8>::new(n, sym);
+        for _ in 0..m {
+            let w = 1 + draw(&mut st, 5);
+            let sup = support(n, w, &mut st);
+            if draw(&mut st, 4) == 0 {
+                let coeffs: Vec<<Gf8 as Field>::Elem> = sup
+                    .iter()
+                    .map(|_| <Gf8 as Field>::read(&[(1 + draw(&mut st, 255)) as u8]))
+                    .collect();
+                sys.push_consistent(sup, coeffs, &x);
+            } else {
+                sys.push_consistent(sup.clone(), vec![<Gf8 as Field>::Elem::ONE; sup.len()], &x);
+            }
+        }
+        let initial = subset(n, draw(&mut st, n + 1), &mut st);
+        assert_matches_ple_with(&sys, &initial);
+    }
+}
+
+#[test]
+fn all_initially_inactive_matches_ple() {
+    // Every column starts inactive: the sparse phase peels nothing and the
+    // whole solve is the dense block.
+    for seed in 0..10u64 {
+        let mut st = 0x0A11_0000 ^ seed;
+        let n = 6 + draw(&mut st, 20);
+        let sym = 2;
+        let x = random_solution::<Gf8>(n, sym, seed);
+        let mut sys = System::<Gf8>::new(n, sym);
+        for _ in 0..(n + 3) {
+            let w = 1 + draw(&mut st, 4);
+            let sup = support(n, w, &mut st);
+            sys.push_consistent(sup.clone(), vec![<Gf8 as Field>::Elem::ONE; sup.len()], &x);
+        }
+        let initial: Vec<u32> = (0..n as u32).collect();
+        assert_matches_ple_with(&sys, &initial);
+    }
+}
+
+#[test]
+fn initial_inactive_inconsistent_systems_are_rejected() {
+    for seed in 0..20u64 {
+        let mut st = 0x1FC0_6330 ^ seed;
+        let n = 10 + draw(&mut st, 20);
+        let sym = 1;
+        let x = random_solution::<Gf8>(n, sym, seed);
+        let mut sys = System::<Gf8>::new(n, sym);
+        for column in 0..n {
+            sys.push_consistent(vec![column as u32], vec![<Gf8 as Field>::Elem::ONE], &x);
+        }
+        // The identity rows force a unique solution; a unit row on column 0
+        // with a flipped payload makes the system inconsistent.
+        sys.rows.push((
+            vec![0],
+            vec![<Gf8 as Field>::Elem::ONE],
+            System::<Gf8>::pack(&[x[0][0].add(<Gf8 as Field>::Elem::ONE)]),
+        ));
+        let initial = subset(n, draw(&mut st, n), &mut st);
+        let mut hybrid = sys.build_hybrid_with(&initial);
+        assert!(matches!(
+            hybrid.solve(),
+            Err(SolveError::Inconsistent { .. })
+        ));
+    }
+}
+
+#[cfg(feature = "internals")]
+#[test]
+fn initial_inactive_set_is_counted_once_and_stable_across_solves() {
+    let n = 40;
+    let sym = 8;
+    let mut st = 0x0517_0001u64;
+    let x = random_solution::<Gf8>(n, sym, 0x0517_0002);
+    let mut sys = System::<Gf8>::new(n, sym);
+    for column in 0..n {
+        sys.push_consistent(vec![column as u32], vec![<Gf8 as Field>::Elem::ONE], &x);
+    }
+    for _ in 0..n {
+        let sup = support(n, 3, &mut st);
+        sys.push_consistent(sup.clone(), vec![<Gf8 as Field>::Elem::ONE; sup.len()], &x);
+    }
+    let initial: Vec<u32> = (30..n as u32).collect();
+    let mut hybrid = sys.build_hybrid_with(&initial);
+    let (first_solution, first) = hybrid.solve_with_stats(true).unwrap();
+    assert_eq!(first.initial_inactivations, initial.len());
+    assert!(first.inactivations >= first.initial_inactivations);
+    // Re-solving must reproduce the same schedule and answer, with every
+    // initial column still inactive exactly once.
+    let (second_solution, second) = hybrid.solve_with_stats(true).unwrap();
+    assert_eq!(first, second);
+    assert_same_solution(&first_solution, &second_solution, n);
+}
+
+/// An RFC-shaped system: RFC-degree LT rows over the leading `W` columns
+/// plus a dense field-valued band over the trailing `band` columns (the
+/// HDPC shape).
+#[cfg(feature = "internals")]
+fn rfc_shaped_system(columns: usize, band: usize, seed: u64) -> System<Gf8> {
+    let mut state = seed;
+    let lt_columns = columns - band;
+    let overhead = (lt_columns as f64).sqrt().ceil() as usize + 8;
+    let mut system = System::<Gf8>::new(columns, 1);
+    for _ in 0..(lt_columns + overhead) {
+        let degree = rfc_degree(draw(&mut state, 1 << 20), lt_columns);
+        let support = support(lt_columns, degree, &mut state);
+        system.rows.push((
+            support.clone(),
+            vec![<Gf8 as Field>::Elem::ONE; support.len()],
+            vec![0],
+        ));
+    }
+    let alpha = <Gf8 as Field>::read(&[2]);
+    for index in 0..band {
+        let support: Vec<u32> = ((lt_columns + index)..columns).map(|c| c as u32).collect();
+        let mut coefficient = <Gf8 as Field>::Elem::ONE;
+        let coeffs: Vec<_> = support
+            .iter()
+            .map(|_| {
+                let c = coefficient;
+                coefficient = coefficient.mul(alpha);
+                c
+            })
+            .collect();
+        system.rows.push((support, coeffs, vec![0]));
+    }
+    system
+}
+
+#[cfg(feature = "internals")]
+#[test]
+fn rfc_shaped_pi_initialization_keeps_sqrt_dense_block() {
+    // Pre-inactivating the trailing band on an RFC-shaped system keeps the
+    // dense block at the sqrt scale the generic schedule achieves, and the
+    // answer still matches a dense Ple.
+    let sizes = [50usize, 100, 250];
+    let mut worst = 0.0f64;
+    for &columns in &sizes {
+        let band = 8 + columns / 20;
+        let initial: Vec<u32> = ((columns - band)..columns).map(|c| c as u32).collect();
+        for seed in 0..4u64 {
+            let sys = rfc_shaped_system(columns, band, 0x6330_0000 ^ seed);
+            assert_matches_ple_with(&sys, &initial);
+            let (_, stats) = sys
+                .build_hybrid_with(&initial)
+                .solve_with_stats(true)
+                .unwrap();
+            assert_eq!(stats.initial_inactivations, band);
+            let ratio = stats.inactivations as f64 / (columns as f64).sqrt();
+            worst = worst.max(ratio);
+            eprintln!("columns={columns} band={band} g={}", stats.inactivations);
+        }
+    }
+    assert!(worst <= 4.0, "g/sqrt(n) grew to {worst:.3}");
+}
+
+#[test]
+#[should_panic(expected = "sorted and distinct")]
+fn with_initial_inactive_rejects_unsorted() {
+    _ = Hybrid::<Gf8>::with_initial_inactive(4, 1, &[2, 2]);
+}
+
+#[test]
+#[should_panic(expected = "out of range")]
+fn with_initial_inactive_rejects_out_of_range() {
+    _ = Hybrid::<Gf8>::with_initial_inactive(4, 1, &[4]);
 }

@@ -52,6 +52,9 @@ enum Col {
 pub struct SolveStats {
     /// Columns moved into the dense block (`g`).
     pub inactivations: usize,
+    /// Columns the constructor placed in the inactive set before
+    /// scheduling; a subset of `inactivations`.
+    pub initial_inactivations: usize,
     /// Payload (symbol) row operations performed.
     pub row_ops: usize,
     /// Rows that widened from binary to field-valued.
@@ -117,6 +120,7 @@ pub struct Hybrid<F: FieldKernels> {
     alive: Vec<bool>,
     pivots: Vec<(usize, u32)>,
     inactive: Vec<u32>,
+    initial_inactive: Vec<u32>,
     active_weight: Vec<usize>,
     edge_rows: Vec<usize>,
     edges: Vec<(u32, u32)>,
@@ -155,9 +159,40 @@ impl<F: FieldKernels> Hybrid<F> {
     /// Panics unless `sym_len` is a multiple of `F::BYTES`.
     #[must_use]
     pub fn new(cols: usize, sym_len: usize) -> Self {
+        Self::with_initial_inactive(cols, sym_len, &[])
+    }
+
+    /// A system whose columns in `initial_inactive` — sorted, distinct, in
+    /// range — enter the inactive set before sparse-phase scheduling and
+    /// stay there across every solve of this solver.
+    ///
+    /// Scheduling never pivots an inactive column in the sparse phase; the
+    /// column goes straight to the dense block. This is the input
+    /// permanently-inactive constructions need — RFC 6330 §5.4.2.2 starts
+    /// its decoder with the last P columns already in U.
+    ///
+    /// # Errors
+    ///
+    /// [`SolveError::Inconsistent`] is never returned here; construction
+    /// only fails via the panic path on malformed input.
+    ///
+    /// # Panics
+    ///
+    /// Panics unless `sym_len` is a multiple of `F::BYTES` and
+    /// `initial_inactive` is sorted, distinct, and inside `0..cols`.
+    #[must_use]
+    pub fn with_initial_inactive(cols: usize, sym_len: usize, initial_inactive: &[u32]) -> Self {
         assert!(
             sym_len.is_multiple_of(F::BYTES),
             "symbol length must be a whole number of field elements"
+        );
+        assert!(
+            initial_inactive.windows(2).all(|pair| pair[0] < pair[1]),
+            "initial inactive columns must be sorted and distinct"
+        );
+        assert!(
+            initial_inactive.last().is_none_or(|&c| (c as usize) < cols),
+            "initial inactive column out of range"
         );
         Self {
             cols,
@@ -171,6 +206,7 @@ impl<F: FieldKernels> Hybrid<F> {
             alive: Vec::new(),
             pivots: Vec::new(),
             inactive: Vec::new(),
+            initial_inactive: initial_inactive.to_vec(),
             active_weight: Vec::new(),
             edge_rows: Vec::new(),
             edges: Vec::new(),
@@ -367,6 +403,10 @@ impl<F: FieldKernels> Hybrid<F> {
         self.needed.resize(m, false);
         self.pivots.clear();
         self.inactive.clear();
+        for &column in &self.initial_inactive {
+            self.col[column as usize] = Col::Inactive;
+            self.inactive.push(column);
+        }
         self.edge_rows.clear();
         self.edges.clear();
         self.active_of_pivot.clear();
@@ -584,6 +624,7 @@ impl<F: FieldKernels> Hybrid<F> {
         }
         self.inactive.sort_unstable();
         stats.inactivations = self.inactive.len();
+        stats.initial_inactivations = self.initial_inactive.len();
         self.residual.extend((0..m).filter(|&r| self.alive[r]));
 
         // Rank the residual coefficient block first. Its row profile is the
