@@ -94,12 +94,18 @@ impl<F: FieldKernels> Row<F> {
     /// Zero results are dropped, keeping the support minimal. Each row owns
     /// both sides of the merge ping-pong, so a warmed row never steals the
     /// shared scratch capacity another row needs.
+    ///
+    /// `self += factor · src`, reporting columns newly added to the
+    /// support through `added`; the caller uses them to extend its
+    /// column-to-row index. (The no-op closure keeps the common path
+    /// allocation-free without a second merge implementation.)
     pub(crate) fn axpy_coeffs_slices(
         &mut self,
         factor: F::Elem,
         src_cols: &[u32],
         src_coeffs: &[F::Elem],
         src_binary: bool,
+        mut added: impl FnMut(u32),
     ) -> bool {
         self.spare_cols.clear();
         self.spare_coeffs.clear();
@@ -124,6 +130,7 @@ impl<F: FieldKernels> Row<F> {
             } else {
                 let value = factor.mul(src_coeffs[j]);
                 if !value.is_zero() {
+                    added(src_cols[j]);
                     self.spare_cols.push(src_cols[j]);
                     self.spare_coeffs.push(value);
                 }

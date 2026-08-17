@@ -56,6 +56,7 @@ impl<F: FieldKernels> System<F> {
         self.rows.push((support, coeffs, Self::pack(&rhs)));
     }
 
+    #[cfg(feature = "internals")]
     fn build_hybrid(&self) -> Hybrid<F> {
         self.build_hybrid_with(&[])
     }
@@ -695,4 +696,130 @@ fn with_initial_inactive_rejects_unsorted() {
 #[should_panic(expected = "out of range")]
 fn with_initial_inactive_rejects_out_of_range() {
     _ = Hybrid::<Gf8>::with_initial_inactive(4, 1, &[4]);
+}
+
+/// Builds the solver with the last `band` rows deferred instead of eager.
+fn build_hybrid_deferring(sys: &System<Gf8>, band: usize, initial_inactive: &[u32]) -> Hybrid<Gf8> {
+    let mut hybrid = Hybrid::<Gf8>::with_initial_inactive(sys.n, sys.sym_len(), initial_inactive);
+    let defer_from = sys.rows.len() - band;
+    for (index, (support, coeffs, rhs)) in sys.rows.iter().enumerate() {
+        if index >= defer_from {
+            hybrid.push_deferred_field_row(support, coeffs, rhs);
+        } else if coeffs.iter().all(|c| c.is_one()) {
+            hybrid.push_binary_row(support, rhs);
+        } else {
+            hybrid.push_field_row(support, coeffs, rhs);
+        }
+    }
+    hybrid
+}
+
+/// A system with a dense GF(2^8) band, the HDPC shape: LT-degree binary
+/// rows over the leading columns plus `band` dense field rows over all
+/// columns, with the trailing `band` columns pre-inactivated.
+fn dense_band_system(
+    n: usize,
+    band: usize,
+    seed: u64,
+) -> (System<Gf8>, Vec<u32>, Vec<Vec<<Gf8 as Field>::Elem>>) {
+    let mut state = seed | 1;
+    let mut x = Vec::with_capacity(n);
+    for _ in 0..n {
+        let mut row = Vec::with_capacity(2);
+        for _s in 0..2 {
+            state = state
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1);
+            row.push(<Gf8 as Field>::read(&[(state >> 33) as u8]));
+        }
+        x.push(row);
+    }
+    let mut sys = System::<Gf8>::new(n, 2);
+    for _ in 0..(n + 4) {
+        let w = 1 + draw(&mut state, 4);
+        let sup = support(n - band, w, &mut state);
+        sys.push_consistent(sup.clone(), vec![<Gf8 as Field>::Elem::ONE; sup.len()], &x);
+    }
+    for _ in 0..band {
+        let sup: Vec<u32> = (0..n as u32).collect();
+        let coeffs: Vec<_> = (0..n)
+            .map(|_| {
+                state = state
+                    .wrapping_mul(6_364_136_223_846_793_005)
+                    .wrapping_add(1);
+                <Gf8 as Field>::read(&[1 + (state >> 33) as u8 % 255])
+            })
+            .collect();
+        sys.push_consistent(sup, coeffs, &x);
+    }
+    let initial: Vec<u32> = ((n - band)..n).map(|c| c as u32).collect();
+    (sys, initial, x)
+}
+
+#[test]
+fn deferred_dense_band_matches_eager_and_ple() {
+    // Deferral changes the schedule, never the answer: the deferred solve
+    // must match both the eager push and a dense Ple on rank, solution,
+    // and determinedness across mixed, deficient, and full-rank systems.
+    for seed in 0..30u64 {
+        let mut st = 0xD3F3_0000 ^ seed;
+        let n = 20 + draw(&mut st, 40);
+        let band = 2 + draw(&mut st, 6);
+        let (sys, initial, _x) = dense_band_system(n, band, seed);
+        assert_matches_ple_with(&sys, &initial);
+        let eager = sys.build_hybrid_with(&initial).solve().unwrap();
+        let deferred = build_hybrid_deferring(&sys, band, &initial)
+            .solve()
+            .unwrap();
+        assert_eq!(eager.rank(), deferred.rank(), "rank K seed {seed}");
+        for column in 0..n {
+            assert_eq!(
+                eager.is_determined(column),
+                deferred.is_determined(column),
+                "determined {column} seed {seed}"
+            );
+            if eager.is_determined(column) {
+                assert_eq!(
+                    eager.value(column),
+                    deferred.value(column),
+                    "col {column} seed {seed}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn deferred_dense_band_inconsistent_is_rejected() {
+    let (mut sys, initial, x) = dense_band_system(24, 4, 0x1C_0001);
+    // Identity rows pin the true solution; a deferred row with a
+    // poisoned payload contradicts it, and the post-release
+    // verification must catch the inconsistency.
+    for column in 0..sys.n {
+        sys.push_consistent(vec![column as u32], vec![<Gf8 as Field>::Elem::ONE], &x);
+    }
+    let mut poisoned = vec![0u8; sys.sym_len()];
+    poisoned[0] ^= 1;
+    sys.rows.push((
+        (0..sys.n as u32).collect(),
+        vec![<Gf8 as Field>::Elem::ONE; sys.n],
+        poisoned,
+    ));
+    let mut hybrid = build_hybrid_deferring(&sys, 1, &initial);
+    assert!(matches!(
+        hybrid.solve(),
+        Err(SolveError::Inconsistent { .. })
+    ));
+}
+
+#[cfg(feature = "internals")]
+#[test]
+fn deferred_rows_are_counted_and_releases_are_stable() {
+    let (sys, initial, _x) = dense_band_system(40, 5, 0x5D_0001);
+    let mut hybrid = build_hybrid_deferring(&sys, 5, &initial);
+    let (first_solution, first) = hybrid.solve_with_stats(true).unwrap();
+    assert_eq!(first.deferred_rows, 5);
+    let (second_solution, second) = hybrid.solve_with_stats(true).unwrap();
+    assert_eq!(first, second, "deferral release is deterministic");
+    assert_same_solution(&first_solution, &second_solution, sys.n);
 }

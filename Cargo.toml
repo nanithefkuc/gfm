@@ -50,6 +50,10 @@ name = "hybrid"
 harness = false
 
 [[bench]]
+name = "rfc_scale"
+harness = false
+
+[[bench]]
 name = "competitors"
 harness = false
 

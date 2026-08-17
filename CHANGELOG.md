@@ -7,6 +7,19 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- `Hybrid::push_deferred_field_row`: dense equations excluded from
+  sparse-phase scheduling and released into the dense phase with their
+  pivoted-column entries substituted out in one pivot-time-ordered pass.
+  Deferral changes the schedule, never the answer — rank, solution, and
+  inconsistency verdicts stay identical to the eager push. `SolveStats`
+  gains `deferred_rows`.
+- Indexed sparse-phase scheduling: incremental active-weight maintenance
+  (no per-iteration recount), weight-bucketed minimum selection, and a
+  column-to-row index so a pivot's elimination visits only the rows that
+  contain its column. RFC-shaped solves improve from quadratic to
+  near-linear; a max-`K` RaptorQ intermediate-symbol solve drops from
+  ~300 s to ~0.7 s in `gfm` and ~2 s end to end in the consumer. See
+  `BENCHMARKS.md` for the strategy-by-strategy measurements.
 - `Hybrid::with_initial_inactive`: solver input that places a validated,
   sorted, distinct column set into the inactive set before sparse-phase
   scheduling, persisting across repeated solves. Permanently-inactive (PI)
