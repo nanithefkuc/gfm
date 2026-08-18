@@ -7,6 +7,15 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- Coefficient-free binary rows in `Hybrid`: binary rows carry implicit
+  unit coefficients and widen on first field contact; GF(2) merges
+  degenerate to a support XOR. Cached weight-two edges, weight counting
+  folded into the merge walk, inactivation decrements through the column
+  index, and a batched deferred-row release (lane groups of sixteen, one
+  pivot-time-ordered pass per group) complete the second scheduling
+  round. A max-`K` RaptorQ solve drops from ~655 ms to ~278 ms in `gfm`
+  and encoder preparation from ~1.9 s to ~1.36 s in the consumer. See
+  `BENCHMARKS.md` for the measured strategy ladder.
 - `Hybrid::push_deferred_field_row`: dense equations excluded from
   sparse-phase scheduling and released into the dense phase with their
   pivoted-column entries substituted out in one pivot-time-ordered pass.

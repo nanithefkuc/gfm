@@ -315,7 +315,9 @@ Strategies, measured cumulatively (each row includes the previous ones):
 | A: incremental weights | 2.67 ms | 123 ms | 2.92 s | 3.28 s | — | — |
 | A+C: deferred dense rows | 2.66 ms | 122 ms | 2.93 s | 3.28 s | 82.2 ms | 26.1 s |
 | A+C+B: bucketed selection | 1.87 ms | 37.4 ms | 1.83 s | 3.55 s | 73.3 ms | 17.3 s |
-| A+C+B+D: column index (final) | 0.334 ms | 2.02 ms | 12.1 ms | 3.73 s | 42.7 ms | 655 ms |
+| A+C+B+D: column index | 0.334 ms | 2.02 ms | 12.1 ms | 3.73 s | 42.7 ms | 655 ms |
+| +E: coefficient-free binary rows | 0.268 ms | 1.66 ms | 10.0 ms | — | — | — |
+| +F: edge cache, folded weight, batched release (final) | 0.268 ms | 1.66 ms | 10.0 ms | 9.8 ms (500c) | 23.3 ms | 278 ms |
 
 - **A — incremental weights**: weights are initialized once in
   `prepare_work`, recomputed inside the merge that rewrites a row, and
@@ -351,3 +353,50 @@ Downstream, `raptor-q` (consumer, same host): encoder preparation at
 28.9 ms to 5.1 ms; steady-state repair generation unchanged at 80 ns per
 symbol. Its frozen differential fixtures pass byte-identically before and
 after, which is the answer-invariance proof for the deferral release.
+
+## Second round: coefficient-free binary rows, edge cache, folded weights, batched release
+
+Profiled against the consumer (`raptor-q` `K = 56403`, `T = 64`; phase
+timers inside `run_into`): the sparse loop held ~0.9 s, the deferred
+release ~0.5 s, everything else ~0.1 s. Four more strategies, measured
+cumulatively on top of the first round:
+
+- **E — coefficient-free binary rows**: a binary row's coefficients are
+  implicit units (`coeffs` empty); a field operation widens the row once
+  by materializing them. Binary/binary merges with a unit factor — the
+  entire GF(2) peeling majority, `widenings = 0` in the RaptorQ solve —
+  degenerate to a support XOR with no coefficient traffic or field
+  multiplies.
+- **Edge cache**: each weight-two row's edge is cached and re-extracted
+  only when its support or weight changed; most weight-two rows are
+  stable across consecutive peeling steps. The previous code rescanned
+  every weight-two row's full support every iteration (164 M entry scans
+  at `K = 56403`).
+- **Folded weight maintenance**: the merged row's active weight is
+  counted inside the merge walk (91 M second-pass scans removed), and
+  inactivation decrements use the column-to-row index with a generation
+  guard instead of scanning all rows (8 M row scans removed).
+- **Batched release**: deferred rows are substituted in lane groups of
+  sixteen — one pass over the pivots in time order with a per-column
+  lane bitmask — so the frozen pivot rows stream once per group instead
+  of once per deferred row, and the ordering heap disappears. Release
+  time fell from ~0.5 s to ~0.2 s at `K = 56403`.
+
+| Case | First round | Second round |
+| --- | --- | --- |
+| `rfc_scale` deferred 56403 | 655 ms | 278 ms |
+| `raptor-q` solve K=56403 | 1.97 s | 1.37 s |
+| `raptor-q` prepare K=56403 | 1.91 s | 1.36 s |
+| `raptor-q` prepare K=1000 | 5.1 ms | 4.0 ms |
+| `raptor-q` decode K=1000 | 5.2 ms | 4.1 ms |
+
+`raptor-q`'s frozen differentials and the `cberner/raptorq` interop
+checks (byte-identical repairs through `K = 56403`, cross-decode both
+directions) pass unchanged: every strategy is schedule-only. The head-to-
+head gap narrows to ~10x at max K (1.52 s vs 0.131 s prepare); the
+remaining cost is the sparse loop's u32-per-column GF(2) representation —
+the reference implementation runs packed 64-column words, which is the
+next order of magnitude and a representation project, not a patch.
+
+A lane-group regression test covers systems with more than sixteen
+deferred rows (the bench shapes caught the original cap).
