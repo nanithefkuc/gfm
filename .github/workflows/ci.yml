@@ -65,9 +65,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      # fgf is always present; rayon enters only with the parallel feature.
-      # sgraph/lattica/cafft cross the stack's layering, while
-      # simdispatch/archmage are reached through fgf, never directly.
+      # fgf is always present; univariate supplies the polynomial ring for
+      # the structured (Cauchy/Vandermonde) inverses; rayon enters only with
+      # the parallel feature. sgraph/lattica/cafft cross the stack's layering,
+      # while simdispatch/archmage are reached through fgf, never directly.
       - name: assert dependency set
         run: |
           base=$(cargo tree --no-default-features --edges normal --depth 1 --prefix none --no-dedupe \
@@ -76,12 +77,12 @@ jobs:
                    | awk 'NF {print $1}' | sort -u | grep -v '^gfm$' || true)
           echo "base direct dependencies: ${base:-<none>}"
           echo "all-feature direct dependencies: ${all:-<none>}"
-          if [ "$base" != "fgf" ]; then
-            echo "::error::expected only fgf without features, got: $base"
+          if [ "$base" != "$(printf 'fgf\nunivariate')" ]; then
+            echo "::error::expected fgf and univariate without features, got: $base"
             exit 1
           fi
-          if [ "$all" != "$(printf 'fgf\nrayon')" ]; then
-            echo "::error::expected fgf and rayon with all features, got: $all"
+          if [ "$all" != "$(printf 'fgf\nrayon\nunivariate')" ]; then
+            echo "::error::expected fgf, rayon, and univariate with all features, got: $all"
             exit 1
           fi
           for forbidden in sgraph lattica cafft simdispatch archmage; do

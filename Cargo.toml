@@ -33,8 +33,9 @@ internals = []
 # bytes. Swap this rev with the other ecosystem consumers in the same sitting.
 fgf = { git = "https://github.com/nanithefkuc/fgf", rev = "d0e331cec2e6ae5645e529597fa913db467a44cd" }
 # The univariate polynomial ring supplies the master/quotient algebra for the
-# Vandermonde inverse; local path until univariate is published.
-univariate = { path = "../univariate", default-features = false }
+# Vandermonde inverse. Pinned by rev, the same revision syndrome-engine pins,
+# so one copy resolves across the ecosystem.
+univariate = { git = "https://github.com/nanithefkuc/univariate", rev = "487997ede763a49e68da101b3d5a08f48ffec4e4", default-features = false }
 rayon = { version = "1.11", optional = true }
 
 [dev-dependencies]

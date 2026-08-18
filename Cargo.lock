@@ -469,6 +469,7 @@ checksum = "e6e4313cd5fcd3dad5cafa179702e2b244f760991f45397d14d4ebf38247da75"
 [[package]]
 name = "univariate"
 version = "0.0.0"
+source = "git+https://github.com/nanithefkuc/univariate?rev=487997ede763a49e68da101b3d5a08f48ffec4e4#487997ede763a49e68da101b3d5a08f48ffec4e4"
 dependencies = [
  "fgf",
 ]
