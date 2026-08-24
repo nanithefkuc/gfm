@@ -5,17 +5,17 @@
 //! `k × k` inverse from scratch; the numbers land in `BENCHMARKS.md`.
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
-use fgf::Gf8;
+use fgf::Gf8B;
 use gfm::{Cauchy, Matrix, Ple, PleScratch};
 use std::hint::black_box;
 
 fn cauchy_inverse(c: &mut Criterion) {
     let mut group = c.benchmark_group("cauchy_inverse");
     for k in [4usize, 8, 16, 32, 48, 64] {
-        let cauchy = Cauchy::<Gf8>::indexed(k, k).expect("2k <= 256");
-        let mut mat = Matrix::<Gf8>::zeros(k, k).unwrap();
+        let cauchy = Cauchy::<Gf8B>::indexed(k, k).expect("2k <= 256");
+        let mut mat = Matrix::<Gf8B>::zeros(k, k).unwrap();
         cauchy.materialize_into(&mut mat);
-        let mut out = Matrix::<Gf8>::zeros(k, k).unwrap();
+        let mut out = Matrix::<Gf8B>::zeros(k, k).unwrap();
 
         group.bench_with_input(BenchmarkId::new("closed_form", k), &k, |b, _| {
             b.iter(|| {

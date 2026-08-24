@@ -4,18 +4,18 @@ mod common;
 
 use common::{draw, noise};
 use fgf::field::Field;
-use fgf::{Gf8, Gf16};
+use fgf::{Gf8B, Gf16};
 use gfm::{Matrix, Ple, PleScratch, SmallMatrix, SolveScratch};
 
-fn matrix<const K: usize>(seed: u64, deficient: bool) -> Matrix<Gf8> {
+fn matrix<const K: usize>(seed: u64, deficient: bool) -> Matrix<Gf8B> {
     let mut state = seed | 1;
-    let mut matrix = Matrix::<Gf8>::zeros(K, K).unwrap();
+    let mut matrix = Matrix::<Gf8B>::zeros(K, K).unwrap();
     for row in 0..K {
         for col in 0..K {
             let value = if deficient && (row + 1 == K || col + 1 == K) {
-                <Gf8 as Field>::Elem::ZERO
+                <Gf8B as Field>::Elem::ZERO
             } else {
-                Gf8::read(&[draw(&mut state, 256) as u8])
+                Gf8B::read(&[draw(&mut state, 256) as u8])
             };
             matrix.set(row, col, value);
         }
@@ -26,7 +26,7 @@ fn matrix<const K: usize>(seed: u64, deficient: bool) -> Matrix<Gf8> {
 fn check_rank<const K: usize>() {
     for deficient in [false, true] {
         let matrix = matrix::<K>(0x5A11 ^ K as u64, deficient);
-        let small = SmallMatrix::<Gf8, K>::from_matrix(&matrix);
+        let small = SmallMatrix::<Gf8B, K>::from_matrix(&matrix);
         let expected = Ple::decompose(matrix, &mut PleScratch::new()).rank();
         assert_eq!(small.rank(), expected, "rank mismatch at K={K}");
     }

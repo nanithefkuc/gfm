@@ -459,19 +459,19 @@ where
 mod tests {
     use alloc::vec::Vec;
 
-    use fgf::Gf8;
+    use fgf::Gf8B;
     use fgf::field::{Elem, Field};
 
     use super::*;
 
-    type E = <Gf8 as Field>::Elem;
+    type E = <Gf8B as Field>::Elem;
 
     struct Row {
         columns: Vec<Vec<E>>,
         update: bool,
     }
 
-    impl WeakPopovRow<Gf8> for Row {
+    impl WeakPopovRow<Gf8B> for Row {
         type Error = ReduceError;
 
         fn column_count(&self) -> usize {
@@ -528,11 +528,11 @@ mod tests {
     fn caller_scratch_reuses_leading_row_storage() {
         let mut scratch = WeakPopovScratch::new();
         let mut first = [row(&[&[0, 1], &[1]], true), row(&[&[1], &[]], true)];
-        weak_popov_with_scratch::<Gf8, _>(&mut first, &[0, 0], &mut scratch).unwrap();
+        weak_popov_with_scratch::<Gf8B, _>(&mut first, &[0, 0], &mut scratch).unwrap();
         let capacity = scratch.capacity();
 
         let mut second = [row(&[&[0, 1], &[1]], true), row(&[&[1], &[]], true)];
-        weak_popov_with_scratch::<Gf8, _>(&mut second, &[0, 0], &mut scratch).unwrap();
+        weak_popov_with_scratch::<Gf8B, _>(&mut second, &[0, 0], &mut scratch).unwrap();
 
         assert_eq!(scratch.capacity(), capacity);
         assert!(capacity >= 2);
@@ -541,11 +541,11 @@ mod tests {
     #[test]
     fn resolves_leading_position_collision() {
         let mut basis = [row(&[&[0, 1], &[1]], true), row(&[&[1], &[]], true)];
-        weak_popov::<Gf8, _>(&mut basis, &[0, 0]).unwrap();
+        weak_popov::<Gf8B, _>(&mut basis, &[0, 0]).unwrap();
         let leading: Vec<_> = basis
             .iter()
             .map(|row| {
-                leading_term::<Gf8, _>(row, &[0, 0])
+                leading_term::<Gf8B, _>(row, &[0, 0])
                     .unwrap()
                     .unwrap()
                     .column
@@ -558,7 +558,7 @@ mod tests {
     fn non_decreasing_row_hits_proved_ceiling() {
         let mut basis = [row(&[&[0, 1], &[1]], false), row(&[&[1], &[]], false)];
         assert!(matches!(
-            weak_popov::<Gf8, _>(&mut basis, &[0, 0]),
+            weak_popov::<Gf8B, _>(&mut basis, &[0, 0]),
             Err(ReduceError::Diverged { .. })
         ));
     }

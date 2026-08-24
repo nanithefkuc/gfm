@@ -123,8 +123,21 @@ All notable changes to this project are documented here. The format follows
   a row map; data moves only through `compact_rows`. Constructors validate
   geometry with checked arithmetic and return `GeometryError`.
 
-### Fixed
+### Changed
 
+- The GF(2) storage domain now delegates to fgf's native GF(2) surface
+  instead of hand-rolling its own word loops. `BitMatrix` rows are packed
+  in `fgf::bits` layout (one element per bit, LSB-first within each byte),
+  and every row-vector operation — whole and masked-range XOR, prefix
+  clearing, zero tests — goes through `fgf::bits` kernels; the crate keeps
+  only geometry, indexing, and the pivot schedule. Public API follows the
+  representation: `from_rows` takes packed bytes, `row` returns `&[u8]`,
+  and `row_bytes` replaces `row_words`. `fgf` is pinned to `0.7.0`, whose
+  GF(2^8) split renames the AES field `Gf8` → `Gf8B` (`gf8` → `gf8b`).
+  Elimination results are unchanged byte for byte; the cross-domain
+  differential and the M4RI/FFLAS-FFPACK oracles still pass.
+
+### Fixed
 - Dense and bit-domain kernel, solve, and inverse results now undo multi-step
   column permutations in reverse swap order. The previous forward replay was
   only accidentally correct when the permutation was identity or involutive.

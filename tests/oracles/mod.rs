@@ -526,8 +526,8 @@ mod tests {
         // The oracles must agree with each other and with trivial cases:
         // identity decomposes as identity, and the packed and scalar
         // eliminations match on a small random matrix.
-        let id = naive_identity::<fgf::Gf8>(5);
-        let o = oracle_ple::<fgf::Gf8>(&id);
+        let id = naive_identity::<fgf::Gf8B>(5);
+        let o = oracle_ple::<fgf::Gf8B>(&id);
         assert_eq!(o.rank, 5);
         assert_eq!(reassemble(&o), id);
 

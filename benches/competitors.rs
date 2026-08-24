@@ -7,7 +7,7 @@ use core::hint::black_box;
 use std::time::Duration;
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
-use fgf::Gf8;
+use fgf::Gf8B;
 use gfm::bits::{Ple as BitPle, PleScratch as BitPleScratch};
 use gfm::{BitMatrix, Matrix, Ple, PleScratch};
 #[cfg(gfm_flint)]
@@ -112,9 +112,13 @@ fn next(state: &mut u64) -> u64 {
     *state
 }
 
-fn bit_inputs(n: usize) -> (Vec<u64>, Vec<u8>) {
+fn bit_inputs(n: usize) -> (Vec<u64>, Vec<u8>, Vec<u8>) {
+    // Words feed the M4RI shim; `fgf::bits` row bytes feed gfm; `flat`
+    // feeds FFLAS-FFPACK.
     let words = n.div_ceil(64);
+    let live = n.div_ceil(8);
     let mut packed = vec![0u64; n * words];
+    let mut bytes = vec![0u8; n * live];
     let mut flat = vec![0u8; n * n];
     let mut state = 0xB17C_0DE0 ^ n as u64;
     for row in 0..n {
@@ -122,9 +126,10 @@ fn bit_inputs(n: usize) -> (Vec<u64>, Vec<u8>) {
             let bit = (next(&mut state) >> 63) as u8;
             flat[row * n + col] = bit;
             packed[row * words + col / 64] |= u64::from(bit) << (col % 64);
+            bytes[row * live + col / 8] |= bit << (col % 8);
         }
     }
-    (packed, flat)
+    (packed, bytes, flat)
 }
 
 fn gf8_input(n: usize) -> Vec<u8> {
@@ -138,7 +143,7 @@ fn bench_gf2(c: &mut Criterion) {
     group.warm_up_time(Duration::from_secs(1));
     group.measurement_time(Duration::from_secs(3));
     for n in [128usize, 256, 512] {
-        let (packed, flat) = bit_inputs(n);
+        let (packed, bytes, flat) = bit_inputs(n);
         let words = n.div_ceil(64);
         #[cfg(not(gfm_m4ri))]
         let _ = words;
@@ -147,7 +152,7 @@ fn bench_gf2(c: &mut Criterion) {
         group.bench_with_input(BenchmarkId::new("gfm", n), &n, |b, _| {
             let mut scratch = BitPleScratch::new();
             b.iter(|| {
-                let matrix = BitMatrix::from_rows(n, n, black_box(&packed)).unwrap();
+                let matrix = BitMatrix::from_rows(n, n, black_box(&bytes)).unwrap();
                 black_box(BitPle::decompose(matrix, &mut scratch).rank());
             });
         });
@@ -181,7 +186,7 @@ fn bench_gf8(c: &mut Criterion) {
         group.bench_with_input(BenchmarkId::new("gfm", n), &n, |b, _| {
             let mut scratch = PleScratch::new();
             b.iter(|| {
-                let matrix = Matrix::<Gf8>::from_rows(n, n, black_box(&data)).unwrap();
+                let matrix = Matrix::<Gf8B>::from_rows(n, n, black_box(&data)).unwrap();
                 black_box(Ple::decompose(matrix, &mut scratch).rank());
             });
         });

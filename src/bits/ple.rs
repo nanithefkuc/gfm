@@ -4,16 +4,18 @@
 //! decomposition, the same pivot order (leftmost available column, first
 //! nonzero row), the same panel-blocked schedule with a locally shrinking
 //! window on rank-deficient slabs, and therefore the same `lu`, `p`, `q`,
-//! and rank profiles. Only the inner loop differs (I8): a bit is one bit, a
-//! row is `u64` words, a pivot is always one, no coefficient exists, and the
-//! elimination of a column is a masked word XOR of the pivot row rather than
-//! an AXPY. Normalization is a no-op — the only nonzero element is one.
+//! and rank profiles. Only the inner loop differs (I8): a bit is one bit,
+//! a pivot is always one, no coefficient exists, and the elimination of a
+//! column is a masked range XOR of the pivot row through [`fgf::bits`] —
+//! no AXPY, no normalization, because the only nonzero element is one.
 //!
 //! No Method-of-the-Four-Russians slab tables yet: that acceleration keeps
 //! the same answer and lands later, gated on measurement.
 
 use alloc::vec::Vec;
 use core::fmt;
+
+use fgf::bits;
 
 use crate::bits::BitMatrix;
 use crate::dense::Perm;
@@ -44,7 +46,7 @@ pub struct Ple {
 /// The table is grow-only. Reusing the scratch for repeated decompositions of
 /// the same geometry avoids rebuilding its allocation.
 pub struct PleScratch {
-    table: Vec<u64>,
+    table: Vec<u8>,
 }
 
 impl PleScratch {
@@ -64,7 +66,7 @@ impl Default for PleScratch {
 impl fmt::Debug for PleScratch {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("PleScratch")
-            .field("table_words", &self.table.len())
+            .field("table_bytes", &self.table.len())
             .finish()
     }
 }
@@ -262,6 +264,7 @@ fn factor_panel(
 ) -> usize {
     let rows = mat.rows();
     let limit = rows.min(mat.cols());
+    let cols = mat.cols();
     let mut piv = frontier;
     while piv < limit && piv < wend && piv - frontier < wend - wstart {
         let Some((found_row, found_col)) = locate_pivot(mat, piv, wstart, wend) else {
@@ -280,7 +283,7 @@ fn factor_panel(
         for row in (piv + 1)..rows {
             if mat.get(row, piv) {
                 let (row_dst, row_src) = mat.two_live_rows(row, piv);
-                xor_range(row_dst, row_src, piv + 1, wend);
+                bits::xor_range(row_dst, row_src, cols, piv + 1, wend);
             }
         }
         piv += 1;
@@ -288,13 +291,18 @@ fn factor_panel(
     piv - frontier
 }
 
-/// The first pivot in the unblocked sweep order, found word-wise (I8): the
-/// leftmost column position in `[max(step, wstart), wend)` that is nonzero in
-/// some row at or below `step`, and that column's first such row.
+/// The first pivot in the unblocked sweep order: the leftmost column
+/// position in `[max(step, wstart), wend)` that is nonzero in some row at
+/// or below `step`, and that column's first such row.
 ///
-/// The column search ORs the candidate rows word by word and takes the
-/// lowest set bit of the masked accumulator — `trailing_zeros` on the column
-/// bitmap — so a zero column costs no per-row scan.
+/// The production panel width is eight bits — one to two bytes — so the
+/// column scan ORs the window's bytes of the candidate rows and takes the
+/// lowest set bit of the masked accumulator: `trailing_zeros` on the
+/// column bitmap, with a zero column costing no per-row scan. Wider
+/// windows (custom panel widths through `internals`) fall back to a
+/// word-wise accumulation. Either way this is control flow over gfm's own
+/// geometry, not arithmetic: the row XORs themselves are [`fgf::bits`]
+/// kernels.
 fn locate_pivot(
     mat: &BitMatrix,
     step: usize,
@@ -305,40 +313,95 @@ fn locate_pivot(
     if start >= wend {
         return None;
     }
+    let (b0, b1) = (start / 8, (wend - 1) / 8);
+    if b1 - b0 <= 1 {
+        return locate_pivot_narrow(mat, step, start, wend, b0, b1);
+    }
     let (w_lo, w_hi) = (start / 64, (wend - 1) / 64);
     let rows = mat.rows();
     for w in w_lo..=w_hi {
         let mut acc = 0u64;
         for row in step..rows {
-            acc |= mat.row(row)[w];
+            acc |= row_word(mat.row(row), w);
         }
         let lo = if w == w_lo { start - w * 64 } else { 0 };
         let hi = if w == w_hi { wend - w * 64 } else { 64 };
         acc &= mask_between(lo, hi);
         if acc != 0 {
-            let col = w * 64 + acc.trailing_zeros() as usize;
-            for row in step..rows {
-                if mat.get(row, col) {
-                    return Some((row, col));
-                }
-            }
+            return Some(first_set_in_column(
+                mat,
+                step,
+                w * 64 + acc.trailing_zeros() as usize,
+            ));
         }
     }
     None
 }
 
-/// Zeros bits `[0, upto)` of a live-word row, leaving the rest untouched.
-pub(crate) fn clear_prefix(dst: &mut [u64], upto: usize) {
-    if upto == 0 {
-        return;
+/// The two-byte window scan of [`locate_pivot`]: OR the window's bytes of
+/// every candidate row, mask to `[start, wend)`, and report the lowest
+/// set column.
+fn locate_pivot_narrow(
+    mat: &BitMatrix,
+    step: usize,
+    start: usize,
+    wend: usize,
+    b0: usize,
+    b1: usize,
+) -> Option<(usize, usize)> {
+    let rows = mat.rows();
+    let (mut acc0, mut acc1) = (0u8, 0u8);
+    for row in step..rows {
+        let r = mat.row(row);
+        acc0 |= r[b0];
+        if b1 > b0 {
+            acc1 |= r[b1];
+        }
     }
-    let w = upto / 64;
-    for word in &mut dst[..w] {
-        *word = 0;
+    // The window as one little-endian 16-bit bitmap over bytes b0..=b1.
+    let lo = start - b0 * 8;
+    let hi = wend - b0 * 8; // at most 16: the window spans two bytes.
+    let mut acc = u16::from(acc0) | (u16::from(acc1) << 8);
+    acc &= (u16::MAX << lo) & low_mask16(hi);
+    if acc != 0 {
+        let col = b0 * 8 + acc.trailing_zeros() as usize;
+        return Some(first_set_in_column(mat, step, col));
     }
-    if w < dst.len() {
-        dst[w] &= u64::MAX << (upto - w * 64);
+    None
+}
+
+/// The first row at or below `step` with a one in `col`. The column
+/// bitmap advertised the bit, so it exists.
+fn first_set_in_column(mat: &BitMatrix, step: usize, col: usize) -> (usize, usize) {
+    for row in step..mat.rows() {
+        if mat.get(row, col) {
+            return (row, col);
+        }
     }
+    unreachable!("the column bitmap advertised a set bit")
+}
+
+/// The low `n` bits set, `0 <= n <= 16`.
+fn low_mask16(n: usize) -> u16 {
+    if n >= 16 {
+        u16::MAX
+    } else {
+        (1u16 << n).wrapping_sub(1)
+    }
+}
+
+/// The little-endian word `w` of a live-byte row, zero-filled past its end.
+fn row_word(row: &[u8], w: usize) -> u64 {
+    let start = w * 8;
+    let end = (start + 8).min(row.len());
+    let mut buf = [0u8; 8];
+    buf[..end - start].copy_from_slice(&row[start..end]);
+    u64::from_le_bytes(buf)
+}
+
+/// Bits `[lo, hi)` set within a single word, `0 <= lo < hi <= 64`.
+fn mask_between(lo: usize, hi: usize) -> u64 {
+    (u64::MAX << lo) & if hi >= 64 { u64::MAX } else { (1u64 << hi) - 1 }
 }
 
 /// The trailing update after a panel: the triangular solve of the pivot
@@ -362,7 +425,7 @@ fn bulk_update(
         for src in frontier..row {
             if mat.get(row, src) {
                 let (row_dst, row_src) = mat.two_live_rows(row, src);
-                xor_range(row_dst, row_src, wend, cols);
+                bits::xor_range(row_dst, row_src, cols, wend, cols);
             }
         }
     }
@@ -378,7 +441,7 @@ fn update_trailing_plain(mat: &mut BitMatrix, frontier: usize, pivots: usize, we
         for src in frontier..(frontier + pivots) {
             if mat.get(row, src) {
                 let (row_dst, row_src) = mat.two_live_rows(row, src);
-                xor_range(row_dst, row_src, wend, cols);
+                bits::xor_range(row_dst, row_src, cols, wend, cols);
             }
         }
     }
@@ -395,22 +458,23 @@ fn update_trailing_m4ri(
     scratch: &mut PleScratch,
 ) {
     let (rows, cols) = (mat.rows(), mat.cols());
-    let words = mat.row_words();
+    let live_bytes = mat.row_bytes();
     let entries = 1usize << pivots;
-    scratch.table.resize(entries * words, 0);
+    scratch.table.resize(entries * live_bytes, 0);
     scratch.table.fill(0);
     let mut previous_gray = 0usize;
     for ordinal in 1..entries {
         let gray = ordinal ^ (ordinal >> 1);
         let changed = (gray ^ previous_gray).trailing_zeros() as usize;
         scratch.table.copy_within(
-            previous_gray * words..(previous_gray + 1) * words,
-            gray * words,
+            previous_gray * live_bytes..(previous_gray + 1) * live_bytes,
+            gray * live_bytes,
         );
         let pivot = mat.row(frontier + changed);
-        xor_range(
-            &mut scratch.table[gray * words..(gray + 1) * words],
+        bits::xor_range(
+            &mut scratch.table[gray * live_bytes..(gray + 1) * live_bytes],
             pivot,
+            cols,
             wend,
             cols,
         );
@@ -422,45 +486,8 @@ fn update_trailing_m4ri(
             key |= usize::from(mat.get(row, frontier + offset)) << offset;
         }
         if key != 0 {
-            let table_row = &scratch.table[key * words..(key + 1) * words];
-            xor_range(mat.live_row_mut(row), table_row, wend, cols);
+            let table_row = &scratch.table[key * live_bytes..(key + 1) * live_bytes];
+            bits::xor_range(mat.live_row_mut(row), table_row, cols, wend, cols);
         }
     }
-}
-
-/// XORs `src` into `dst` over bit columns `[from, to)`, both live-word slices
-/// of equal length. Columns outside the range are untouched; padding bits
-/// stay zero because `src`'s are.
-pub(crate) fn xor_range(dst: &mut [u64], src: &[u64], from: usize, to: usize) {
-    if from >= to {
-        return;
-    }
-    let w0 = from / 64;
-    let w1 = (to - 1) / 64;
-    if w0 == w1 {
-        dst[w0] ^= src[w0] & mask_between(from - w0 * 64, to - w0 * 64);
-    } else {
-        dst[w0] ^= src[w0] & (u64::MAX << (from - w0 * 64));
-        for w in (w0 + 1)..w1 {
-            dst[w] ^= src[w];
-        }
-        dst[w1] ^= src[w1] & low_mask(to - w1 * 64);
-    }
-}
-
-/// XORs the whole of `src` into `dst`, live word for live word.
-pub(crate) fn xor_all(dst: &mut [u64], src: &[u64]) {
-    for (d, &s) in dst.iter_mut().zip(src) {
-        *d ^= s;
-    }
-}
-
-/// Bits `[lo, hi)` set within a single word, `0 <= lo < hi <= 64`.
-fn mask_between(lo: usize, hi: usize) -> u64 {
-    (u64::MAX << lo) & low_mask(hi)
-}
-
-/// The low `n` bits set, `1 <= n <= 64`.
-fn low_mask(n: usize) -> u64 {
-    if n >= 64 { u64::MAX } else { (1u64 << n) - 1 }
 }

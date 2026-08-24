@@ -204,8 +204,8 @@ checksum = "9e5e8f6c15a24b9a3ee5efec809ccd006d3b30e8b3bb63c39af737c7f87daa1d"
 
 [[package]]
 name = "fgf"
-version = "0.3.0"
-source = "git+https://github.com/nanithefkuc/fgf?rev=d0e331cec2e6ae5645e529597fa913db467a44cd#d0e331cec2e6ae5645e529597fa913db467a44cd"
+version = "0.7.0"
+source = "git+https://github.com/nanithefkuc/fgf?rev=d93ca678ad4278014d97ad140e23a75a0210e742#d93ca678ad4278014d97ad140e23a75a0210e742"
 dependencies = [
  "simdispatch",
 ]
@@ -469,7 +469,7 @@ checksum = "e6e4313cd5fcd3dad5cafa179702e2b244f760991f45397d14d4ebf38247da75"
 [[package]]
 name = "univariate"
 version = "0.0.0"
-source = "git+https://github.com/nanithefkuc/univariate?rev=487997ede763a49e68da101b3d5a08f48ffec4e4#487997ede763a49e68da101b3d5a08f48ffec4e4"
+source = "git+https://github.com/nanithefkuc/univariate?rev=664dda151776a1559123fb49ffff92f05c6d345f#664dda151776a1559123fb49ffff92f05c6d345f"
 dependencies = [
  "fgf",
 ]

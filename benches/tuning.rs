@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use fgf::field::Field;
-use fgf::{FieldKernels, Gf8, Gf16};
+use fgf::{FieldKernels, Gf8B, Gf16};
 use gfm::bits::{Ple as BitPle, PleScratch as BitPleScratch};
 use gfm::{BitMatrix, Matrix, Ple, PleScratch, SmallMatrix, SolveScratch};
 
@@ -122,7 +122,7 @@ fn bench_newton_john(c: &mut Criterion) {
     group.sample_size(10);
     group.measurement_time(Duration::from_secs(3));
     for n in [128usize, 256, 512, 1024] {
-        let matrix = dense_matrix::<Gf8>(n, 0x4E4A ^ n as u64);
+        let matrix = dense_matrix::<Gf8B>(n, 0x4E4A ^ n as u64);
         group.bench_with_input(BenchmarkId::new("blocked", n), &n, |b, _| {
             let mut scratch = PleScratch::new();
             b.iter(|| {
@@ -142,24 +142,24 @@ fn bench_newton_john(c: &mut Criterion) {
     group.finish();
 }
 
-fn full_rank_gf8<const K: usize>() -> Matrix<Gf8> {
+fn full_rank_gf8<const K: usize>() -> Matrix<Gf8B> {
     let mut state = 0x5A11 ^ K as u64;
-    let mut lower = [[<Gf8 as Field>::Elem::ZERO; K]; K];
+    let mut lower = [[<Gf8B as Field>::Elem::ZERO; K]; K];
     let mut upper = lower;
     for row in 0..K {
-        lower[row][row] = <Gf8 as Field>::Elem::ONE;
-        upper[row][row] = <Gf8 as Field>::Elem::ONE;
+        lower[row][row] = <Gf8B as Field>::Elem::ONE;
+        upper[row][row] = <Gf8B as Field>::Elem::ONE;
         for col in 0..row {
-            lower[row][col] = Gf8::read(&[(next(&mut state) >> 56) as u8]);
+            lower[row][col] = Gf8B::read(&[(next(&mut state) >> 56) as u8]);
         }
         for col in (row + 1)..K {
-            upper[row][col] = Gf8::read(&[(next(&mut state) >> 56) as u8]);
+            upper[row][col] = Gf8B::read(&[(next(&mut state) >> 56) as u8]);
         }
     }
-    let mut matrix = Matrix::<Gf8>::zeros(K, K).unwrap();
+    let mut matrix = Matrix::<Gf8B>::zeros(K, K).unwrap();
     for row in 0..K {
         for col in 0..K {
-            let mut value = <Gf8 as Field>::Elem::ZERO;
+            let mut value = <Gf8B as Field>::Elem::ZERO;
             for term in 0..K {
                 value = value.add(lower[row][term].mul(upper[term][col]));
             }
@@ -173,16 +173,16 @@ fn bench_small_order<const K: usize>(
     group: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>,
 ) {
     let matrix = full_rank_gf8::<K>();
-    let rhs = dense_rect::<Gf8>(K, 1024, 0x0052_4853 ^ K as u64);
-    let mut out = Matrix::<Gf8>::zeros(K, 1024).unwrap();
+    let rhs = dense_rect::<Gf8B>(K, 1024, 0x0052_4853 ^ K as u64);
+    let mut out = Matrix::<Gf8B>::zeros(K, 1024).unwrap();
     assert_eq!(
-        SmallMatrix::<Gf8, K>::from_matrix(&matrix).rank(),
+        SmallMatrix::<Gf8B, K>::from_matrix(&matrix).rank(),
         K,
         "benchmark matrix must be full rank"
     );
     group.bench_with_input(BenchmarkId::new("small", K), &K, |b, _| {
         b.iter(|| {
-            let small = SmallMatrix::<Gf8, K>::from_matrix(black_box(&matrix));
+            let small = SmallMatrix::<Gf8B, K>::from_matrix(black_box(&matrix));
             small
                 .solve_into(black_box(&rhs), black_box(&mut out))
                 .unwrap();
@@ -223,7 +223,7 @@ fn bench_small(c: &mut Criterion) {
 }
 
 fn benchmarks(c: &mut Criterion) {
-    bench_dense::<Gf8>(c);
+    bench_dense::<Gf8B>(c);
     bench_dense::<Gf16>(c);
     bench_newton_john(c);
     bench_bits(c);

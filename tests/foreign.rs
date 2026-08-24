@@ -4,7 +4,7 @@
 //! silently.
 //!
 //! Wired: FLINT's `fq_nmod_mat_lu` over GF(2^8) — FLINT with the modulus
-//! 0x11B is byte-compatible with `fgf`'s AES-polynomial `Gf8` encoding —
+//! 0x11B is byte-compatible with `fgf`'s AES-polynomial `Gf8B` encoding —
 //! plus the wider fields through the GF(2^8) subfield embedding (rank is
 //! preserved under field extension). M4RI's `mzd_echelonize` over GF(2),
 //! M4RIE's `mzed_ple` over GF(2^8) under the same `0x11B` field, and
@@ -56,7 +56,7 @@ fn fflas_absent_loud_skip() {
 #[cfg(gfm_flint)]
 mod flint {
     use super::*;
-    use fgf::{Field, Gf8, Gf16, Gf32, Gf64};
+    use fgf::{Field, Gf8B, Gf16, Gf32, Gf64};
     use gfm::{Matrix, Ple, PleScratch};
     use std::os::raw::{c_char, c_int, c_long, c_ulong};
 
@@ -147,14 +147,14 @@ mod flint {
             let cols = 1 + draw(&mut state, 24);
             let data = noise(rows * cols, state);
             assert_eq!(
-                gfm_rank::<Gf8>(&data, rows, cols) as i64,
+                gfm_rank::<Gf8B>(&data, rows, cols) as i64,
                 flint_gf256_rank(&data, rows, cols),
                 "GF(2^8) rank at {rows}x{cols}",
             );
         }
     }
 
-    /// Embeds a GF(2^8) matrix into the `Gf8` subfield of a tower field: the
+    /// Embeds a GF(2^8) matrix into the `Gf8B` subfield of a tower field: the
     /// subfield elements are exactly those with all tower components but the
     /// first equal to zero.
     fn embed<const W: usize>(data: &[u8]) -> Vec<u8> {
@@ -176,7 +176,7 @@ mod flint {
             state = state
                 .wrapping_mul(6_364_136_223_846_793_005)
                 .wrapping_add(1);
-            let base = fgf::gf8::Elem(x).mul(fgf::gf8::Elem(y));
+            let base = fgf::gf8b::Elem(x).mul(fgf::gf8b::Elem(y));
             let wide = Gf16::read(&[x, 0]).mul(Gf16::read(&[y, 0]));
             let mut buf = [0u8; 2];
             Gf16::write(&mut buf, wide);
@@ -258,7 +258,17 @@ mod m4ri {
                     }
                 }
             }
-            let m = BitMatrix::from_rows(rows, cols, &packed).unwrap();
+            // The same bits, as `fgf::bits` row bytes for gfm: little-endian
+            // word bytes are the byte-packed layout, trimmed per row.
+            let live = cols.div_ceil(8);
+            let bytes_in: Vec<u8> = packed
+                .chunks(words)
+                .flat_map(|row_words| {
+                    let row: Vec<u8> = row_words.iter().flat_map(|w| w.to_le_bytes()).collect();
+                    row[..live].to_vec()
+                })
+                .collect();
+            let m = BitMatrix::from_rows(rows, cols, &bytes_in).unwrap();
             let gfm = Ple::decompose(m, &mut PleScratch::new()).rank();
             assert_eq!(
                 gfm,
@@ -272,7 +282,7 @@ mod m4ri {
 #[cfg(gfm_m4rie)]
 mod m4rie {
     use super::*;
-    use fgf::Gf8;
+    use fgf::Gf8B;
     use gfm::{Matrix, Ple, PleScratch};
 
     unsafe extern "C" {
@@ -296,7 +306,7 @@ mod m4rie {
             // encoding identical to fgf's, so this exercises all 256 values.
             let data = noise(rows * cols, st);
             st = st.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
-            let m = Matrix::<Gf8>::from_rows(rows, cols, &data).unwrap();
+            let m = Matrix::<Gf8B>::from_rows(rows, cols, &data).unwrap();
             let gfm = Ple::decompose(m, &mut PleScratch::new()).rank();
             assert_eq!(
                 gfm,
@@ -338,16 +348,16 @@ mod fflas {
                 .iter()
                 .map(|&b| u8::from((b as usize).is_multiple_of(bias)))
                 .collect();
-            let words = cols.div_ceil(64);
-            let mut packed = vec![0u64; rows * words];
+            let live = cols.div_ceil(8);
+            let mut bytes_in = vec![0u8; rows * live];
             for r in 0..rows {
                 for c in 0..cols {
                     if flat[r * cols + c] == 1 {
-                        packed[r * words + c / 64] |= 1u64 << (c % 64);
+                        bytes_in[r * live + c / 8] |= 1 << (c % 8);
                     }
                 }
             }
-            let m = BitMatrix::from_rows(rows, cols, &packed).unwrap();
+            let m = BitMatrix::from_rows(rows, cols, &bytes_in).unwrap();
             let gfm = Ple::decompose(m, &mut PleScratch::new()).rank();
             assert_eq!(
                 gfm,

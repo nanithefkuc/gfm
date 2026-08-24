@@ -5,7 +5,7 @@ mod common;
 
 use common::{draw, noise, sample_dims};
 use fgf::field::Elem;
-use fgf::{FanPaar32, Gf8, Gf16, Gf64};
+use fgf::{FanPaar32, Gf8B, Gf16, Gf64};
 use gfm::dense::layout::{ALIGN, pitch_for};
 use gfm::{GeometryError, Matrix, Perm};
 
@@ -55,7 +55,7 @@ fn constructors_and_accessors() {
             }
         }
     }
-    check::<Gf8>();
+    check::<Gf8B>();
     check::<Gf16>();
     check::<Gf64>();
     check::<FanPaar32>();
@@ -90,7 +90,7 @@ fn from_rows_round_trips() {
 
 #[test]
 fn swap_rows_exchanges_logical_rows() {
-    let mut m = Matrix::<Gf8>::zeros(13, 17).unwrap();
+    let mut m = Matrix::<Gf8B>::zeros(13, 17).unwrap();
     fill_noise(&mut m, 0xAAAA);
     let (a, b) = (3usize, 11usize);
     let before_a = m.row(a).to_vec();
@@ -107,7 +107,7 @@ fn swap_rows_exchanges_logical_rows() {
 #[test]
 fn apply_row_perm_matches_permutation_of_indices() {
     let rows = 19;
-    let mut m = Matrix::<Gf8>::zeros(rows, 23).unwrap();
+    let mut m = Matrix::<Gf8B>::zeros(rows, 23).unwrap();
     fill_noise(&mut m, 0x1234);
     let p = random_perm(rows, 0x5678);
     // The logical content order after applying `p` equals `p` applied to the
@@ -157,7 +157,7 @@ fn compact_rows_preserves_logical_content() {
 
 #[test]
 fn views_see_the_same_rows() {
-    let mut m = Matrix::<Gf8>::zeros(21, 15).unwrap();
+    let mut m = Matrix::<Gf8B>::zeros(21, 15).unwrap();
     fill_noise(&mut m, 0x99);
     m.swap_rows(2, 19);
     let view = m.as_view();
@@ -184,10 +184,10 @@ fn views_see_the_same_rows() {
 
 #[test]
 fn mutable_view_edits_the_matrix() {
-    let mut m = Matrix::<Gf8>::zeros(9, 7).unwrap();
+    let mut m = Matrix::<Gf8B>::zeros(9, 7).unwrap();
     {
         let mut v = m.as_view_mut();
-        v.set(3, 4, fgf::gf8::Elem(0xAB));
+        v.set(3, 4, fgf::gf8b::Elem(0xAB));
         v.row_mut(5).fill(0x11);
         v.swap_rows(3, 5);
     }
@@ -195,13 +195,13 @@ fn mutable_view_edits_the_matrix() {
     assert_eq!(m.row(5)[4], 0xAB);
     assert!(m.row(5)[..4].iter().all(|&b| b == 0));
     assert!(m.row(5)[5..].iter().all(|&b| b == 0));
-    assert_eq!(m.get(5, 4), fgf::gf8::Elem(0xAB));
+    assert_eq!(m.get(5, 4), fgf::gf8b::Elem(0xAB));
 }
 
 #[test]
 fn geometry_errors_are_exact_and_state_preserving() {
     // `rows * pitch` overflow.
-    let err = Matrix::<Gf8>::zeros(usize::MAX / 16, 100).unwrap_err();
+    let err = Matrix::<Gf8B>::zeros(usize::MAX / 16, 100).unwrap_err();
     assert_eq!(
         err,
         GeometryError::Overflow {
@@ -228,7 +228,7 @@ fn geometry_errors_are_exact_and_state_preserving() {
         }
     );
     // Wrong element count.
-    let err = Matrix::<Gf8>::from_rows(2, 3, &[0u8; 5]).unwrap_err();
+    let err = Matrix::<Gf8B>::from_rows(2, 3, &[0u8; 5]).unwrap_err();
     assert_eq!(
         err,
         GeometryError::Shape {
@@ -237,7 +237,7 @@ fn geometry_errors_are_exact_and_state_preserving() {
         }
     );
     // A mismatched permutation leaves the matrix untouched.
-    let mut m = Matrix::<Gf8>::zeros(4, 4).unwrap();
+    let mut m = Matrix::<Gf8B>::zeros(4, 4).unwrap();
     fill_noise(&mut m, 0x42);
     let snapshot = m.clone();
     let err = m.apply_row_perm(&Perm::identity(3)).unwrap_err();
@@ -398,7 +398,7 @@ mod physical {
 
     #[test]
     fn layout_invariants_hold_for_all_fields() {
-        check_layout::<Gf8>();
+        check_layout::<Gf8B>();
         check_layout::<Gf16>();
         check_layout::<Gf32>();
         check_layout::<Gf64>();
@@ -411,7 +411,7 @@ mod physical {
     #[test]
     fn swap_rows_moves_no_data() {
         let rows = 11;
-        let mut m = Matrix::<Gf8>::zeros(rows, 40).unwrap();
+        let mut m = Matrix::<Gf8B>::zeros(rows, 40).unwrap();
         fill_noise(&mut m, 0xBEE0);
         let physical_before = m.pitched_buffer().to_vec();
         let map_before: Vec<usize> = (0..rows).map(|r| m.physical_row_index(r)).collect();

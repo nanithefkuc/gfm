@@ -5,7 +5,7 @@ use core::hint::black_box;
 use std::time::Duration;
 
 use criterion::{Criterion, criterion_group, criterion_main};
-use fgf::Gf8;
+use fgf::Gf8B;
 use fgf::field::Field;
 use gfm::{Hybrid, Matrix, Ple, PleScratch, SolveScratch};
 
@@ -45,13 +45,13 @@ fn support(columns: usize, weight: usize, state: &mut u64) -> Vec<u32> {
     result
 }
 
-fn system(columns: usize, symbol_bytes: usize) -> (Hybrid<Gf8>, Matrix<Gf8>, Matrix<Gf8>) {
+fn system(columns: usize, symbol_bytes: usize) -> (Hybrid<Gf8B>, Matrix<Gf8B>, Matrix<Gf8B>) {
     let mut state = 0x6330_1000;
     let overhead = (columns as f64).sqrt().ceil() as usize + 8;
     let rows = columns + overhead;
-    let mut hybrid = Hybrid::<Gf8>::new(columns, symbol_bytes);
-    let mut dense = Matrix::<Gf8>::zeros(rows, columns).unwrap();
-    let rhs = Matrix::<Gf8>::zeros(rows, symbol_bytes).unwrap();
+    let mut hybrid = Hybrid::<Gf8B>::new(columns, symbol_bytes);
+    let mut dense = Matrix::<Gf8B>::zeros(rows, columns).unwrap();
+    let rhs = Matrix::<Gf8B>::zeros(rows, symbol_bytes).unwrap();
     let zero_rhs = vec![0; symbol_bytes];
     for row in 0..rows {
         let row_support = support(
@@ -61,7 +61,7 @@ fn system(columns: usize, symbol_bytes: usize) -> (Hybrid<Gf8>, Matrix<Gf8>, Mat
         );
         hybrid.push_binary_row(&row_support, &zero_rhs);
         for &column in &row_support {
-            dense.set(row, column as usize, <Gf8 as Field>::Elem::ONE);
+            dense.set(row, column as usize, <Gf8B as Field>::Elem::ONE);
         }
     }
     (hybrid, dense, rhs)
@@ -71,7 +71,7 @@ fn benchmark(c: &mut Criterion) {
     const K: usize = 1_000;
     const SYMBOL_BYTES: usize = 1_024;
     let (mut hybrid, dense, rhs) = system(K, SYMBOL_BYTES);
-    let mut hybrid_values = Matrix::<Gf8>::zeros(K, SYMBOL_BYTES).unwrap();
+    let mut hybrid_values = Matrix::<Gf8B>::zeros(K, SYMBOL_BYTES).unwrap();
     let mut determined = vec![false; K];
     hybrid
         .solve_into(&mut hybrid_values, &mut determined)
@@ -79,7 +79,7 @@ fn benchmark(c: &mut Criterion) {
 
     let mut ple_scratch = PleScratch::new();
     let mut solve_scratch = SolveScratch::new();
-    let mut dense_values = Matrix::<Gf8>::zeros(K, SYMBOL_BYTES).unwrap();
+    let mut dense_values = Matrix::<Gf8B>::zeros(K, SYMBOL_BYTES).unwrap();
 
     let mut group = c.benchmark_group("raptorq_shaped_k1000");
     group.sample_size(10);

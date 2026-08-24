@@ -7,7 +7,7 @@ use std::alloc::{GlobalAlloc, Layout, System};
 use std::hint::black_box;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use fgf::Gf8;
+use fgf::Gf8B;
 use fgf::field::{Elem, Field};
 use gfm::{ReduceError, WeakPopovRow, WeakPopovScratch, weak_popov, weak_popov_with_scratch};
 
@@ -30,7 +30,7 @@ unsafe impl GlobalAlloc for CountingAllocator {
 #[global_allocator]
 static GLOBAL: CountingAllocator = CountingAllocator;
 
-type E = <Gf8 as Field>::Elem;
+type E = <Gf8B as Field>::Elem;
 
 /// A weak-Popov row whose columns are pre-sized, so no reduction step grows or
 /// allocates its coefficient storage.
@@ -61,7 +61,7 @@ impl FixedRow {
     }
 }
 
-impl WeakPopovRow<Gf8> for FixedRow {
+impl WeakPopovRow<Gf8B> for FixedRow {
     type Error = ReduceError;
 
     fn column_count(&self) -> usize {
@@ -123,15 +123,15 @@ fn scratch_reuse_reduces_without_allocating() {
 
     // Warm-up: the first reduction may allocate the scratch's column buffer.
     let mut warm = basis(&[&[0, 1], &[1]], &[&[1], &[]], capacity);
-    weak_popov_with_scratch::<Gf8, _>(&mut warm, &shifts, &mut scratch).unwrap();
+    weak_popov_with_scratch::<Gf8B, _>(&mut warm, &shifts, &mut scratch).unwrap();
 
     // Build the measured inputs outside the counted window.
     let mut first = basis(&[&[0, 1], &[1]], &[&[1], &[]], capacity);
     let mut second = basis(&[&[1, 1], &[1]], &[&[0, 1], &[1]], capacity);
 
     let before = ALLOCATIONS.load(Ordering::SeqCst);
-    weak_popov_with_scratch::<Gf8, _>(black_box(&mut first), &shifts, &mut scratch).unwrap();
-    weak_popov_with_scratch::<Gf8, _>(black_box(&mut second), &shifts, &mut scratch).unwrap();
+    weak_popov_with_scratch::<Gf8B, _>(black_box(&mut first), &shifts, &mut scratch).unwrap();
+    weak_popov_with_scratch::<Gf8B, _>(black_box(&mut second), &shifts, &mut scratch).unwrap();
     let allocations = ALLOCATIONS.load(Ordering::SeqCst) - before;
 
     assert_eq!(
@@ -141,7 +141,7 @@ fn scratch_reuse_reduces_without_allocating() {
 
     // The reused-scratch result matches the standalone entry point exactly.
     let mut plain = basis(&[&[1, 1], &[1]], &[&[0, 1], &[1]], capacity);
-    weak_popov::<Gf8, _>(&mut plain, &shifts).unwrap();
+    weak_popov::<Gf8B, _>(&mut plain, &shifts).unwrap();
     assert_eq!(
         FixedRow::leading_columns(&second, &shifts),
         FixedRow::leading_columns(&plain, &shifts),

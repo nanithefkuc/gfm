@@ -4,9 +4,11 @@
 //! arithmetic throughout — additions are XORs, every pivot is one, and no
 //! normalization is ever needed.
 
+use fgf::bits;
+
 use crate::SolveError;
 use crate::bits::BitMatrix;
-use crate::bits::ple::{Ple, clear_prefix, xor_all};
+use crate::bits::ple::Ple;
 
 /// Reusable workspace for [`Ple::solve_into`].
 ///
@@ -91,7 +93,8 @@ impl Ple {
             // diagonal (permuted columns `0..piv`) are not part of the
             // echelon form and must not enter the back-substitution.
             out.copy_row_from(piv, lu, piv);
-            clear_prefix(out.live_row_mut(piv), piv);
+            let cols = out.cols();
+            bits::clear_range(out.live_row_mut(piv), cols, 0, piv);
         }
         out.apply_col_perm_inv(self.q_perm());
         for piv in (0..rank).rev() {
@@ -99,7 +102,7 @@ impl Ple {
             for row in 0..piv {
                 if out.get(row, pivot_col) {
                     let (row_dst, row_src) = out.two_live_rows(row, piv);
-                    xor_all(row_dst, row_src);
+                    bits::xor(row_dst, row_src);
                 }
             }
         }
@@ -185,7 +188,7 @@ impl Ple {
             for src in 0..top {
                 if lu.get(row, src) {
                     let (row_dst, row_src) = ws.two_live_rows(row, src);
-                    xor_all(row_dst, row_src);
+                    bits::xor(row_dst, row_src);
                 }
             }
         }
@@ -204,7 +207,7 @@ impl Ple {
             for term in (piv + 1)..rank {
                 if lu.get(piv, term) {
                     let (row_dst, row_src) = out.two_live_rows(piv, term);
-                    xor_all(row_dst, row_src);
+                    bits::xor(row_dst, row_src);
                 }
             }
             // Pivot is one; no scaling.
@@ -248,7 +251,7 @@ impl Ple {
             for src in 0..row {
                 if lu.get(row, src) {
                     let (row_dst, row_src) = out.two_live_rows(row, src);
-                    xor_all(row_dst, row_src);
+                    bits::xor(row_dst, row_src);
                 }
             }
         }
@@ -256,7 +259,7 @@ impl Ple {
             for term in (piv + 1)..order {
                 if lu.get(piv, term) {
                     let (row_dst, row_src) = out.two_live_rows(piv, term);
-                    xor_all(row_dst, row_src);
+                    bits::xor(row_dst, row_src);
                 }
             }
             // Pivot is one; no scaling.

@@ -10,7 +10,7 @@ mod common;
 
 use common::draw;
 use fgf::field::{Elem, Field};
-use fgf::{FieldKernels, Gf8, Gf16};
+use fgf::{FieldKernels, Gf8B, Gf16};
 use gfm::{DenseRow, DenseRows, Hybrid, Matrix, Ple, PleScratch, SolveError, SolveScratch};
 type Equation<F> = (Vec<u32>, Vec<<F as Field>::Elem>, Vec<u8>);
 
@@ -228,12 +228,12 @@ fn random_sparse_matches_ple() {
         let n = 8 + draw(&mut st, 40);
         let m = n + draw(&mut st, 20); // over-determined-ish
         let sym = 1 + draw(&mut st, 3);
-        let x = random_solution::<Gf8>(n, sym, seed ^ 0x1234);
-        let mut sys = System::<Gf8>::new(n, sym);
+        let x = random_solution::<Gf8B>(n, sym, seed ^ 0x1234);
+        let mut sys = System::<Gf8B>::new(n, sym);
         for _ in 0..m {
             let w = 1 + draw(&mut st, 5);
             let sup = support(n, w, &mut st);
-            sys.push_consistent(sup.clone(), vec![<Gf8 as Field>::Elem::ONE; sup.len()], &x);
+            sys.push_consistent(sup.clone(), vec![<Gf8B as Field>::Elem::ONE; sup.len()], &x);
         }
         assert_matches_ple(&sys);
     }
@@ -246,11 +246,11 @@ fn ldpc_shaped_matches_ple() {
         let mut st = 0x1D0C_0000 ^ seed;
         let n = 20 + draw(&mut st, 40);
         let sym = 2;
-        let x = random_solution::<Gf8>(n, sym, seed);
-        let mut sys = System::<Gf8>::new(n, sym);
+        let x = random_solution::<Gf8B>(n, sym, seed);
+        let mut sys = System::<Gf8B>::new(n, sym);
         for _ in 0..(n + n / 2) {
             let sup = support(n, 3, &mut st);
-            sys.push_consistent(sup.clone(), vec![<Gf8 as Field>::Elem::ONE; sup.len()], &x);
+            sys.push_consistent(sup.clone(), vec![<Gf8B as Field>::Elem::ONE; sup.len()], &x);
         }
         assert_matches_ple(&sys);
     }
@@ -266,8 +266,8 @@ fn stopping_set_shaped_matches_ple() {
         let sym = 2;
         let s_size = 4 + draw(&mut st, 4);
         let s: Vec<u32> = (0..s_size as u32).collect();
-        let x = random_solution::<Gf8>(n, sym, seed);
-        let mut sys = System::<Gf8>::new(n, sym);
+        let x = random_solution::<Gf8B>(n, sym, seed);
+        let mut sys = System::<Gf8B>::new(n, sym);
         // Rows over S (each two S-columns plus an outside column).
         for _ in 0..(n) {
             let a = s[draw(&mut st, s.len())];
@@ -279,12 +279,12 @@ fn stopping_set_shaped_matches_ple() {
             let mut sup = vec![a, b, outside];
             sup.sort_unstable();
             sup.dedup();
-            sys.push_consistent(sup.clone(), vec![<Gf8 as Field>::Elem::ONE; sup.len()], &x);
+            sys.push_consistent(sup.clone(), vec![<Gf8B as Field>::Elem::ONE; sup.len()], &x);
         }
         // Plenty of light rows elsewhere for overall solvability.
         for _ in 0..n {
             let sup = support(n, 2, &mut st);
-            sys.push_consistent(sup.clone(), vec![<Gf8 as Field>::Elem::ONE; sup.len()], &x);
+            sys.push_consistent(sup.clone(), vec![<Gf8B as Field>::Elem::ONE; sup.len()], &x);
         }
         assert_matches_ple(&sys);
     }
@@ -297,11 +297,11 @@ fn field_band_matches_ple() {
         let mut st = 0xF1E1_0000 ^ seed;
         let n = 16 + draw(&mut st, 24);
         let sym = 2;
-        let x = random_solution::<Gf8>(n, sym, seed);
-        let mut sys = System::<Gf8>::new(n, sym);
+        let x = random_solution::<Gf8B>(n, sym, seed);
+        let mut sys = System::<Gf8B>::new(n, sym);
         for _ in 0..n {
             let sup = support(n, 3, &mut st);
-            sys.push_consistent(sup.clone(), vec![<Gf8 as Field>::Elem::ONE; sup.len()], &x);
+            sys.push_consistent(sup.clone(), vec![<Gf8B as Field>::Elem::ONE; sup.len()], &x);
         }
         // A few dense field rows over all columns.
         for _ in 0..6 {
@@ -309,7 +309,7 @@ fn field_band_matches_ple() {
             let coeffs: Vec<_> = (0..n)
                 .map(|_| {
                     let v = 1 + draw(&mut st, 255);
-                    <Gf8 as Field>::read(&[v as u8])
+                    <Gf8B as Field>::read(&[v as u8])
                 })
                 .collect();
             sys.push_consistent(sup, coeffs, &x);
@@ -327,11 +327,11 @@ fn compact_dispatch_covers_max_order() {
     // nonzero, so peeling inactivates 64 columns before the final pivot.
     let n = 65;
     let sym = 2;
-    let x = random_solution::<Gf8>(n, sym, 0x64_C0FF);
+    let x = random_solution::<Gf8B>(n, sym, 0x64_C0FF);
     let support: Vec<u32> = (0..n as u32).collect();
-    let one = <Gf8 as Field>::Elem::ONE;
-    let diagonal = Gf8::read(&[2]);
-    let mut sys = System::<Gf8>::new(n, sym);
+    let one = <Gf8B as Field>::Elem::ONE;
+    let diagonal = Gf8B::read(&[2]);
+    let mut sys = System::<Gf8B>::new(n, sym);
     for row in 0..n {
         let mut coefficients = vec![one; n];
         coefficients[row] = diagonal;
@@ -341,7 +341,7 @@ fn compact_dispatch_covers_max_order() {
     let (solution, stats) = sys.build_hybrid().solve_with_stats(true).unwrap();
     assert!(solution.is_full_rank());
     assert_eq!(stats.inactivations, 64);
-    assert!(sys.satisfied_by(|column| read_row::<Gf8>(solution.value(column), sym)));
+    assert!(sys.satisfied_by(|column| read_row::<Gf8B>(solution.value(column), sym)));
 }
 
 #[test]
@@ -350,11 +350,11 @@ fn inconsistent_systems_are_rejected() {
         let mut st = 0x1FC0_0000 ^ seed;
         let n = 10 + draw(&mut st, 20);
         let sym = 2;
-        let x = random_solution::<Gf8>(n, sym, seed);
-        let mut sys = System::<Gf8>::new(n, sym);
+        let x = random_solution::<Gf8B>(n, sym, seed);
+        let mut sys = System::<Gf8B>::new(n, sym);
         for _ in 0..(n + 5) {
             let sup = support(n, 3, &mut st);
-            sys.push_consistent(sup.clone(), vec![<Gf8 as Field>::Elem::ONE; sup.len()], &x);
+            sys.push_consistent(sup.clone(), vec![<Gf8B as Field>::Elem::ONE; sup.len()], &x);
         }
         // Duplicate an existing row's coefficients with a corrupted RHS.
         let (sup, co, mut rhs) = sys.rows[0].clone();
@@ -399,11 +399,11 @@ fn assert_same_solution<F: FieldKernels>(
 fn deferred_is_byte_identical_and_uses_fewer_row_ops() {
     let n = 32;
     let sym = 64;
-    let x = random_solution::<Gf8>(n, sym, 0xD3FE_0001);
-    let mut sys = System::<Gf8>::new(n, sym);
+    let x = random_solution::<Gf8B>(n, sym, 0xD3FE_0001);
+    let mut sys = System::<Gf8B>::new(n, sym);
     for column in 0..n {
         let support = vec![column as u32];
-        sys.push_consistent(support.clone(), vec![<Gf8 as Field>::Elem::ONE], &x);
+        sys.push_consistent(support.clone(), vec![<Gf8B as Field>::Elem::ONE], &x);
     }
     // Redundant received equations: eager application updates each duplicate;
     // deferred replay omits them from the independent dense/pivot set.
@@ -412,7 +412,7 @@ fn deferred_is_byte_identical_and_uses_fewer_row_ops() {
             let other = (column + repeat + 1) % n;
             let mut support = vec![column as u32, other as u32];
             support.sort_unstable();
-            sys.push_consistent(support, vec![<Gf8 as Field>::Elem::ONE; 2], &x);
+            sys.push_consistent(support, vec![<Gf8B as Field>::Elem::ONE; 2], &x);
         }
     }
 
@@ -433,9 +433,9 @@ fn field_band_widens_exactly_the_rows_it_touches() {
     let band = 8;
     let n = band * 2;
     let sym = 4;
-    let x = random_solution::<Gf8>(n, sym, 0xBADD_0001);
-    let mut sys = System::<Gf8>::new(n, sym);
-    let alpha = <Gf8 as Field>::read(&[2]);
+    let x = random_solution::<Gf8B>(n, sym, 0xBADD_0001);
+    let mut sys = System::<Gf8B>::new(n, sym);
+    let alpha = <Gf8B as Field>::read(&[2]);
 
     // All field pivots precede their binary targets. Each pivot touches one
     // distinct binary row, so exactly `band` transitions are necessary.
@@ -445,7 +445,7 @@ fn field_band_widens_exactly_the_rows_it_touches() {
     for index in 0..band {
         sys.push_consistent(
             vec![(2 * index) as u32, (2 * index + 1) as u32],
-            vec![<Gf8 as Field>::Elem::ONE; 2],
+            vec![<Gf8B as Field>::Elem::ONE; 2],
             &x,
         );
     }
@@ -470,16 +470,16 @@ fn rfc_degree(value: usize, columns: usize) -> usize {
 }
 
 #[cfg(feature = "internals")]
-fn rfc_degree_system(columns: usize, seed: u64) -> System<Gf8> {
+fn rfc_degree_system(columns: usize, seed: u64) -> System<Gf8B> {
     let mut state = seed;
     let overhead = (columns as f64).sqrt().ceil() as usize + 8;
-    let mut system = System::<Gf8>::new(columns, 1);
+    let mut system = System::<Gf8B>::new(columns, 1);
     for _ in 0..(columns + overhead) {
         let degree = rfc_degree(draw(&mut state, 1 << 20), columns);
         let support = support(columns, degree, &mut state);
         system.rows.push((
             support.clone(),
-            vec![<Gf8 as Field>::Elem::ONE; support.len()],
+            vec![<Gf8B as Field>::Elem::ONE; support.len()],
             vec![0],
         ));
     }
@@ -530,19 +530,19 @@ fn initial_inactive_matches_ple() {
         let n = 8 + draw(&mut st, 40);
         let m = n / 2 + draw(&mut st, n);
         let sym = 1 + draw(&mut st, 3);
-        let x = random_solution::<Gf8>(n, sym, seed ^ 0x6330);
-        let mut sys = System::<Gf8>::new(n, sym);
+        let x = random_solution::<Gf8B>(n, sym, seed ^ 0x6330);
+        let mut sys = System::<Gf8B>::new(n, sym);
         for _ in 0..m {
             let w = 1 + draw(&mut st, 5);
             let sup = support(n, w, &mut st);
             if draw(&mut st, 4) == 0 {
-                let coeffs: Vec<<Gf8 as Field>::Elem> = sup
+                let coeffs: Vec<<Gf8B as Field>::Elem> = sup
                     .iter()
-                    .map(|_| <Gf8 as Field>::read(&[(1 + draw(&mut st, 255)) as u8]))
+                    .map(|_| <Gf8B as Field>::read(&[(1 + draw(&mut st, 255)) as u8]))
                     .collect();
                 sys.push_consistent(sup, coeffs, &x);
             } else {
-                sys.push_consistent(sup.clone(), vec![<Gf8 as Field>::Elem::ONE; sup.len()], &x);
+                sys.push_consistent(sup.clone(), vec![<Gf8B as Field>::Elem::ONE; sup.len()], &x);
             }
         }
         let initial = subset(n, draw(&mut st, n + 1), &mut st);
@@ -558,12 +558,12 @@ fn all_initially_inactive_matches_ple() {
         let mut st = 0x0A11_0000 ^ seed;
         let n = 6 + draw(&mut st, 20);
         let sym = 2;
-        let x = random_solution::<Gf8>(n, sym, seed);
-        let mut sys = System::<Gf8>::new(n, sym);
+        let x = random_solution::<Gf8B>(n, sym, seed);
+        let mut sys = System::<Gf8B>::new(n, sym);
         for _ in 0..(n + 3) {
             let w = 1 + draw(&mut st, 4);
             let sup = support(n, w, &mut st);
-            sys.push_consistent(sup.clone(), vec![<Gf8 as Field>::Elem::ONE; sup.len()], &x);
+            sys.push_consistent(sup.clone(), vec![<Gf8B as Field>::Elem::ONE; sup.len()], &x);
         }
         let initial: Vec<u32> = (0..n as u32).collect();
         assert_matches_ple_with(&sys, &initial);
@@ -576,17 +576,17 @@ fn initial_inactive_inconsistent_systems_are_rejected() {
         let mut st = 0x1FC0_6330 ^ seed;
         let n = 10 + draw(&mut st, 20);
         let sym = 1;
-        let x = random_solution::<Gf8>(n, sym, seed);
-        let mut sys = System::<Gf8>::new(n, sym);
+        let x = random_solution::<Gf8B>(n, sym, seed);
+        let mut sys = System::<Gf8B>::new(n, sym);
         for column in 0..n {
-            sys.push_consistent(vec![column as u32], vec![<Gf8 as Field>::Elem::ONE], &x);
+            sys.push_consistent(vec![column as u32], vec![<Gf8B as Field>::Elem::ONE], &x);
         }
         // The identity rows force a unique solution; a unit row on column 0
         // with a flipped payload makes the system inconsistent.
         sys.rows.push((
             vec![0],
-            vec![<Gf8 as Field>::Elem::ONE],
-            System::<Gf8>::pack(&[x[0][0].add(<Gf8 as Field>::Elem::ONE)]),
+            vec![<Gf8B as Field>::Elem::ONE],
+            System::<Gf8B>::pack(&[x[0][0].add(<Gf8B as Field>::Elem::ONE)]),
         ));
         let initial = subset(n, draw(&mut st, n), &mut st);
         let mut hybrid = sys.build_hybrid_with(&initial);
@@ -603,14 +603,14 @@ fn initial_inactive_set_is_counted_once_and_stable_across_solves() {
     let n = 40;
     let sym = 8;
     let mut st = 0x0517_0001u64;
-    let x = random_solution::<Gf8>(n, sym, 0x0517_0002);
-    let mut sys = System::<Gf8>::new(n, sym);
+    let x = random_solution::<Gf8B>(n, sym, 0x0517_0002);
+    let mut sys = System::<Gf8B>::new(n, sym);
     for column in 0..n {
-        sys.push_consistent(vec![column as u32], vec![<Gf8 as Field>::Elem::ONE], &x);
+        sys.push_consistent(vec![column as u32], vec![<Gf8B as Field>::Elem::ONE], &x);
     }
     for _ in 0..n {
         let sup = support(n, 3, &mut st);
-        sys.push_consistent(sup.clone(), vec![<Gf8 as Field>::Elem::ONE; sup.len()], &x);
+        sys.push_consistent(sup.clone(), vec![<Gf8B as Field>::Elem::ONE; sup.len()], &x);
     }
     let initial: Vec<u32> = (30..n as u32).collect();
     let mut hybrid = sys.build_hybrid_with(&initial);
@@ -628,24 +628,24 @@ fn initial_inactive_set_is_counted_once_and_stable_across_solves() {
 /// plus a dense field-valued band over the trailing `band` columns (the
 /// HDPC shape).
 #[cfg(feature = "internals")]
-fn rfc_shaped_system(columns: usize, band: usize, seed: u64) -> System<Gf8> {
+fn rfc_shaped_system(columns: usize, band: usize, seed: u64) -> System<Gf8B> {
     let mut state = seed;
     let lt_columns = columns - band;
     let overhead = (lt_columns as f64).sqrt().ceil() as usize + 8;
-    let mut system = System::<Gf8>::new(columns, 1);
+    let mut system = System::<Gf8B>::new(columns, 1);
     for _ in 0..(lt_columns + overhead) {
         let degree = rfc_degree(draw(&mut state, 1 << 20), lt_columns);
         let support = support(lt_columns, degree, &mut state);
         system.rows.push((
             support.clone(),
-            vec![<Gf8 as Field>::Elem::ONE; support.len()],
+            vec![<Gf8B as Field>::Elem::ONE; support.len()],
             vec![0],
         ));
     }
-    let alpha = <Gf8 as Field>::read(&[2]);
+    let alpha = <Gf8B as Field>::read(&[2]);
     for index in 0..band {
         let support: Vec<u32> = ((lt_columns + index)..columns).map(|c| c as u32).collect();
-        let mut coefficient = <Gf8 as Field>::Elem::ONE;
+        let mut coefficient = <Gf8B as Field>::Elem::ONE;
         let coeffs: Vec<_> = support
             .iter()
             .map(|_| {
@@ -689,18 +689,22 @@ fn rfc_shaped_pi_initialization_keeps_sqrt_dense_block() {
 #[test]
 #[should_panic(expected = "sorted and distinct")]
 fn with_initial_inactive_rejects_unsorted() {
-    _ = Hybrid::<Gf8>::with_initial_inactive(4, 1, &[2, 2]);
+    _ = Hybrid::<Gf8B>::with_initial_inactive(4, 1, &[2, 2]);
 }
 
 #[test]
 #[should_panic(expected = "out of range")]
 fn with_initial_inactive_rejects_out_of_range() {
-    _ = Hybrid::<Gf8>::with_initial_inactive(4, 1, &[4]);
+    _ = Hybrid::<Gf8B>::with_initial_inactive(4, 1, &[4]);
 }
 
 /// Builds the solver with the last `band` rows deferred instead of eager.
-fn build_hybrid_deferring(sys: &System<Gf8>, band: usize, initial_inactive: &[u32]) -> Hybrid<Gf8> {
-    let mut hybrid = Hybrid::<Gf8>::with_initial_inactive(sys.n, sys.sym_len(), initial_inactive);
+fn build_hybrid_deferring(
+    sys: &System<Gf8B>,
+    band: usize,
+    initial_inactive: &[u32],
+) -> Hybrid<Gf8B> {
+    let mut hybrid = Hybrid::<Gf8B>::with_initial_inactive(sys.n, sys.sym_len(), initial_inactive);
     let defer_from = sys.rows.len() - band;
     for (index, (support, coeffs, rhs)) in sys.rows.iter().enumerate() {
         if index >= defer_from {
@@ -721,7 +725,7 @@ fn dense_band_system(
     n: usize,
     band: usize,
     seed: u64,
-) -> (System<Gf8>, Vec<u32>, Vec<Vec<<Gf8 as Field>::Elem>>) {
+) -> (System<Gf8B>, Vec<u32>, Vec<Vec<<Gf8B as Field>::Elem>>) {
     let mut state = seed | 1;
     let mut x = Vec::with_capacity(n);
     for _ in 0..n {
@@ -730,15 +734,15 @@ fn dense_band_system(
             state = state
                 .wrapping_mul(6_364_136_223_846_793_005)
                 .wrapping_add(1);
-            row.push(<Gf8 as Field>::read(&[(state >> 33) as u8]));
+            row.push(<Gf8B as Field>::read(&[(state >> 33) as u8]));
         }
         x.push(row);
     }
-    let mut sys = System::<Gf8>::new(n, 2);
+    let mut sys = System::<Gf8B>::new(n, 2);
     for _ in 0..(n + 4) {
         let w = 1 + draw(&mut state, 4);
         let sup = support(n - band, w, &mut state);
-        sys.push_consistent(sup.clone(), vec![<Gf8 as Field>::Elem::ONE; sup.len()], &x);
+        sys.push_consistent(sup.clone(), vec![<Gf8B as Field>::Elem::ONE; sup.len()], &x);
     }
     for _ in 0..band {
         let sup: Vec<u32> = (0..n as u32).collect();
@@ -747,7 +751,7 @@ fn dense_band_system(
                 state = state
                     .wrapping_mul(6_364_136_223_846_793_005)
                     .wrapping_add(1);
-                <Gf8 as Field>::read(&[1 + (state >> 33) as u8 % 255])
+                <Gf8B as Field>::read(&[1 + (state >> 33) as u8 % 255])
             })
             .collect();
         sys.push_consistent(sup, coeffs, &x);
@@ -796,13 +800,13 @@ fn deferred_dense_band_inconsistent_is_rejected() {
     // poisoned payload contradicts it, and the post-release
     // verification must catch the inconsistency.
     for column in 0..sys.n {
-        sys.push_consistent(vec![column as u32], vec![<Gf8 as Field>::Elem::ONE], &x);
+        sys.push_consistent(vec![column as u32], vec![<Gf8B as Field>::Elem::ONE], &x);
     }
     let mut poisoned = vec![0u8; sys.sym_len()];
     poisoned[0] ^= 1;
     sys.rows.push((
         (0..sys.n as u32).collect(),
-        vec![<Gf8 as Field>::Elem::ONE; sys.n],
+        vec![<Gf8B as Field>::Elem::ONE; sys.n],
         poisoned,
     ));
     let mut hybrid = build_hybrid_deferring(&sys, 1, &initial);

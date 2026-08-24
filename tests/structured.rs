@@ -9,7 +9,7 @@ mod common;
 
 use common::noise;
 use fgf::field::{Elem, Field};
-use fgf::{FanPaar8, FanPaar16, FanPaar32, FanPaar64, FieldKernels, Gf8, Gf16, Gf32, Gf64};
+use fgf::{FanPaar8, FanPaar16, FanPaar32, FanPaar64, FieldKernels, Gf8B, Gf16, Gf32, Gf64};
 use gfm::{
     Cauchy, GeometryError, Matrix, Ple, PleScratch, Vandermonde, batch_invert,
     cauchy_inverse_coefficients_into, cauchy_scratch_len,
@@ -75,7 +75,7 @@ fn check_batch_invert<F: FieldKernels>(seed: u64) {
 
 #[test]
 fn batch_invert_matches_elementwise_every_field() {
-    check_batch_invert::<Gf8>(0x1000);
+    check_batch_invert::<Gf8B>(0x1000);
     check_batch_invert::<Gf16>(0x2000);
     check_batch_invert::<Gf32>(0x3000);
     check_batch_invert::<Gf64>(0x4000);
@@ -89,15 +89,15 @@ fn batch_invert_matches_elementwise_every_field() {
 fn batch_invert_handles_the_zero_element() {
     // inv(0) == 0 (I3): a zero in the buffer must not collapse the product.
     let mut v = [
-        Gf8::read(&[0]),
-        Gf8::read(&[5]),
-        Gf8::read(&[0]),
-        Gf8::read(&[9]),
+        Gf8B::read(&[0]),
+        Gf8B::read(&[5]),
+        Gf8B::read(&[0]),
+        Gf8B::read(&[9]),
     ];
     let expect: Vec<_> = v.iter().map(|e| e.inv()).collect();
-    batch_invert::<Gf8>(&mut v);
+    batch_invert::<Gf8B>(&mut v);
     assert_eq!(v.to_vec(), expect);
-    assert_eq!(v[0], <Gf8 as fgf::Field>::Elem::ZERO);
+    assert_eq!(v[0], <Gf8B as fgf::Field>::Elem::ZERO);
 }
 
 /// Materializes a square Cauchy, checks `C·C⁻¹ == I` by independent multiply,
@@ -132,16 +132,16 @@ fn check_cauchy_square<F: FieldKernels>(cauchy: &Cauchy<F>) {
 #[test]
 fn cauchy_inverse_indexed_policy() {
     for k in 1..=64usize {
-        let cauchy = Cauchy::<Gf8>::indexed(k, k).expect("k+k <= 256");
+        let cauchy = Cauchy::<Gf8B>::indexed(k, k).expect("k+k <= 256");
         check_cauchy_square(&cauchy);
     }
 }
 
 #[test]
 fn cauchy_inverse_geometric_policy() {
-    let g = <Gf8 as fgf::Field>::GENERATOR;
+    let g = <Gf8B as fgf::Field>::GENERATOR;
     for k in 1..=64usize {
-        let cauchy = Cauchy::<Gf8>::geometric(k, k, g).expect("generator has full order");
+        let cauchy = Cauchy::<Gf8B>::geometric(k, k, g).expect("generator has full order");
         check_cauchy_square(&cauchy);
     }
 }
@@ -157,25 +157,28 @@ fn cauchy_inverse_wider_fields() {
 #[test]
 fn cauchy_from_points_arbitrary() {
     // The pool policy: arbitrary disjoint sets. Use a scattered selection.
-    let row: Vec<_> = [1u64, 7, 42, 200].iter().map(|&i| elem::<Gf8>(i)).collect();
+    let row: Vec<_> = [1u64, 7, 42, 200]
+        .iter()
+        .map(|&i| elem::<Gf8B>(i))
+        .collect();
     let col: Vec<_> = [3u64, 9, 100, 255]
         .iter()
-        .map(|&i| elem::<Gf8>(i))
+        .map(|&i| elem::<Gf8B>(i))
         .collect();
-    let cauchy = Cauchy::<Gf8>::from_points(&row, &col).unwrap();
+    let cauchy = Cauchy::<Gf8B>::from_points(&row, &col).unwrap();
     check_cauchy_square(&cauchy);
 }
 
 #[test]
 fn cauchy_fused_extra_coefficients_match_multiply() {
-    let row: Vec<_> = [1u64, 7, 42].iter().map(|&i| elem::<Gf8>(i)).collect();
-    let col: Vec<_> = [3u64, 9, 100].iter().map(|&i| elem::<Gf8>(i)).collect();
-    let extra: Vec<_> = [17u64, 33].iter().map(|&i| elem::<Gf8>(i)).collect();
+    let row: Vec<_> = [1u64, 7, 42].iter().map(|&i| elem::<Gf8B>(i)).collect();
+    let col: Vec<_> = [3u64, 9, 100].iter().map(|&i| elem::<Gf8B>(i)).collect();
+    let extra: Vec<_> = [17u64, 33].iter().map(|&i| elem::<Gf8B>(i)).collect();
     let k = row.len();
-    let mut inverse = vec![<Gf8 as Field>::Elem::ZERO; k * k];
-    let mut fused = vec![<Gf8 as Field>::Elem::ZERO; extra.len() * k];
-    let mut scratch = vec![<Gf8 as Field>::Elem::ZERO; cauchy_scratch_len(k)];
-    cauchy_inverse_coefficients_into::<Gf8>(
+    let mut inverse = vec![<Gf8B as Field>::Elem::ZERO; k * k];
+    let mut fused = vec![<Gf8B as Field>::Elem::ZERO; extra.len() * k];
+    let mut scratch = vec![<Gf8B as Field>::Elem::ZERO; cauchy_scratch_len(k)];
+    cauchy_inverse_coefficients_into::<Gf8B>(
         &row,
         &col,
         &extra,
@@ -186,7 +189,7 @@ fn cauchy_fused_extra_coefficients_match_multiply() {
 
     for (z_pos, &z) in extra.iter().enumerate() {
         for inverse_row in 0..k {
-            let expected = (0..k).fold(<Gf8 as Field>::Elem::ZERO, |acc, i| {
+            let expected = (0..k).fold(<Gf8B as Field>::Elem::ZERO, |acc, i| {
                 acc.add(inverse[inverse_row * k + i].mul(row[i].add(z).inv()))
             });
             assert_eq!(fused[z_pos * k + inverse_row], expected);
@@ -200,31 +203,31 @@ fn cauchy_is_mds_matches_reference() {
     for k in 1..=5usize {
         for m in 1..=5usize {
             assert!(
-                Cauchy::<Gf8>::indexed(k, m).unwrap().is_mds(),
+                Cauchy::<Gf8B>::indexed(k, m).unwrap().is_mds(),
                 "indexed Cauchy {k}x{m} should be MDS"
             );
         }
     }
     // The geometric policy is MDS too.
-    let g = <Gf8 as fgf::Field>::GENERATOR;
-    assert!(Cauchy::<Gf8>::geometric(4, 4, g).unwrap().is_mds());
+    let g = <Gf8B as fgf::Field>::GENERATOR;
+    assert!(Cauchy::<Gf8B>::geometric(4, 4, g).unwrap().is_mds());
 }
 
 #[test]
 fn cauchy_rejects_bad_construction() {
     // Capacity: too many points for the field.
     assert_eq!(
-        Cauchy::<Gf8>::indexed(200, 200).unwrap_err(),
+        Cauchy::<Gf8B>::indexed(200, 200).unwrap_err(),
         GeometryError::Capacity {
             requested: 400,
             order: 256
         }
     );
     // Collision: overlapping sets.
-    let row = [elem::<Gf8>(1), elem::<Gf8>(2)];
-    let col = [elem::<Gf8>(2), elem::<Gf8>(3)];
+    let row = [elem::<Gf8B>(1), elem::<Gf8B>(2)];
+    let col = [elem::<Gf8B>(2), elem::<Gf8B>(3)];
     assert!(matches!(
-        Cauchy::<Gf8>::from_points(&row, &col),
+        Cauchy::<Gf8B>::from_points(&row, &col),
         Err(GeometryError::Collision { .. })
     ));
 }
@@ -232,14 +235,14 @@ fn cauchy_rejects_bad_construction() {
 #[test]
 fn vandermonde_round_trips() {
     for n in [1usize, 2, 5, 16, 40] {
-        let points: Vec<_> = (0..n as u64).map(elem::<Gf8>).collect();
-        let v = Vandermonde::<Gf8>::from_points(&points).unwrap();
-        let mut vm = Matrix::<Gf8>::zeros(n, n).unwrap();
+        let points: Vec<_> = (0..n as u64).map(elem::<Gf8B>).collect();
+        let v = Vandermonde::<Gf8B>::from_points(&points).unwrap();
+        let mut vm = Matrix::<Gf8B>::zeros(n, n).unwrap();
         v.materialize_into(&mut vm);
-        let mut vinv = Matrix::<Gf8>::zeros(n, n).unwrap();
+        let mut vinv = Matrix::<Gf8B>::zeros(n, n).unwrap();
         v.inverse_into(&mut vinv);
-        assert_identity::<Gf8>(&naive_mul(&vm, &vinv), n);
-        assert_identity::<Gf8>(&naive_mul(&vinv, &vm), n);
+        assert_identity::<Gf8B>(&naive_mul(&vm, &vinv), n);
+        assert_identity::<Gf8B>(&naive_mul(&vinv, &vm), n);
     }
 }
 
@@ -270,15 +273,15 @@ fn vandermonde_inverse_matches_ple() {
 #[test]
 fn singular_submatrix_exists() {
     let n = 7usize;
-    let points: Vec<_> = (0..n as u64).map(elem::<Gf8>).collect();
-    let v = Vandermonde::<Gf8>::from_points(&points).unwrap();
+    let points: Vec<_> = (0..n as u64).map(elem::<Gf8B>).collect();
+    let v = Vandermonde::<Gf8B>::from_points(&points).unwrap();
     // Search every square submatrix (row subset × column subset) for one that
     // is rank-deficient.
     let mut found = None;
     'search: for r in 2..=n {
         for rows in combinations(n, r) {
             for cols in combinations(n, r) {
-                let mut minor = Matrix::<Gf8>::zeros(r, r).unwrap();
+                let mut minor = Matrix::<Gf8B>::zeros(r, r).unwrap();
                 for (a, &ri) in rows.iter().enumerate() {
                     for (b, &cj) in cols.iter().enumerate() {
                         minor.set(a, b, v.coeff(ri, cj));

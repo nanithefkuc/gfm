@@ -10,7 +10,7 @@ use std::cell::Cell;
 use std::hint::black_box;
 
 use common::noise;
-use fgf::Gf8;
+use fgf::Gf8B;
 use gfm::bits::{Ple as BitPle, PleScratch as BitPleScratch, SolveScratch as BitSolveScratch};
 use gfm::{BitMatrix, Echelon, Hybrid, Matrix, Perm, Ple, PleScratch, SolveScratch};
 
@@ -49,7 +49,7 @@ static GLOBAL: CountingAllocator = CountingAllocator;
 fn steady_state_ops_do_not_allocate() {
     // Setup: allocation is expected and allowed here.
     let rows = 37;
-    let mut m = Matrix::<Gf8>::zeros(rows, 100).unwrap();
+    let mut m = Matrix::<Gf8B>::zeros(rows, 100).unwrap();
     for r in 0..rows {
         m.row_mut(r).copy_from_slice(&noise(100, r as u64 + 1));
     }
@@ -71,7 +71,7 @@ fn steady_state_ops_do_not_allocate() {
     {
         let mut v = m.as_view_mut();
         v.swap_rows(3, 11);
-        v.set(5, 6, fgf::gf8::Elem(0x5A));
+        v.set(5, 6, fgf::gf8b::Elem(0x5A));
         black_box(v.get(5, 6));
         black_box(v.row(7));
         black_box(v.row_mut(8));
@@ -104,18 +104,18 @@ fn steady_state_ops_do_not_allocate() {
     // Second section: the derived queries. Construction allocates; the
     // measured section must not.
     let n = 12;
-    let mut m = Matrix::<Gf8>::zeros(n, n).unwrap();
+    let mut m = Matrix::<Gf8B>::zeros(n, n).unwrap();
     for r in 0..n {
         m.row_mut(r).copy_from_slice(&noise(n, r as u64 + 3));
     }
     let ple = Ple::decompose(m, &mut PleScratch::new());
     let rank = ple.rank();
-    let mut rref_out = Matrix::<Gf8>::zeros(n, n).unwrap();
-    let mut kernel_out = Matrix::<Gf8>::zeros(n, n - rank).unwrap();
-    let mut inv_out = Matrix::<Gf8>::zeros(n, n).unwrap();
+    let mut rref_out = Matrix::<Gf8B>::zeros(n, n).unwrap();
+    let mut kernel_out = Matrix::<Gf8B>::zeros(n, n - rank).unwrap();
+    let mut inv_out = Matrix::<Gf8B>::zeros(n, n).unwrap();
     let rhs_data = noise(n * 2, 0xCAFE);
-    let rhs = Matrix::<Gf8>::from_rows(n, 2, &rhs_data).unwrap();
-    let mut sol = Matrix::<Gf8>::zeros(n, 2).unwrap();
+    let rhs = Matrix::<Gf8B>::from_rows(n, 2, &rhs_data).unwrap();
+    let mut sol = Matrix::<Gf8B>::zeros(n, 2).unwrap();
     let mut solve_scratch = SolveScratch::new();
     // Warm the scratch: the first solve sizes its workspace.
     let _ = ple.solve_into(&rhs, &mut sol, &mut solve_scratch);
@@ -183,7 +183,7 @@ fn steady_state_ops_do_not_allocate() {
     // state and scratch once; steady-state absorb must not allocate.
     let cols = 24;
     let s = 4;
-    let mut ech = Echelon::<Gf8>::new(cols, s, true).unwrap();
+    let mut ech = Echelon::<Gf8B>::new(cols, s, true).unwrap();
     // Wire rows: coefficients and payload as packed bytes.
     let rows: Vec<Vec<u8>> = (0..cols).map(|r| noise(cols, 0x700 + r as u64)).collect();
     let payloads: Vec<Vec<u8>> = (0..cols).map(|r| noise(s, 0x900 + r as u64)).collect();
@@ -209,7 +209,7 @@ fn steady_state_ops_do_not_allocate() {
     // every sparse, schedule, decomposition, and solution workspace.
     let cols = 64;
     let symbol_bytes = 32;
-    let mut hybrid = Hybrid::<Gf8>::new(cols, symbol_bytes);
+    let mut hybrid = Hybrid::<Gf8B>::new(cols, symbol_bytes);
     let zero = vec![0; symbol_bytes];
     for column in 0..cols {
         hybrid.push_binary_row(&[column as u32], &zero);
@@ -219,7 +219,7 @@ fn steady_state_ops_do_not_allocate() {
         pair.sort_unstable();
         hybrid.push_binary_row(&pair, &zero);
     }
-    let mut hybrid_values = Matrix::<Gf8>::zeros(cols, symbol_bytes).unwrap();
+    let mut hybrid_values = Matrix::<Gf8B>::zeros(cols, symbol_bytes).unwrap();
     let mut hybrid_determined = vec![false; cols];
     hybrid
         .solve_into(&mut hybrid_values, &mut hybrid_determined)

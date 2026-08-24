@@ -19,17 +19,18 @@ here. The crate is `#![forbid(unsafe_code)]`.
 
 **Early development.** The public surface so far is the containers —
 `Matrix<F>` (32-byte aligned, 32-byte pitch, zero padding) with its `View` /
-`ViewMut` borrow API, `BitMatrix` (`u64` words, 64-byte pitch), and `Perm`
-(LAPACK-style index-vector permutations) — and the decomposition in both
-storage domains: `Ple<F>` over GF(2^m) and `bits::Ple` over GF(2) each
-compute a rank-revealing `A = P·L·U·Q` once, and `rank`, `det`, `rref`,
-`kernel_into`, `solve_into`, `inverse_into`, and both rank profiles are
-readers of it. The two domains share the contract and the pivot order but no
-elimination code: the GF(2) inner loop is a word-level masked XOR. On top of
-the decompositions sit the streaming `Echelon<F>` accumulator (`absorb` →
-`Innovation`, decoder or recoder via one flag) and the structured matrices
-`Cauchy<F>` and `Vandermonde<F>` with their closed-form `O(k²)` inverses, plus
-a generic `batch_invert`. `Hybrid<F>` accepts binary or field-valued sparse
+`ViewMut` borrow API, `BitMatrix` (bit-packed `fgf::bits` rows, 64-byte
+pitch), and `Perm` (LAPACK-style index-vector permutations) — and the
+decomposition in both storage domains: `Ple<F>` over GF(2^m) and `bits::Ple`
+over GF(2) each compute a rank-revealing `A = P·L·U·Q` once, and `rank`,
+`det`, `rref`, `kernel_into`, `solve_into`, `inverse_into`, and both rank
+profiles are readers of it. The two domains share the contract and the pivot
+order but no elimination code: the GF(2) inner loop is `fgf::bits`'s masked
+range XOR over packed rows. On top of the decompositions sit the streaming
+`Echelon<F>` accumulator (`absorb` → `Innovation`, decoder or recoder via one
+flag) and the structured matrices `Cauchy<F>` and `Vandermonde<F>` with
+their closed-form `O(k²)` inverses, plus a generic `batch_invert`.
+`Hybrid<F>` accepts binary or field-valued sparse
 rows, peels and permanently inactivates them into a small dense block, defers
 symbol row operations until they are needed, and back-substitutes the result.
 Its `solve_into` form reuses all workspaces and allocates nothing after warm-up.

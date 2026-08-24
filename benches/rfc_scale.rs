@@ -8,7 +8,7 @@ use std::cell::RefCell;
 use std::time::{Duration, Instant};
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
-use fgf::Gf8;
+use fgf::Gf8B;
 use fgf::field::Field;
 use gfm::Hybrid;
 
@@ -52,11 +52,11 @@ fn support(columns: usize, weight: usize, state: &mut u64) -> Vec<u32> {
 /// overhead, optionally a dense `band`-row HDPC-style field block over
 /// every column (coefficient powers of alpha), with the trailing `band`
 /// columns pre-inactivated as RaptorQ PI columns.
-fn system(columns: usize, band: usize, symbol_bytes: usize, defer_band: bool) -> Hybrid<Gf8> {
+fn system(columns: usize, band: usize, symbol_bytes: usize, defer_band: bool) -> Hybrid<Gf8B> {
     let mut state = 0x6330_5CA1u64;
     let overhead = (columns as f64).sqrt().ceil() as usize + 8;
     let initial: Vec<u32> = ((columns - band)..columns).map(|c| c as u32).collect();
-    let mut hybrid = Hybrid::<Gf8>::with_initial_inactive(columns, symbol_bytes, &initial);
+    let mut hybrid = Hybrid::<Gf8B>::with_initial_inactive(columns, symbol_bytes, &initial);
     let zero_rhs = vec![0u8; symbol_bytes];
     for _ in 0..(columns + overhead) {
         let row_support = support(
@@ -67,8 +67,8 @@ fn system(columns: usize, band: usize, symbol_bytes: usize, defer_band: bool) ->
         hybrid.push_binary_row(&row_support, &zero_rhs);
     }
     if band > 0 {
-        let alpha = <Gf8 as Field>::read(&[2]);
-        let mut coefficient = <Gf8 as Field>::Elem::ONE;
+        let alpha = <Gf8B as Field>::read(&[2]);
+        let mut coefficient = <Gf8B as Field>::Elem::ONE;
         let coeffs: Vec<_> = (0..columns)
             .map(|_| {
                 let c = coefficient;
@@ -88,8 +88,8 @@ fn system(columns: usize, band: usize, symbol_bytes: usize, defer_band: bool) ->
     hybrid
 }
 
-fn solve(hybrid: &mut Hybrid<Gf8>, columns: usize, symbol_bytes: usize) {
-    let mut values = gfm::Matrix::<Gf8>::zeros(columns, symbol_bytes).unwrap();
+fn solve(hybrid: &mut Hybrid<Gf8B>, columns: usize, symbol_bytes: usize) {
+    let mut values = gfm::Matrix::<Gf8B>::zeros(columns, symbol_bytes).unwrap();
     let mut determined = vec![false; columns];
     let rank = hybrid.solve_into(&mut values, &mut determined).unwrap();
     black_box((rank, &values, &determined));

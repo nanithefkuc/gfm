@@ -5,12 +5,12 @@
 //! kernels will run on, and that the stack-wide `SIMD_BACKEND` override
 //! reaches it. There is no second resolver to drift.
 
-use fgf::{Gf8, Gf16, Gf32, Gf64};
+use fgf::{Gf8B, Gf16, Gf32, Gf64};
 use gfm::{Backend, backend_for};
 
 #[test]
 fn reports_the_backend_the_kernels_run_on() {
-    assert_eq!(backend_for::<Gf8>(), fgf::backend_for::<Gf8>());
+    assert_eq!(backend_for::<Gf8B>(), fgf::backend_for::<Gf8B>());
     assert_eq!(backend_for::<Gf16>(), fgf::backend_for::<Gf16>());
     assert_eq!(backend_for::<Gf32>(), fgf::backend_for::<Gf32>());
     assert_eq!(backend_for::<Gf64>(), fgf::backend_for::<Gf64>());
@@ -26,7 +26,7 @@ fn scalar_override_forces_scalar() {
         .ok()
         .is_some_and(|v| v == "scalar")
     {
-        assert_eq!(backend_for::<Gf8>(), Backend::Scalar);
+        assert_eq!(backend_for::<Gf8B>(), Backend::Scalar);
         assert_eq!(backend_for::<Gf64>(), Backend::Scalar);
     }
 }
@@ -45,13 +45,13 @@ fn backend_fingerprint_is_stable() {
     }
 
     let mut state = 0xBACC_E11D_5EED_u64;
-    let mut matrix = Matrix::<Gf8>::zeros(160, 160).unwrap();
+    let mut matrix = Matrix::<Gf8B>::zeros(160, 160).unwrap();
     for row in 0..160 {
         for col in 0..160 {
             state = state
                 .wrapping_mul(6_364_136_223_846_793_005)
                 .wrapping_add(1);
-            matrix.set(row, col, Gf8::read(&[(state >> 56) as u8]));
+            matrix.set(row, col, Gf8B::read(&[(state >> 56) as u8]));
         }
     }
     let ple = Ple::decompose(matrix, &mut PleScratch::new());
@@ -84,9 +84,9 @@ fn parallel_row_dispatch_matches_field_kernel() {
         let src = vec![0xA7; bytes];
         let mut expected = vec![0x39; bytes];
         let mut actual = expected.clone();
-        let factor = Gf8::read(&[0x53]);
-        fgf::ops::mul_add::<Gf8>(&mut expected, factor, &src);
-        gfm::benchmark_mul_add::<Gf8>(&mut actual, factor, &src);
+        let factor = Gf8B::read(&[0x53]);
+        fgf::ops::mul_add::<Gf8B>(&mut expected, factor, &src);
+        gfm::benchmark_mul_add::<Gf8B>(&mut actual, factor, &src);
         assert_eq!(actual, expected, "row bytes {bytes}");
     }
 }

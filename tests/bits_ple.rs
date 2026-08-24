@@ -1,7 +1,7 @@
 //! `bits::Ple` against its acceptance. Every dense `Ple` criterion restated
 //! over `BitMatrix`, plus the cross-domain differential that is the real
 //! point: the same logical matrix carried through `bits::Ple` and through
-//! `dense::Ple<Gf8>` one-bit-per-byte yields identical rank, RREF, rank
+//! `dense::Ple<Gf8B>` one-bit-per-byte yields identical rank, RREF, rank
 //! profiles, and kernel bases. Two storage layouts, two inner loops, one
 //! answer.
 
@@ -11,7 +11,7 @@
 mod common;
 
 use common::draw;
-use fgf::Gf8;
+use fgf::Gf8B;
 use fgf::field::Elem;
 use gfm::bits::{Ple, PleScratch, SolveScratch};
 use gfm::{BitMatrix, Matrix, Ple as DensePle, PleScratch as DensePleScratch, SolveError};
@@ -55,14 +55,14 @@ fn naive_noise(rows: usize, cols: usize, seed: u64) -> Naive {
         .collect()
 }
 
-/// Packs a naive matrix into `u64` row words.
-fn pack(a: &Naive, cols: usize) -> Vec<u64> {
-    let words = cols.div_ceil(64);
-    let mut out = vec![0u64; a.len() * words];
+/// Packs a naive matrix into `fgf::bits` row bytes.
+fn pack(a: &Naive, cols: usize) -> Vec<u8> {
+    let live = cols.div_ceil(8);
+    let mut out = vec![0u8; a.len() * live];
     for (r, row) in a.iter().enumerate() {
         for (c, &bit) in row.iter().enumerate() {
             if bit {
-                out[r * words + c / 64] |= 1u64 << (c % 64);
+                out[r * live + c / 8] |= 1 << (c % 8);
             }
         }
     }
@@ -74,13 +74,13 @@ fn bit_matrix(a: &Naive, cols: usize) -> BitMatrix {
     BitMatrix::from_rows(a.len(), cols, &pack(a, cols)).unwrap()
 }
 
-/// Builds the one-bit-per-byte `Gf8` twin.
-fn dense_matrix(a: &Naive, cols: usize) -> Matrix<Gf8> {
+/// Builds the one-bit-per-byte `Gf8B` twin.
+fn dense_matrix(a: &Naive, cols: usize) -> Matrix<Gf8B> {
     let bytes: Vec<u8> = a
         .iter()
         .flat_map(|row| row.iter().map(|&b| u8::from(b)))
         .collect();
-    Matrix::<Gf8>::from_rows(a.len(), cols, &bytes).unwrap()
+    Matrix::<Gf8B>::from_rows(a.len(), cols, &bytes).unwrap()
 }
 
 /// Reads a `BitMatrix` back into naive rows.
@@ -127,7 +127,7 @@ fn rank_samples(m: usize, n: usize) -> Vec<usize> {
     s
 }
 
-/// The public-surface cross-domain check: `bits::Ple` and `dense::Ple<Gf8>`
+/// The public-surface cross-domain check: `bits::Ple` and `dense::Ple<Gf8B>`
 /// on the same logical matrix agree on rank, both rank profiles, the RREF,
 /// and the kernel basis — plus the independent certificates `A·kernel == 0`
 /// and `rank + kernel_dim == cols`.
@@ -152,7 +152,7 @@ fn check_case(rows: usize, cols: usize, rank: usize, seed: u64) {
     // RREF agrees bit-for-bit with the dense domain.
     let mut r_bits = zeros(rows, cols);
     bits.rref_into(&mut r_bits);
-    let mut r_dense = Matrix::<Gf8>::zeros(rows, cols).unwrap();
+    let mut r_dense = Matrix::<Gf8B>::zeros(rows, cols).unwrap();
     dense.rref_into(&mut r_dense);
     for i in 0..rows {
         for j in 0..cols {
@@ -189,7 +189,7 @@ fn check_case(rows: usize, cols: usize, rank: usize, seed: u64) {
     let kdim = cols - rank;
     let mut k_bits = zeros(cols, kdim);
     bits.kernel_into(&mut k_bits);
-    let mut k_dense = Matrix::<Gf8>::zeros(cols, kdim).unwrap();
+    let mut k_dense = Matrix::<Gf8B>::zeros(cols, kdim).unwrap();
     dense.kernel_into(&mut k_dense);
     for i in 0..cols {
         for j in 0..kdim {

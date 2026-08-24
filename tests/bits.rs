@@ -1,43 +1,36 @@
-//! The GF(2) domain against its contracts: word-packed layout invariants,
-//! bit accessors, masking of out-of-range bits, and index-only row exchange.
+//! The GF(2) domain against its contracts: `fgf::bits`-packed layout
+//! invariants, bit accessors, masking of out-of-range bits, and index-only
+//! row exchange.
 
 mod common;
 
 use common::{draw, noise, sample_dims};
 use gfm::{BitMatrix, GeometryError, Perm};
 
-/// `ceil(cols / 64)`.
-fn row_words(cols: usize) -> usize {
-    cols.div_ceil(64)
+/// `ceil(cols / 8)`, the live bytes of a row.
+fn row_bytes(cols: usize) -> usize {
+    fgf::bits::bytes_for(cols)
 }
 
-/// Mask of live bits in the last word of a row (mirrors the crate's own).
-fn live_mask(cols: usize) -> u64 {
-    if cols.is_multiple_of(64) {
-        u64::MAX
+/// Mask of live bits in the last byte of a row (mirrors the crate's own).
+fn live_mask(cols: usize) -> u8 {
+    if cols.is_multiple_of(8) {
+        u8::MAX
     } else {
-        (1 << (cols % 64)) - 1
+        (1 << (cols % 8)) - 1
     }
 }
 
-/// Deterministic bit content for a row, as live words with clean padding.
-fn row_bits(rows: usize, cols: usize, seed: u64) -> Vec<u64> {
-    let words = rows * row_words(cols);
-    let data = noise(words * 8, seed);
-    let mut as_words: Vec<u64> = data
-        .chunks_exact(8)
-        .map(|c| u64::from_le_bytes(c.try_into().unwrap()))
-        .collect();
-    if row_words(cols) > 0 {
-        for w in as_words
-            .iter_mut()
-            .skip(row_words(cols) - 1)
-            .step_by(row_words(cols))
-        {
-            *w &= live_mask(cols);
+/// Deterministic bit content for a row, as live bytes with clean padding.
+fn row_bits(rows: usize, cols: usize, seed: u64) -> Vec<u8> {
+    let bytes = row_bytes(cols);
+    let mut data = noise(rows * bytes, seed);
+    if bytes > 0 {
+        for b in data.iter_mut().skip(bytes - 1).step_by(bytes) {
+            *b &= live_mask(cols);
         }
     }
-    as_words
+    data
 }
 
 #[test]
@@ -46,10 +39,10 @@ fn constructors_and_accessors() {
         let m = BitMatrix::zeros(rows, cols).unwrap();
         assert_eq!(m.rows(), rows);
         assert_eq!(m.cols(), cols);
-        assert_eq!(m.row_words(), row_words(cols));
+        assert_eq!(m.row_bytes(), row_bytes(cols));
         assert_eq!(m.is_square(), rows == cols);
         for r in 0..rows {
-            assert_eq!(m.row(r).len(), row_words(cols));
+            assert_eq!(m.row(r).len(), row_bytes(cols));
             for c in 0..cols {
                 assert!(!m.get(r, c));
             }
@@ -59,10 +52,10 @@ fn constructors_and_accessors() {
         for r in 0..rows {
             assert_eq!(
                 m.row(r),
-                &bits[r * row_words(cols)..(r + 1) * row_words(cols)]
+                &bits[r * row_bytes(cols)..(r + 1) * row_bytes(cols)]
             );
             for c in 0..cols {
-                let expected = bits[r * row_words(cols) + c / 64] & (1 << (c % 64)) != 0;
+                let expected = bits[r * row_bytes(cols) + c / 8] & (1 << (c % 8)) != 0;
                 assert_eq!(m.get(r, c), expected, "({r}, {c})");
             }
         }
@@ -73,16 +66,16 @@ fn constructors_and_accessors() {
             }
         }
         for r in 0..rows {
-            let expected: Vec<u64> = bits[r * row_words(cols)..(r + 1) * row_words(cols)]
+            let expected: Vec<u8> = bits[r * row_bytes(cols)..(r + 1) * row_bytes(cols)]
                 .iter()
                 .enumerate()
-                .map(|(i, &w)| {
-                    let flip = if i == row_words(cols) - 1 {
+                .map(|(i, &b)| {
+                    let flip = if i == row_bytes(cols) - 1 {
                         live_mask(cols)
                     } else {
-                        u64::MAX
+                        u8::MAX
                     };
-                    w ^ flip
+                    b ^ flip
                 })
                 .collect();
             assert_eq!(m.row(r), &expected[..]);
@@ -106,13 +99,15 @@ fn identity_has_unit_diagonal() {
 fn from_rows_masks_bits_beyond_cols() {
     // Every bit set in the input, including out-of-range ones.
     let (rows, cols) = (3, 70);
-    let data = vec![u64::MAX; rows * row_words(cols)];
+    let data = vec![u8::MAX; rows * row_bytes(cols)];
     let m = BitMatrix::from_rows(rows, cols, &data).unwrap();
     for r in 0..rows {
         let row = m.row(r);
-        assert_eq!(row[0], u64::MAX);
-        // 70 = 64 + 6: only the low 6 bits of the second word are live.
-        assert_eq!(row[1], (1 << 6) - 1);
+        for b in &row[..row.len() - 1] {
+            assert_eq!(*b, u8::MAX);
+        }
+        // 70 = 64 + 6 bits into the ninth byte: only six live bits remain.
+        assert_eq!(row[row.len() - 1], (1 << 6) - 1);
     }
 }
 
@@ -138,9 +133,9 @@ fn permute_and_compact_preserve_logical_content() {
     for n in 1..=4usize {
         for image in common::all_images(n) {
             let mut m = BitMatrix::from_rows(n, 70, &row_bits(n, 70, 0x77)).unwrap();
-            let before: Vec<Vec<u64>> = (0..n).map(|r| m.row(r).to_vec()).collect();
+            let before: Vec<Vec<u8>> = (0..n).map(|r| m.row(r).to_vec()).collect();
             m.apply_row_perm(&common::perm_from_image(&image)).unwrap();
-            let logical: Vec<Vec<u64>> = (0..n).map(|r| m.row(r).to_vec()).collect();
+            let logical: Vec<Vec<u8>> = (0..n).map(|r| m.row(r).to_vec()).collect();
             for (x, &src) in image.iter().enumerate() {
                 assert_eq!(m.row(x), &before[src][..], "permuted row {x}");
             }
@@ -159,12 +154,12 @@ fn permute_and_compact_preserve_logical_content() {
     }
     let mut image: Vec<usize> = (0..rows).collect();
     p.apply(&mut image);
-    let before: Vec<Vec<u64>> = (0..rows).map(|r| m.row(r).to_vec()).collect();
+    let before: Vec<Vec<u8>> = (0..rows).map(|r| m.row(r).to_vec()).collect();
     m.apply_row_perm(&p).unwrap();
     for (x, &src) in image.iter().enumerate() {
         assert_eq!(m.row(x), &before[src][..], "row {x}");
     }
-    let logical: Vec<Vec<u64>> = (0..rows).map(|r| m.row(r).to_vec()).collect();
+    let logical: Vec<Vec<u8>> = (0..rows).map(|r| m.row(r).to_vec()).collect();
     m.compact_rows();
     for (r, expected) in logical.iter().enumerate() {
         assert_eq!(m.row(r), &expected[..], "row {r}");
@@ -173,16 +168,16 @@ fn permute_and_compact_preserve_logical_content() {
 
 #[test]
 fn geometry_errors_are_exact_and_state_preserving() {
+    // rows * pitch overflows `usize`.
     let err = BitMatrix::zeros(usize::MAX / 4, 100).unwrap_err();
     assert_eq!(
         err,
         GeometryError::Overflow {
             rows: usize::MAX / 4,
-            pitch: 8,
+            pitch: 64,
         }
     );
-    // `cols + 63` overflow.
-    let err = BitMatrix::zeros(1, usize::MAX).unwrap_err();
+    let err = BitMatrix::zeros(usize::MAX, 1).unwrap_err();
     assert_eq!(
         err,
         GeometryError::Overflow {
@@ -190,7 +185,7 @@ fn geometry_errors_are_exact_and_state_preserving() {
             pitch: 64,
         }
     );
-    let err = BitMatrix::from_rows(2, 70, &[0u64; 5]).unwrap_err();
+    let err = BitMatrix::from_rows(2, 70, &[0u8; 5]).unwrap_err();
     assert_eq!(
         err,
         GeometryError::Shape {
@@ -240,28 +235,28 @@ mod physical {
             assert_padding_zero(&m);
             m.compact_rows();
             assert_padding_zero(&m);
-            for r in 0..rows {
+            for r in 0..m.rows() {
                 assert_eq!(m.physical_row_index(r), r, "compact resets the map");
             }
         }
     }
 
     fn assert_padding_zero(m: &BitMatrix) {
-        let live = m.row_words();
+        let live = m.row_bytes();
         let mask = live_mask(m.cols());
         for r in 0..m.rows() {
             let phys = m.physical_row_index(r);
-            let row = &m.pitched_buffer()[phys * (m.pitch() / 8)..(phys + 1) * (m.pitch() / 8)];
+            let row = &m.pitched_buffer()[phys * m.pitch()..(phys + 1) * m.pitch()];
             if live > 0 {
                 assert_eq!(
                     row[live - 1] & !mask,
                     0,
-                    "stray bits in last live word at row {r}",
+                    "stray bits in last live byte at row {r}",
                 );
             }
             assert!(
-                row[live..].iter().all(|&w| w == 0),
-                "padding words nonzero at row {r}",
+                row[live..].iter().all(|&b| b == 0),
+                "padding bytes nonzero at row {r}",
             );
         }
     }

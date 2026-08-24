@@ -161,6 +161,46 @@ runs:
 The table path never won, so production keeps the AXPY update. The candidate
 stays behind `internals` as a reproducible rejection, not dormant dispatch.
 
+### GF(2) domain on `fgf::bits` (2026-08-24)
+
+The bit domain rebased from private `u64` word loops onto `fgf::bits`'
+packed-byte surface (fgf 0.7), the same cutover the dense domain already
+had through `fgf::ops`. The private `xor_range`/`xor_all`/`clear_prefix`
+word loops are gone; the elimination calls the checked public kernels,
+and `locate_pivot` scans the one-panel window (at most two bytes at the
+production width) byte-wise. A/B against the pre-cutover code
+(`--baseline precutover`, three interleaved runs, same host):
+
+| Shape | pre-cutover | on `fgf::bits` | change |
+| --- | ---: | ---: | ---: |
+| plain 64 | 10.15 µs | 13.11 µs | +29% |
+| m4ri 64 | 15.44 µs | 21.61 µs | +40% |
+| plain 128 | 62.57 µs | 85.14 µs | +36% |
+| m4ri 128 | 54.52 µs | 79.52 µs | +46% |
+| plain 256 | 415.26 µs | 510.93 µs | +23% |
+| m4ri 256 | 282.62 µs | 348.66 µs | +23% |
+| plain 512 | 1.846 ms | 2.267 ms | +23% |
+| m4ri 512 | 1.121 ms | 1.367 ms | +22% |
+| plain 1024 | 7.772 ms | 9.556 ms | +23% |
+| m4ri 1024 | 4.585 ms | 5.570 ms | +22% |
+
+Cost anatomy (perf, plain 1024): ~30% of samples inside
+`fgf::bits::xor_range` — the surface's length/range/coverage contract
+checks and sub-word mask arithmetic, not word assembly. Two fgf-side
+kernel fixes landed with this cutover and are recorded in fgf's
+`BENCHMARKS.md`: the masked range kernels run their fully-live interior
+through the dispatched bulk XOR (5.5–7.4x on fgf's own range bench in the
+cache tiers), and short buffers take an inlined portable path under the
+dispatched call boundary. Without those the regression was +38–68%. The
+M4RI crossover stays at 128 (the table still loses at 64 and wins at 128);
+decomposition output is byte-identical, proven by the existing
+cross-domain differential and the M4RI/FFLAS-FFPACK oracles.
+
+The residual ~22% is the standing price of routing every row operation
+through the checked public surface instead of private `u64` indexing.
+Recovering it would need an unchecked kernel surface in fgf or a
+restructured elimination; neither is taken here.
+
 ### GF(2) M4RI slab
 
 `bits::Ple` builds a 256-row XOR table from eight pivots. Three pinned

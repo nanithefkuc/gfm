@@ -1,16 +1,18 @@
 //! The owning GF(2) container [`BitMatrix`].
 //!
-//! Rows are `u64`-packed bit strings, stored contiguously `pitch` bytes
-//! apart with the base 64-byte aligned and every padding bit zero. Bit `c`
-//! of logical row `r` is bit `c % 64` of word `map[r] * pitch_words + c /
-//! 64`. As in the dense domain, row exchange is an index operation on the
-//! row map; data moves only through [`BitMatrix::compact_rows`].
+//! Rows are bit-packed GF(2) strings in [`fgf::bits`] layout — element `c`
+//! is bit `c % 8` (LSB-first) of byte `c / 8` — stored contiguously `pitch`
+//! bytes apart with the base 64-byte aligned and every padding bit zero.
+//! Bit `c` of logical row `r` is that bit of byte `map[r] * pitch + c / 8`.
+//! As in the dense domain, row exchange is an index operation on the row
+//! map; data moves only through [`BitMatrix::compact_rows`]. Every vector
+//! operation on a row — XOR, masked ranges, weight — goes through
+//! `fgf::bits`; this module owns only geometry and indexing.
 //!
-//! Bits between `cols` and the next word boundary are padding too and are
-//! always zero. That is why there is no `row_mut`: mutable word access could
-//! set them, and the elimination's `trailing_zeros` pivot search reads whole
-//! words. Mutation goes through [`BitMatrix::set`], which cannot address
-//! them.
+//! Bits between `cols` and the next alignment boundary are padding too and
+//! are always zero. That is why there is no `row_mut`: mutable byte access
+//! could set them, and the elimination's pivot search reads whole words.
+//! Mutation goes through [`BitMatrix::set`], which cannot address them.
 
 use alloc::boxed::Box;
 use alloc::vec;
@@ -23,45 +25,31 @@ use crate::dense::{Perm, invert_in_place};
 /// Byte alignment of a bit-matrix base and row pitch: one 64-byte line.
 pub const ALIGN: usize = 64;
 
-/// Words per aligned pitch unit: [`ALIGN`] bytes is eight `u64` words.
-const WORDS_PER_ALIGN: usize = ALIGN / 8;
-
 /// A dense, row-major bit matrix, owning its storage.
 pub struct BitMatrix {
-    buf: Box<[u64]>,
-    /// Offset of the first 64-byte-aligned word within `buf`.
+    buf: Box<[u8]>,
+    /// Offset of the first 64-byte-aligned byte within `buf`.
     off: usize,
     rows: usize,
     /// Columns, in bits.
     cols: usize,
-    /// Words per row: a multiple of [`WORDS_PER_ALIGN`].
-    pitch_words: usize,
+    /// Bytes per row: a multiple of [`ALIGN`].
+    pitch: usize,
     /// Logical-to-physical row indirection.
     map: Vec<usize>,
 }
 
 impl BitMatrix {
-    /// Validates the geometry and returns `(row_words, pitch_words)`.
+    /// Validates the geometry and returns `(row_bytes, pitch_bytes)`.
     fn geometry(rows: usize, cols: usize) -> Result<(usize, usize), GeometryError> {
-        let row_words = cols.checked_add(63).ok_or(GeometryError::Overflow {
-            rows: cols,
-            pitch: 64,
-        })? / 64;
-        let pitch_words =
-            row_words
-                .checked_add(WORDS_PER_ALIGN - 1)
-                .ok_or(GeometryError::Overflow {
-                    rows: row_words,
-                    pitch: WORDS_PER_ALIGN,
-                })?
-                / WORDS_PER_ALIGN
-                * WORDS_PER_ALIGN;
-        rows.checked_mul(pitch_words)
+        let row_bytes = fgf::bits::bytes_for(cols);
+        let pitch_bytes = row_bytes.div_ceil(ALIGN) * ALIGN;
+        rows.checked_mul(pitch_bytes)
             .ok_or(GeometryError::Overflow {
                 rows,
-                pitch: pitch_words,
+                pitch: pitch_bytes,
             })?;
-        Ok((row_words, pitch_words))
+        Ok((row_bytes, pitch_bytes))
     }
 
     /// Creates a `rows` by `cols` matrix of zero bits.
@@ -70,14 +58,14 @@ impl BitMatrix {
     ///
     /// [`GeometryError::Overflow`] if the geometry overflows `usize`.
     pub fn zeros(rows: usize, cols: usize) -> Result<Self, GeometryError> {
-        let (_, pitch_words) = Self::geometry(rows, cols)?;
-        let (buf, off) = aligned_zeroed_words(rows * pitch_words);
+        let (_, pitch_bytes) = Self::geometry(rows, cols)?;
+        let (buf, off) = aligned_zeroed(rows * pitch_bytes);
         Ok(Self {
             buf,
             off,
             rows,
             cols,
-            pitch_words,
+            pitch: pitch_bytes,
             map: (0..rows).collect(),
         })
     }
@@ -95,17 +83,18 @@ impl BitMatrix {
         Ok(m)
     }
 
-    /// Creates a matrix from packed words: `rows * ceil(cols / 64)` words,
-    /// row-major. Bits beyond `cols` in the last word of each row are
-    /// cleared on entry, keeping the padding zero.
+    /// Creates a matrix from packed rows: `rows * ceil(cols / 8)` bytes,
+    /// row-major, element `c` of a row in bit `c % 8` (LSB-first) of its
+    /// byte `c / 8` — the [`fgf::bits`] layout. Bits beyond `cols` in the
+    /// last byte of each row are cleared on entry, keeping the padding zero.
     ///
     /// # Errors
     ///
-    /// [`GeometryError::Shape`] if the word count does not match the declared
+    /// [`GeometryError::Shape`] if the byte count does not match the declared
     /// shape, [`GeometryError::Overflow`] if the geometry overflows `usize`.
-    pub fn from_rows(rows: usize, cols: usize, data: &[u64]) -> Result<Self, GeometryError> {
-        let (row_words, _) = Self::geometry(rows, cols)?;
-        let expected = rows * row_words;
+    pub fn from_rows(rows: usize, cols: usize, data: &[u8]) -> Result<Self, GeometryError> {
+        let (row_bytes, _) = Self::geometry(rows, cols)?;
+        let expected = rows * row_bytes;
         if data.len() != expected {
             return Err(GeometryError::Shape {
                 lhs: (rows, cols),
@@ -113,13 +102,15 @@ impl BitMatrix {
             });
         }
         let mut m = Self::zeros(rows, cols)?;
-        let mask = live_mask(cols);
         for r in 0..rows {
-            let start = m.map[r] * m.pitch_words;
-            m.region_mut()[start..start + row_words]
-                .copy_from_slice(&data[r * row_words..(r + 1) * row_words]);
-            if row_words > 0 {
-                m.region_mut()[start + row_words - 1] &= mask;
+            let start = m.map[r] * m.pitch;
+            m.region_mut()[start..start + row_bytes]
+                .copy_from_slice(&data[r * row_bytes..(r + 1) * row_bytes]);
+            if row_bytes > 0 {
+                // Zero every bit past `cols`, up to the end of the copied
+                // bytes; nothing past them exists in the fresh buffer.
+                let row_len = &mut m.region_mut()[start..start + row_bytes];
+                fgf::bits::clear_range(row_len, row_bytes * 8, cols, row_bytes * 8);
             }
         }
         Ok(m)
@@ -137,16 +128,16 @@ impl BitMatrix {
         self.cols
     }
 
-    /// Bytes per row: a multiple of [`ALIGN`] and at least `ceil(cols / 64) * 8`.
+    /// Bytes per row: a multiple of [`ALIGN`] and at least `ceil(cols / 8)`.
     #[must_use]
     pub const fn pitch(&self) -> usize {
-        self.pitch_words * 8
+        self.pitch
     }
 
-    /// Live words per row: `ceil(cols / 64)`.
+    /// Live bytes per row: `ceil(cols / 8)`.
     #[must_use]
-    pub const fn row_words(&self) -> usize {
-        self.cols.div_ceil(64)
+    pub const fn row_bytes(&self) -> usize {
+        self.cols.div_ceil(8)
     }
 
     /// Returns `true` if the matrix is square.
@@ -155,14 +146,14 @@ impl BitMatrix {
         self.rows == self.cols
     }
 
-    /// The aligned, pitched physical backing region, `rows * pitch_words` words.
-    pub(crate) fn region(&self) -> &[u64] {
-        &self.buf[self.off..self.off + self.rows * self.pitch_words]
+    /// The aligned, pitched physical backing region, `rows * pitch` bytes.
+    pub(crate) fn region(&self) -> &[u8] {
+        &self.buf[self.off..self.off + self.rows * self.pitch]
     }
 
     /// The mutable aligned, pitched physical backing region.
-    pub(crate) fn region_mut(&mut self) -> &mut [u64] {
-        &mut self.buf[self.off..self.off + self.rows * self.pitch_words]
+    pub(crate) fn region_mut(&mut self) -> &mut [u8] {
+        &mut self.buf[self.off..self.off + self.rows * self.pitch]
     }
 
     /// The bit at `(row, col)`.
@@ -173,8 +164,8 @@ impl BitMatrix {
     #[must_use]
     pub fn get(&self, row: usize, col: usize) -> bool {
         assert!(row < self.rows && col < self.cols, "index out of bounds");
-        let word = self.region()[self.map[row] * self.pitch_words + col / 64];
-        word & (1 << (col % 64)) != 0
+        let byte = self.region()[self.map[row] * self.pitch + col / 8];
+        byte & (1 << (col % 8)) != 0
     }
 
     /// Sets the bit at `(row, col)`.
@@ -184,26 +175,26 @@ impl BitMatrix {
     /// Panics if either index is out of bounds.
     pub fn set(&mut self, row: usize, col: usize, value: bool) {
         assert!(row < self.rows && col < self.cols, "index out of bounds");
-        let start = self.map[row] * self.pitch_words + col / 64;
-        let word = &mut self.region_mut()[start];
+        let start = self.map[row] * self.pitch + col / 8;
+        let byte = &mut self.region_mut()[start];
         if value {
-            *word |= 1 << (col % 64);
+            *byte |= 1 << (col % 8);
         } else {
-            *word &= !(1 << (col % 64));
+            *byte &= !(1 << (col % 8));
         }
     }
 
-    /// Borrows logical row `r`'s live words: `ceil(cols / 64)` of them, with
-    /// the bits beyond `cols` in the last word always zero.
+    /// Borrows logical row `r`'s live bytes: `ceil(cols / 8)` of them, with
+    /// the bits beyond `cols` in the last byte always zero.
     ///
     /// # Panics
     ///
     /// Panics if `r` is out of bounds.
     #[must_use]
-    pub fn row(&self, r: usize) -> &[u64] {
+    pub fn row(&self, r: usize) -> &[u8] {
         assert!(r < self.rows, "row index out of bounds");
-        let start = self.map[r] * self.pitch_words;
-        &self.region()[start..start + self.row_words()]
+        let start = self.map[r] * self.pitch;
+        &self.region()[start..start + self.row_bytes()]
     }
 
     /// Exchanges logical rows `a` and `b`. A no-op when they are the same
@@ -274,26 +265,26 @@ impl BitMatrix {
             return;
         }
         let (lo, hi) = if a < b { (a, b) } else { (b, a) };
-        let pitch_words = self.pitch_words;
+        let pitch = self.pitch;
         let region = self.region_mut();
-        let (head, tail) = region.split_at_mut(hi * pitch_words);
-        head[lo * pitch_words..(lo + 1) * pitch_words].swap_with_slice(&mut tail[..pitch_words]);
+        let (head, tail) = region.split_at_mut(hi * pitch);
+        head[lo * pitch..(lo + 1) * pitch].swap_with_slice(&mut tail[..pitch]);
     }
 
-    /// Disjoint mutable borrows of the live words of logical rows `a` and
+    /// Disjoint mutable borrows of the live bytes of logical rows `a` and
     /// `b`, returned in argument order. The bit analogue of the dense
     /// domain's `two_live_rows`.
     ///
     /// # Panics
     ///
     /// Panics if `a == b` or either index is out of bounds.
-    pub(crate) fn two_live_rows(&mut self, a: usize, b: usize) -> (&mut [u64], &mut [u64]) {
+    pub(crate) fn two_live_rows(&mut self, a: usize, b: usize) -> (&mut [u8], &mut [u8]) {
         assert!(a != b, "rows must differ");
         assert!(a < self.rows && b < self.rows, "row index out of bounds");
         let (pa, pb) = (self.map[a], self.map[b]);
         let (lo, hi) = if pa < pb { (pa, pb) } else { (pb, pa) };
-        let pitch = self.pitch_words;
-        let live = self.row_words();
+        let pitch = self.pitch;
+        let live = self.row_bytes();
         let region = self.region_mut();
         let (head, tail) = region.split_at_mut(hi * pitch);
         let row_lo = &mut head[lo * pitch..lo * pitch + live];
@@ -305,31 +296,31 @@ impl BitMatrix {
         }
     }
 
-    /// Mutably borrows logical row `r`'s live words. In-crate callers must
-    /// leave the padding bits of the last word zero; the elimination's range
+    /// Mutably borrows logical row `r`'s live bytes. In-crate callers must
+    /// leave the padding bits of the last byte zero; the elimination's range
     /// helpers do, and never write beyond `cols`.
-    pub(crate) fn live_row_mut(&mut self, r: usize) -> &mut [u64] {
+    pub(crate) fn live_row_mut(&mut self, r: usize) -> &mut [u8] {
         assert!(r < self.rows, "row index out of bounds");
-        let start = self.map[r] * self.pitch_words;
-        let live = self.row_words();
+        let start = self.map[r] * self.pitch;
+        let live = self.row_bytes();
         &mut self.region_mut()[start..start + live]
     }
 
-    /// Zeros the live words of logical row `r`.
+    /// Zeros the live bytes of logical row `r`.
     pub(crate) fn zero_row(&mut self, r: usize) {
         self.live_row_mut(r).fill(0);
     }
 
     /// Whether logical row `r` is entirely zero.
     pub(crate) fn row_is_zero(&self, r: usize) -> bool {
-        self.row(r).iter().all(|&w| w == 0)
+        fgf::bits::weight(self.row(r), self.cols()) == 0
     }
 
-    /// Copies the live words of `src`'s logical row `src_row` into `self`'s
+    /// Copies the live bytes of `src`'s logical row `src_row` into `self`'s
     /// logical row `dst_row`. The two matrices must have equal row width.
     pub(crate) fn copy_row_from(&mut self, dst_row: usize, src: &BitMatrix, src_row: usize) {
-        let words = src.row(src_row);
-        self.live_row_mut(dst_row).copy_from_slice(words);
+        let bytes = src.row(src_row);
+        self.live_row_mut(dst_row).copy_from_slice(bytes);
     }
 
     /// Exchanges bit columns `c0` and `c1` across every physical row. Unlike
@@ -347,18 +338,18 @@ impl BitMatrix {
         if c0 == c1 {
             return;
         }
-        let (w0, b0) = (c0 / 64, c0 % 64);
-        let (w1, b1) = (c1 / 64, c1 % 64);
-        let pitch = self.pitch_words;
+        let (b0, i0) = (c0 / 8, c0 % 8);
+        let (b1, i1) = (c1 / 8, c1 % 8);
+        let pitch = self.pitch;
         let rows = self.rows;
         let region = self.region_mut();
         for r in 0..rows {
             let base = r * pitch;
-            let bit0 = (region[base + w0] >> b0) & 1;
-            let bit1 = (region[base + w1] >> b1) & 1;
+            let bit0 = (region[base + b0] >> i0) & 1;
+            let bit1 = (region[base + b1] >> i1) & 1;
             if bit0 != bit1 {
-                region[base + w0] ^= 1 << b0;
-                region[base + w1] ^= 1 << b1;
+                region[base + b0] ^= 1 << i0;
+                region[base + b1] ^= 1 << i1;
             }
         }
     }
@@ -374,44 +365,34 @@ impl BitMatrix {
     }
 }
 
-/// The mask of live bits in the last word of a row: `cols % 64` low bits,
-/// or all bits when `cols` is a multiple of 64.
-fn live_mask(cols: usize) -> u64 {
-    if cols.is_multiple_of(64) {
-        u64::MAX
-    } else {
-        (1 << (cols % 64)) - 1
-    }
-}
-
-/// A zeroed heap buffer of at least `words` `u64` words plus the offset, in
-/// words, of its first 64-byte-aligned word.
-fn aligned_zeroed_words(words: usize) -> (Box<[u64]>, usize) {
-    let buf = vec![0u64; words + (WORDS_PER_ALIGN - 1)].into_boxed_slice();
+/// A zeroed heap buffer of at least `bytes` bytes plus the offset, in bytes,
+/// of its first 64-byte-aligned byte.
+fn aligned_zeroed(bytes: usize) -> (Box<[u8]>, usize) {
+    let buf = vec![0u8; bytes + (ALIGN - 1)].into_boxed_slice();
     let addr = buf.as_ptr() as usize;
-    let offset = (ALIGN - addr % ALIGN) % ALIGN / 8;
+    let offset = (ALIGN - addr % ALIGN) % ALIGN;
     (buf, offset)
 }
 
 impl Clone for BitMatrix {
     fn clone(&self) -> Self {
         // Re-align the fresh allocation rather than copy the offset.
-        let total = self.rows * self.pitch_words;
-        let (mut buf, off) = aligned_zeroed_words(total);
+        let total = self.rows * self.pitch;
+        let (mut buf, off) = aligned_zeroed(total);
         buf[off..off + total].copy_from_slice(self.region());
         Self {
             buf,
             off,
             rows: self.rows,
             cols: self.cols,
-            pitch_words: self.pitch_words,
+            pitch: self.pitch,
             map: self.map.clone(),
         }
     }
 }
 
 impl PartialEq for BitMatrix {
-    /// Logical content equality: shape and live words in logical row order.
+    /// Logical content equality: shape and live bytes in logical row order.
     fn eq(&self, other: &Self) -> bool {
         self.rows == other.rows
             && self.cols == other.cols
@@ -434,7 +415,7 @@ impl fmt::Debug for BitMatrix {
 /// Unstable inspection API, available only with feature `internals`.
 #[cfg(feature = "internals")]
 impl BitMatrix {
-    /// Address of the first word of the physical backing region. A multiple
+    /// Address of the first byte of the physical backing region. A multiple
     /// of [`ALIGN`] by construction.
     #[must_use]
     pub fn base_addr(&self) -> usize {
@@ -452,10 +433,10 @@ impl BitMatrix {
         self.map[r]
     }
 
-    /// The whole physical backing region, padding included: `rows *
-    /// pitch_words` words, laid out as physical rows.
+    /// The whole physical backing region, padding included: `rows * pitch`
+    /// bytes, laid out as physical rows.
     #[must_use]
-    pub fn pitched_buffer(&self) -> &[u64] {
+    pub fn pitched_buffer(&self) -> &[u8] {
         self.region()
     }
 }

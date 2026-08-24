@@ -7,30 +7,30 @@
 mod common;
 
 use common::{draw, noise};
-use fgf::Gf8;
+use fgf::Gf8B;
 use fgf::field::Field;
 use gfm::{Cauchy, Echelon, Innovation, Matrix, Ple, PleScratch, SolveScratch};
 
-type E = <Gf8 as Field>::Elem;
+type E = <Gf8B as Field>::Elem;
 
 /// `n` field elements from deterministic noise.
 fn elems(n: usize, seed: u64) -> Vec<E> {
     let bytes = noise(n, seed);
-    bytes.iter().map(|&b| Gf8::read(&[b])).collect()
+    bytes.iter().map(|&b| Gf8B::read(&[b])).collect()
 }
 
 /// Packs a row of elements into little-endian bytes.
 fn pack(row: &[E]) -> Vec<u8> {
     let mut out = vec![0u8; row.len()];
     for (i, &e) in row.iter().enumerate() {
-        Gf8::write(&mut out[i..=i], e);
+        Gf8B::write(&mut out[i..=i], e);
     }
     out
 }
 
-/// A dense `Matrix<Gf8>` from rows of elements.
-fn matrix_of(rows: &[Vec<E>], cols: usize) -> Matrix<Gf8> {
-    let mut m = Matrix::<Gf8>::zeros(rows.len(), cols).unwrap();
+/// A dense `Matrix<Gf8B>` from rows of elements.
+fn matrix_of(rows: &[Vec<E>], cols: usize) -> Matrix<Gf8B> {
+    let mut m = Matrix::<Gf8B>::zeros(rows.len(), cols).unwrap();
     for (i, row) in rows.iter().enumerate() {
         for (j, &e) in row.iter().enumerate() {
             m.set(i, j, e);
@@ -44,7 +44,7 @@ fn recovered_matches_the_unique_solution() {
     for n in [1usize, 2, 5, 16, 33] {
         let s = 3; // symbols per variable
         // A guaranteed-invertible coefficient matrix.
-        let cauchy = Cauchy::<Gf8>::indexed(n, n).unwrap();
+        let cauchy = Cauchy::<Gf8B>::indexed(n, n).unwrap();
         let coeffs: Vec<Vec<E>> = (0..n)
             .map(|i| (0..n).map(|j| cauchy.coeff(i, j)).collect())
             .collect();
@@ -64,7 +64,7 @@ fn recovered_matches_the_unique_solution() {
             })
             .collect();
 
-        let mut ech = Echelon::<Gf8>::new(n, s, true).unwrap();
+        let mut ech = Echelon::<Gf8B>::new(n, s, true).unwrap();
         for i in 0..n {
             ech.absorb(&pack(&coeffs[i]), &pack(&rhs[i]));
         }
@@ -89,7 +89,7 @@ fn rank_and_pivots_agree_with_ple() {
             .map(|i| elems(cols, 0xB000 + (i as u64)))
             .collect();
         // Homogeneous RHS keeps the system consistent, isolating rank/pivots.
-        let mut ech = Echelon::<Gf8>::new(cols, 1, true).unwrap();
+        let mut ech = Echelon::<Gf8B>::new(cols, 1, true).unwrap();
         let zero = vec![0u8; 1];
         for row in &rows {
             ech.absorb(&pack(row), &zero);
@@ -137,7 +137,7 @@ fn absorb_order_is_irrelevant() {
         .collect();
 
     let run = |order: &[usize]| -> (usize, Vec<(usize, Vec<u8>)>, bool) {
-        let mut ech = Echelon::<Gf8>::new(cols, s, true).unwrap();
+        let mut ech = Echelon::<Gf8B>::new(cols, s, true).unwrap();
         let mut inconsistent = false;
         for &i in order {
             if matches!(
@@ -173,18 +173,18 @@ fn absorb_order_is_irrelevant() {
 #[test]
 fn detects_inconsistency() {
     let cols = 6;
-    let mut ech = Echelon::<Gf8>::new(cols, 1, true).unwrap();
+    let mut ech = Echelon::<Gf8B>::new(cols, 1, true).unwrap();
     let row = elems(cols, 0x1234);
     // First absorb is innovative.
     assert!(matches!(
-        ech.absorb(&pack(&row), &pack(&[Gf8::read(&[7])])),
+        ech.absorb(&pack(&row), &pack(&[Gf8B::read(&[7])])),
         Innovation::Innovative { .. }
     ));
     // The same coefficients with a different RHS contradict it.
-    let verdict = ech.absorb(&pack(&row), &pack(&[Gf8::read(&[9])]));
+    let verdict = ech.absorb(&pack(&row), &pack(&[Gf8B::read(&[9])]));
     assert_eq!(verdict, Innovation::Inconsistent);
     // The same coefficients with the same RHS are merely dependent.
-    let verdict = ech.absorb(&pack(&row), &pack(&[Gf8::read(&[7])]));
+    let verdict = ech.absorb(&pack(&row), &pack(&[Gf8B::read(&[7])]));
     assert_eq!(verdict, Innovation::Dependent);
 }
 
@@ -197,8 +197,8 @@ fn forward_echelon_matches_reduced_rank() {
             .map(|i| elems(cols, 0x2200 + i as u64))
             .collect();
         let zero = vec![0u8; 1];
-        let mut decoder = Echelon::<Gf8>::new(cols, 1, true).unwrap();
-        let mut recoder = Echelon::<Gf8>::new(cols, 1, false).unwrap();
+        let mut decoder = Echelon::<Gf8B>::new(cols, 1, true).unwrap();
+        let mut recoder = Echelon::<Gf8B>::new(cols, 1, false).unwrap();
         for row in &rows {
             decoder.absorb(&pack(row), &zero);
             recoder.absorb(&pack(row), &zero);
@@ -213,7 +213,7 @@ fn forward_echelon_matches_reduced_rank() {
 fn solution_matches_ple_solve_when_complete() {
     // Cross-check recovered payloads against Ple::solve_into on the same rows.
     let (n, s) = (12usize, 4usize);
-    let cauchy = Cauchy::<Gf8>::indexed(n, n).unwrap();
+    let cauchy = Cauchy::<Gf8B>::indexed(n, n).unwrap();
     let coeffs: Vec<Vec<E>> = (0..n)
         .map(|i| (0..n).map(|j| cauchy.coeff(i, j)).collect())
         .collect();
@@ -232,7 +232,7 @@ fn solution_matches_ple_solve_when_complete() {
         })
         .collect();
 
-    let mut ech = Echelon::<Gf8>::new(n, s, true).unwrap();
+    let mut ech = Echelon::<Gf8B>::new(n, s, true).unwrap();
     for i in 0..n {
         ech.absorb(&pack(&coeffs[i]), &pack(&rhs[i]));
     }
@@ -240,7 +240,7 @@ fn solution_matches_ple_solve_when_complete() {
     let a = matrix_of(&coeffs, n);
     let b = matrix_of(&rhs, s);
     let ple = Ple::decompose(a, &mut PleScratch::new());
-    let mut out = Matrix::<Gf8>::zeros(n, s).unwrap();
+    let mut out = Matrix::<Gf8B>::zeros(n, s).unwrap();
     ple.solve_into(&b, &mut out, &mut SolveScratch::new())
         .unwrap();
 
@@ -252,7 +252,7 @@ fn solution_matches_ple_solve_when_complete() {
 #[test]
 fn advancing_prefix_reindexes_surviving_rows() {
     for reduced in [false, true] {
-        let mut echelon = Echelon::<Gf8>::new(5, 1, reduced).unwrap();
+        let mut echelon = Echelon::<Gf8B>::new(5, 1, reduced).unwrap();
         assert!(matches!(
             echelon.absorb(&[1, 0, 0, 0, 0], &[11]),
             Innovation::Innovative { pivot: 0 }
@@ -274,7 +274,7 @@ fn advancing_prefix_reindexes_surviving_rows() {
             .map(|row| {
                 let pivot = row.pivot();
                 let mut coefficients = vec![0; 5];
-                row.mul_add_coefficients_into(&mut coefficients, Gf8::read(&[1]));
+                row.mul_add_coefficients_into(&mut coefficients, Gf8B::read(&[1]));
                 let (first, second) = row.coefficient_slices();
                 let packed: Vec<_> = first.iter().chain(second).copied().collect();
                 let last = coefficients
