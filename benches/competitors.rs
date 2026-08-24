@@ -146,7 +146,7 @@ fn bench_gf2(c: &mut Criterion) {
         let (packed, bytes, flat) = bit_inputs(n);
         let words = n.div_ceil(64);
         #[cfg(not(gfm_m4ri))]
-        let _ = words;
+        let _ = (&packed, words);
         #[cfg(not(gfm_fflas))]
         let _ = &flat;
         group.bench_with_input(BenchmarkId::new("gfm", n), &n, |b, _| {
