@@ -6,6 +6,15 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+- GF(2) trailing updates read a panel's L-factor selector in one masked
+  byte-window load (`BitMatrix::row_selector`) rather than a bounds-checked
+  bit read per pivot column, and walk set bits with `trailing_zeros`.
+  Combined with `fgf::bits::RangeXor` preparing its XOR backend, the plain
+  path drops 23–31% at order ≥128 and the remaining M4RI cutover penalty
+  closes to 0.4–3.2%. Both changes are byte-for-byte identical and move the
+  M4RI table crossover from 128 to 224. See `BENCHMARKS.md`.
+
 ### Added
 - Coefficient-free binary rows in `Hybrid`: binary rows carry implicit
   unit coefficients and widen on first field contact; GF(2) merges
@@ -81,7 +90,7 @@ All notable changes to this project are documented here. The format follows
   hybrid residual path now uses it through order 64; three pinned benchmark
   runs favored it at every supported order.
 - Measured elimination tuning: shape/backend panel-width dispatch, an
-  eight-pivot M4RI table path for GF(2) matrices from order 128, and retained
+  eight-pivot M4RI table path for GF(2) matrices from order 224, and retained
   Newton–John and unblocked twins behind `internals`. Every production result
   remains byte-identical to its untuned twin.
 - Optional Rayon symbol-axis parallelism for contiguous field-row updates.

@@ -225,20 +225,87 @@ loads per row where the private code loaded one word. Closing that needs
 an unchecked kernel escape hatch in fgf or `unsafe` word views in gfm;
 both are outside the crates' rules.
 
+### GF(2) selector read closes the plain path (2026-08-24)
+
+Follow-up to the cutover above. The +5–7% standing cost is dominated by the
+`fgf::bits` per-apply surface, but part of it is gfm-side: the trailing
+update tested each pivot column with a bounds-checked `BitMatrix::get` — one
+`region()` reslice and map indirection per bit — up to eight per trailing
+row. `BitMatrix::row_selector` reads the whole L-factor selector for a panel
+in a single masked byte-window load (at most two live bytes at the
+production `SLAB_WIDTH` of eight), and the plain trailing update walks the
+set bits with `trailing_zeros` instead of re-reading each column. The M4RI
+key extraction reads the same way. Output is byte-identical (the plain/table
+differential and the cross-domain oracle both hold). A/B against the
+`prepared ranges` baseline above (`--baseline pre`, three interleaved runs,
+same host; the GF(2^8) `dense_dispatch` group is the unchanged 1.00x
+control):
+
+| Shape | prepared ranges | selector read | change |
+| --- | ---: | ---: | ---: |
+| plain 128 | 68.83 µs | 47.83 µs | −31% |
+| plain 256 | 453.34 µs | 311.53 µs | −31% |
+| plain 512 | 1.949 ms | 1.467 ms | −25% |
+| plain 1024 | 8.204 ms | 6.301 ms | −23% |
+| m4ri 128 | 64.13 µs | 63.03 µs | −2% |
+| m4ri 256 | 304.17 µs | 301.26 µs | −1% |
+| m4ri 512 | 1.190 ms | 1.196 ms | +1% |
+| m4ri 1024 | 4.828 ms | 4.818 ms | 0% |
+
+At this stage the selector read is a small fraction of an m4ri trailing row:
+one wide `xor_range_with` dominates, so the table path is unmoved. The plain path,
+which paid the per-bit `get` on every pivot column of every trailing row,
+drops by a quarter to a third — enough that it beats the table out to a
+larger size and moves the crossover (below). Relative to the pre-cutover
+private word loops, the plain path is now faster (plain 128 47.83 µs vs
+pre-cutover 62.57 µs, −24%); the residual +5–7% is confined to the m4ri
+path at ≥224, where the dominant cost stays inside `fgf::bits`.
+
+### GF(2) prepared backend closes the remaining cutover cost (2026-08-24)
+
+The remaining M4RI cost was one level lower: `fgf::bits::RangeXor` prepared
+the byte window and masks but resolved the process XOR backend again on every
+`xor_range_with`. It also peeled both end bytes as masked scalars even when a
+byte-aligned suffix made both masks `0xFF`. `RangeXor` now captures the
+resolved backend once, and fgf's apply kernel keeps fully-live end bytes in
+the bulk XOR. Its retained old/new twin is 1.17–1.21x faster per call on the
+16–128-byte row shapes.
+
+Consumer A/B used three paired runs, each pinned fgf immediately followed by
+the local optimized fgf, over the production M4RI sizes. Improvements ranged
+from 3.6–10.6%; the weakest paired result was −3.6%, −4.2%, and −4.2% at
+orders 256, 512, and 1024. More importantly, the slowest optimized medians
+across those runs versus the private-loop pre-cutover production baseline are:
+
+| Order | pre-cutover | optimized fgf | residual |
+| ---: | ---: | ---: | ---: |
+| 256 | 282.62 µs | 291.54 µs | +3.2% |
+| 512 | 1.121 ms | 1.133 ms | +1.0% |
+| 1024 | 4.585 ms | 4.604 ms | +0.4% |
+
+Order 128 already runs the selector-optimized plain path at 47.8 µs, 12%
+faster than the pre-cutover M4RI path. The reported 5–10% GF(2) cutover
+penalty is therefore closed: production sizes are faster at 128 and within
+0.4–3.2% at larger orders, below the run-to-run host variance.
+
+
 ### GF(2) M4RI slab
 
-`bits::Ple` builds a 256-row XOR table from eight pivots. Three pinned
-boundary runs:
+`bits::Ple` builds a 256-row XOR table from eight pivots. The selector read
+and fgf prepared-backend changes moved the boundary; paired forced-path runs
+across the final transition (plain / M4RI, µs):
 
-| Trial | plain 64 | M4RI 64 | plain 128 | M4RI 128 |
-| ---: | ---: | ---: | ---: | ---: |
-| 1 | 10.28 µs | 14.85 µs | 64.73 µs | 57.91 µs |
-| 2 | 10.19 µs | 14.58 µs | 64.87 µs | 57.84 µs |
-| 3 | 10.18 µs | 14.76 µs | 65.41 µs | 57.90 µs |
+| n | plain | M4RI | winner |
+| ---: | ---: | ---: | --- |
+| 128 | 47.2 | 65.1 | plain (M4RI +38%) |
+| 160 | 88.3 | 94.9 | plain (M4RI +7.5%) |
+| 192 | 141.5 | 148.5 | plain (M4RI +4.9%) |
+| 224 | 213.4 | 210.1 | M4RI (+1.5%) |
 
-The table loses at 64 and wins at 128 in every run, so the crossover is 128
-rows/columns. `tests/bits_ple.rs` proves table and plain decompositions
-byte-identical.
+The table loses through 192 and wins from 224 up, so the crossover is 224
+rows/columns (`M4RI_CROSSOVER`). `tests/bits_ple.rs` proves table and plain
+decompositions byte-identical, so the constant is a pure performance
+boundary.
 
 ### Compact `SmallMatrix`
 

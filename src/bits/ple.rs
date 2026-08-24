@@ -20,12 +20,14 @@ use fgf::bits;
 use crate::bits::BitMatrix;
 use crate::dense::Perm;
 
-/// Eight pivots form a 256-entry M4RI combination table. Three pinned runs on
-/// this host put the crossover at 128 rows/columns: the table path loses at 64
-/// and wins at 128 and above.
-/// See `BENCHMARKS.md` for the three-run boundary measurements.
+/// Eight pivots form a 256-entry M4RI combination table. Once the plain
+/// trailing update reads its per-row selector in one masked byte-window load
+/// and `fgf::bits::RangeXor` prepares its backend, the plain path wins out to
+/// larger sizes and the table's crossover moves to 224 rows/columns: plain
+/// wins through 192 and the table wins from 224 up.
+/// See `BENCHMARKS.md` for the boundary measurements.
 const SLAB_WIDTH: usize = 8;
-const M4RI_CROSSOVER: usize = 128;
+const M4RI_CROSSOVER: usize = 224;
 
 /// A rank-revealing `A = P·L·U·Q` decomposition over GF(2).
 ///
@@ -447,11 +449,19 @@ fn update_trailing_plain(
 ) {
     let rows = mat.rows();
     for row in (frontier + pivots)..rows {
-        for src in frontier..(frontier + pivots) {
-            if mat.get(row, src) {
+        // The production panel is `SLAB_WIDTH` (8) columns, one selector read;
+        // wider `internals` panels chunk into 8-column selectors, low to high.
+        let mut base = frontier;
+        while base < frontier + pivots {
+            let width = (frontier + pivots - base).min(8);
+            let mut key = mat.row_selector(row, base, width);
+            while key != 0 {
+                let src = base + key.trailing_zeros() as usize;
                 let (row_dst, row_src) = mat.two_live_rows(row, src);
                 bits::xor_range_with(row_dst, row_src, plan);
+                key &= key - 1;
             }
+            base += width;
         }
     }
 }
@@ -488,10 +498,7 @@ fn update_trailing_m4ri(
         previous_gray = gray;
     }
     for row in (frontier + pivots)..rows {
-        let mut key = 0usize;
-        for offset in 0..pivots {
-            key |= usize::from(mat.get(row, frontier + offset)) << offset;
-        }
+        let key = mat.row_selector(row, frontier, pivots) as usize;
         if key != 0 {
             let table_row = &scratch.table[key * live_bytes..(key + 1) * live_bytes];
             bits::xor_range_with(mat.live_row_mut(row), table_row, plan);

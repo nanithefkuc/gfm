@@ -168,6 +168,32 @@ impl BitMatrix {
         byte & (1 << (col % 8)) != 0
     }
 
+    /// The `count` bits at columns `[col, col + count)` of logical row `r`,
+    /// packed LSB-first into the low bits of a `u32`.
+    ///
+    /// `count` is at most 8 and the whole field lies within `cols`, so it
+    /// spans at most two live bytes and is read in one masked byte-window
+    /// load. The elimination reads a panel's L-factor selector this way —
+    /// one load per trailing row rather than a bounds-checked [`get`](Self::get)
+    /// per pivot column.
+    pub(crate) fn row_selector(&self, r: usize, col: usize, count: usize) -> u32 {
+        debug_assert!(
+            count <= 8 && col + count <= self.cols,
+            "selector out of range"
+        );
+        let row = self.row(r);
+        let b0 = col / 8;
+        let shift = col % 8;
+        let lo = u16::from(row[b0]);
+        let hi = if b0 + 1 < row.len() {
+            u16::from(row[b0 + 1])
+        } else {
+            0
+        };
+        let window = (lo | (hi << 8)) >> shift;
+        u32::from(window) & ((1u32 << count) - 1)
+    }
+
     /// Sets the bit at `(row, col)`.
     ///
     /// # Panics
