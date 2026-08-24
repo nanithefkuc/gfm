@@ -31,8 +31,9 @@ fn mul_add_coefficients<F: FieldKernels>(dst: &mut [u8], factor: F::Elem, src: &
     if dst.len() / F::BYTES <= 64 {
         for i in 0..dst.len() / F::BYTES {
             let d = &mut dst[i * F::BYTES..(i + 1) * F::BYTES];
-            let value =
-                factor.mul(F::read(&src[i * F::BYTES..(i + 1) * F::BYTES])).add(F::read(d));
+            let value = factor
+                .mul(F::read(&src[i * F::BYTES..(i + 1) * F::BYTES]))
+                .add(F::read(d));
             F::write(d, value);
         }
     } else {
