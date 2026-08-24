@@ -29,11 +29,11 @@ const STACK_GATHER: usize = 64;
 #[inline]
 fn mul_add_coefficients<F: FieldKernels>(dst: &mut [u8], factor: F::Elem, src: &[u8]) {
     if dst.len() / F::BYTES <= 64 {
-        for (dst, src) in dst
-            .chunks_exact_mut(F::BYTES)
-            .zip(src.chunks_exact(F::BYTES))
-        {
-            F::write(dst, F::read(dst).add(factor.mul(F::read(src))));
+        for i in 0..dst.len() / F::BYTES {
+            let d = &mut dst[i * F::BYTES..(i + 1) * F::BYTES];
+            let value =
+                factor.mul(F::read(&src[i * F::BYTES..(i + 1) * F::BYTES])).add(F::read(d));
+            F::write(d, value);
         }
     } else {
         crate::row_ops::mul_add::<F>(dst, factor, src);

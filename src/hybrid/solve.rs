@@ -1127,9 +1127,7 @@ impl<F: FieldKernels> Hybrid<F> {
     /// once per deferred row, with no ordering heap.
     fn release_deferred_chunk(&mut self) {
         let chunk = &self.release_order[self.release_chunk_start..self.release_chunk_end];
-        for lane_block in &mut self.release_lane {
-            *lane_block = [F::Elem::ZERO; 16];
-        }
+        self.release_lane.fill([F::Elem::ZERO; 16]);
         self.release_mask.fill(0);
         let mut lanes = [0usize; 16];
         let mut lane_count = 0usize;
