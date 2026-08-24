@@ -134,8 +134,10 @@ All notable changes to this project are documented here. The format follows
   representation: `from_rows` takes packed bytes, `row` returns `&[u8]`,
   and `row_bytes` replaces `row_words`. `fgf` is pinned to `0.7.0`, whose
   GF(2^8) split renames the AES field `Gf8` → `Gf8B` (`gf8` → `gf8b`).
-  Elimination results are unchanged byte for byte; the cross-domain
-  differential and the M4RI/FFLAS-FFPACK oracles still pass.
+  A second round routes the hot applies through fgf's prepared-range
+  split — `bits::RangeXor` + `xor_range_with`, prepared once per pivot or
+  panel — cutting the measured elimination penalty from +22–46% to
+  +5–7% at production sizes; see `BENCHMARKS.md`.
 
 ### Fixed
 - Dense and bit-domain kernel, solve, and inverse results now undo multi-step

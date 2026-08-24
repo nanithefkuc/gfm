@@ -196,10 +196,34 @@ M4RI crossover stays at 128 (the table still loses at 64 and wins at 128);
 decomposition output is byte-identical, proven by the existing
 cross-domain differential and the M4RI/FFLAS-FFPACK oracles.
 
-The residual ~22% is the standing price of routing every row operation
-through the checked public surface instead of private `u64` indexing.
-Recovering it would need an unchecked kernel surface in fgf or a
-restructured elimination; neither is taken here.
+**Second round — prepared ranges.** The per-row cost was mostly per-call
+surface: an elimination applies the *same* range to many rows, so fgf
+gained the prepare/apply split `ops` already had for coefficients
+(`bits::RangeXor` + `xor_range_with`; 3.6x the one-shot form per call on
+fgf's own short-row bench, see fgf's `BENCHMARKS.md`). `factor_panel`
+prepares once per pivot, `bulk_update` and the M4RI table once per panel,
+and every row applies. Same baseline, same host:
+
+| Shape | pre-cutover | prepared ranges | change |
+| --- | ---: | ---: | ---: |
+| plain 64 | 10.15 µs | 10.68 µs | +5% |
+| plain 128 | 62.57 µs | 69.48 µs | +11% |
+| plain 256 | 415.26 µs | 454.96 µs | +9% |
+| plain 512 | 1.846 ms | 1.955 ms | +6% |
+| plain 1024 | 7.772 ms | 8.199 ms | +5% |
+| m4ri 128 | 54.52 µs | 64.20 µs | +18% |
+| m4ri 256 | 282.62 µs | 302.81 µs | +7% |
+| m4ri 512 | 1.121 ms | 1.191 ms | +6% |
+| m4ri 1024 | 4.585 ms | 4.824 ms | +5% |
+
+At production sizes (the m4ri path, ≥128 rows/columns) the standing cost
+is +5–7%; the plain path's small-n outlier is the byte-wise pivot scan,
+and the m4ri small-n outlier additionally pays the table-build copies.
+What remains is structural to a checked byte-typed surface: the per-apply
+coverage check, bounds-checked byte reads, and `locate_pivot`'s two byte
+loads per row where the private code loaded one word. Closing that needs
+an unchecked kernel escape hatch in fgf or `unsafe` word views in gfm;
+both are outside the crates' rules.
 
 ### GF(2) M4RI slab
 

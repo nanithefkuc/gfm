@@ -31,11 +31,11 @@ internals = []
 # Field arithmetic and packed-buffer vector kernels, pinned by rev: a
 # floating dependency is a format-break risk when the dependency feeds wire
 # bytes. Swap this rev with the other ecosystem consumers in the same sitting.
-fgf = { git = "https://github.com/nanithefkuc/fgf", rev = "d93ca678ad4278014d97ad140e23a75a0210e742" }
+fgf = { git = "https://github.com/nanithefkuc/fgf", rev = "410ea31d102bfc5010e9071ef6d114a26dd76bc2" }
 # The univariate polynomial ring supplies the master/quotient algebra for the
 # Vandermonde inverse. Pinned by rev, the same revision syndrome-engine pins,
 # so one copy resolves across the ecosystem.
-univariate = { git = "https://github.com/nanithefkuc/univariate", rev = "664dda151776a1559123fb49ffff92f05c6d345f", default-features = false }
+univariate = { git = "https://github.com/nanithefkuc/univariate", rev = "d9925c7c75bdd36a30881e69ee29e63355ac13b2", default-features = false }
 rayon = { version = "1.11", optional = true }
 
 [dev-dependencies]

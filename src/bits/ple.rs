@@ -280,10 +280,12 @@ fn factor_panel(
         }
         // The pivot bit at `(piv, piv)` is one; it stays set and becomes the
         // stored `L` factor, because the XOR clears only columns past `piv`.
+        // The range is per-pivot but applied to many rows: prepare once.
+        let plan = bits::RangeXor::new(cols, piv + 1, wend);
         for row in (piv + 1)..rows {
             if mat.get(row, piv) {
                 let (row_dst, row_src) = mat.two_live_rows(row, piv);
-                bits::xor_range(row_dst, row_src, cols, piv + 1, wend);
+                bits::xor_range_with(row_dst, row_src, &plan);
             }
         }
         piv += 1;
@@ -420,28 +422,35 @@ fn bulk_update(
     if wend >= cols {
         return;
     }
+    // One trailing range per panel, applied to every row it touches.
+    let plan = bits::RangeXor::new(cols, wend, cols);
     // U12 = L11⁻¹ · A12, in place on the pivot rows.
     for row in frontier..(frontier + pivots) {
         for src in frontier..row {
             if mat.get(row, src) {
                 let (row_dst, row_src) = mat.two_live_rows(row, src);
-                bits::xor_range(row_dst, row_src, cols, wend, cols);
+                bits::xor_range_with(row_dst, row_src, &plan);
             }
         }
     }
     match mode {
-        BulkMode::Plain => update_trailing_plain(mat, frontier, pivots, wend),
-        BulkMode::M4ri => update_trailing_m4ri(mat, frontier, pivots, wend, scratch),
+        BulkMode::Plain => update_trailing_plain(mat, frontier, pivots, &plan),
+        BulkMode::M4ri => update_trailing_m4ri(mat, frontier, pivots, &plan, scratch),
     }
 }
 
-fn update_trailing_plain(mat: &mut BitMatrix, frontier: usize, pivots: usize, wend: usize) {
-    let (rows, cols) = (mat.rows(), mat.cols());
+fn update_trailing_plain(
+    mat: &mut BitMatrix,
+    frontier: usize,
+    pivots: usize,
+    plan: &bits::RangeXor,
+) {
+    let rows = mat.rows();
     for row in (frontier + pivots)..rows {
         for src in frontier..(frontier + pivots) {
             if mat.get(row, src) {
                 let (row_dst, row_src) = mat.two_live_rows(row, src);
-                bits::xor_range(row_dst, row_src, cols, wend, cols);
+                bits::xor_range_with(row_dst, row_src, plan);
             }
         }
     }
@@ -454,10 +463,10 @@ fn update_trailing_m4ri(
     mat: &mut BitMatrix,
     frontier: usize,
     pivots: usize,
-    wend: usize,
+    plan: &bits::RangeXor,
     scratch: &mut PleScratch,
 ) {
-    let (rows, cols) = (mat.rows(), mat.cols());
+    let rows = mat.rows();
     let live_bytes = mat.row_bytes();
     let entries = 1usize << pivots;
     scratch.table.resize(entries * live_bytes, 0);
@@ -471,12 +480,10 @@ fn update_trailing_m4ri(
             gray * live_bytes,
         );
         let pivot = mat.row(frontier + changed);
-        bits::xor_range(
+        bits::xor_range_with(
             &mut scratch.table[gray * live_bytes..(gray + 1) * live_bytes],
             pivot,
-            cols,
-            wend,
-            cols,
+            plan,
         );
         previous_gray = gray;
     }
@@ -487,7 +494,7 @@ fn update_trailing_m4ri(
         }
         if key != 0 {
             let table_row = &scratch.table[key * live_bytes..(key + 1) * live_bytes];
-            bits::xor_range(mat.live_row_mut(row), table_row, cols, wend, cols);
+            bits::xor_range_with(mat.live_row_mut(row), table_row, plan);
         }
     }
 }
