@@ -653,3 +653,50 @@ Against the pre-round baseline, max-K drops 31% and the mid-range shapes
 encoder and decoder systems carry few redundant equations (prepare K=56403
 600 ms vs 595 ms), so its remaining cost stays in the merge machinery this
 record's round-three tables already describe.
+
+## Fifth round: release in the inactive column space (2026-08-26)
+
+Consumer profiling after round four put 42.8% of `raptor-q` prepare
+K=56403 inside the deferred-release substitution. Counters added to the
+release loop showed two shapes: on the real system the substitution walks
+touch ~11.0M entries with a 16-wide lane inner loop over an `n`-wide
+(900 KB) accumulator; on the synthetic max-K shape the same loop records
+~6.0M right-hand-side op tuples and rescans all pivots once per group
+(seven groups for 108 deferred rows).
+
+The rewrite rests on one invariant: pivot rows carry nothing outside their
+pivot column and the inactive set, so substitutions never write a pivot
+column, and every walked non-pivot column is inactive (now pinned by a
+debug assertion). That makes each seeded coefficient at a pivot column
+immutable until its own pivot fires — factors need no evolution tracking —
+and lets the accumulation live in a `g`-wide accumulator indexed by
+inactive ordinal:
+
+- the lane store becomes read-only seed; emission adds seed to accumulator;
+- the per-entry inner loop iterates a hoisted live-lane list instead of
+  re-testing the mask bit for every lane of every entry;
+- the pivot's own column is skipped instead of written and discarded;
+- dead mask bookkeeping on substituted-in columns is gone;
+- groups widen from sixteen lanes to sixty-four (`RELEASE_LANES`),
+  dividing group-rescan and walk overhead by four where bands are wide.
+
+Same protocol as rounds three and four (verify-fix state vs this round):
+
+| Case | verify fix | release fix | change |
+| --- | ---: | ---: | ---: |
+| `rfc_scale` lt_hdpc_deferred 500 | 456 µs | 392 µs | −14% |
+| `rfc_scale` lt_hdpc_deferred 1000 | 1.152 ms | 1.034 ms | −10% |
+| `rfc_scale` lt_hdpc_deferred 2000 | 3.88 ms | 3.50 ms | −10% |
+| `rfc_scale` lt_hdpc_deferred 4000 | 14.84 ms | 13.57 ms | −9% |
+| `rfc_scale` lt_hdpc_deferred 56403 | 203.9 ms | 177.7 ms | −13% |
+| `raptor-q` prepare K=56403 | 603 ms | 486 ms | −19% |
+| `raptor-q` prepare K=1000 | 2.153 ms | 1.973 ms | −8% |
+| `raptor-q` decode k=1000 | 2.243 ms | 2.098 ms | −6% |
+
+Cumulative against the session-start baseline in this file's round-three
+table: consumer prepare at max K falls from 1.4995 s to 0.486 s (−68%),
+decode K=1000 from 4.514 ms to 2.098 ms, and the synthetic max-K solve
+from 293.7 ms to 177.7 ms. Answers remain byte-identical under the
+eager/deferred differentials, including a dense band wider than one lane
+group. The remaining prepare profile now leads with the sparse-phase merge
+walks and payload replay rather than any single dominant phase.

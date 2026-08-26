@@ -7,6 +7,14 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Changed
+- Deferred-row release runs in the inactive column space: substitutions
+  accumulate into a `g`-wide accumulator indexed by inactive ordinal
+  instead of an `n`-wide lane store, factors read straight from the seeded
+  coefficients (substitutions never touch pivot columns), live lanes are
+  hoisted out of the per-entry loop, and groups widen from sixteen to
+  sixty-four lanes. Consumer prepare at max K drops another 19%; answers
+  stay byte-identical under the eager/deferred differentials. See
+  `BENCHMARKS.md`.
 - Dependent-row verification in `Hybrid` runs in reduced form: released
   deferred rows evaluate their substituted inactive-column coefficients
   against their substituted right-hand side instead of re-walking L-wide
