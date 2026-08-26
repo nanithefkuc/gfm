@@ -26,7 +26,7 @@ use crate::SolveError;
 use crate::dense::{Matrix, Ple, PleScratch, SmallMatrix, SolveScratch};
 use crate::hybrid::deferred::DeferredLog;
 use crate::hybrid::schedule::largest_component_edge;
-use crate::hybrid::sparse::Row;
+use crate::hybrid::sparse::{NOT_FROZEN, Row};
 macro_rules! dispatch_small_solve {
     ($solver:expr, $order:expr; $($k:literal),+ $(,)?) => {
         match $order {
@@ -35,6 +35,14 @@ macro_rules! dispatch_small_solve {
         }
     };
 }
+
+/// Deferred rows processed per release group. A wider group amortizes one
+/// pass over every relevant pivot row's support across more rows; the
+/// accumulator stays `g`-wide either way.
+const RELEASE_LANES: usize = 64;
+
+/// Inactive-ordinal sentinel for a column that is not in the dense block.
+const RELEASE_NOT_INACTIVE: u32 = u32::MAX;
 
 use fgf::field::Elem;
 use fgf::{FieldKernels, ops};
@@ -122,9 +130,14 @@ pub struct Hybrid<F: FieldKernels> {
     inactivated_cols: Vec<u32>,
     deferred: Vec<bool>,
     pivot_time: Vec<u32>,
-    release_lane: Vec<[F::Elem; 16]>,
-    release_mask: Vec<u16>,
-    release_factors: [F::Elem; 16],
+    release_lane: Vec<[F::Elem; RELEASE_LANES]>,
+    release_mask: Vec<u64>,
+    release_factors: [F::Elem; RELEASE_LANES],
+    /// Substituted contributions accumulated in the inactive-column space,
+    /// indexed by inactive ordinal — the working set stays `g`-wide.
+    release_acc: Vec<[F::Elem; RELEASE_LANES]>,
+    /// Column → position in the sorted inactive list.
+    inactive_ord: Vec<u32>,
     weight_bucket: Vec<Vec<u32>>,
     bucket_pos: Vec<u32>,
     col_rows: Vec<Vec<u32>>,
@@ -153,6 +166,18 @@ pub struct Hybrid<F: FieldKernels> {
     schedule_size: Vec<usize>,
     pivot_cols: Vec<u32>,
     pivot_coeffs: Vec<F::Elem>,
+    /// Snapshot of the packed pivot row's frozen words, applied to each
+    /// eliminated row as one whole-word XOR.
+    pivot_frozen: Vec<u64>,
+    /// Lazily gathered full support (active plus frozen) of a packed pivot
+    /// row, built only when a cold (widening or non-unit-factor) merge
+    /// needs a flat sorted source.
+    pivot_all_cols: Vec<u32>,
+    pivot_gathered: bool,
+    /// Column → frozen ordinal ([`NOT_FROZEN`] while active).
+    frozen_ord: Vec<u32>,
+    /// Frozen ordinal → column; indexes bit positions in row word vectors.
+    frozen_cols: Vec<u32>,
     verify_rhs: Vec<u8>,
     log: DeferredLog<F>,
     rank_ple: Option<Ple<F>>,
@@ -227,7 +252,9 @@ impl<F: FieldKernels> Hybrid<F> {
             generation: 0,
             release_lane: Vec::new(),
             release_mask: Vec::new(),
-            release_factors: [F::Elem::ZERO; 16],
+            release_factors: [F::Elem::ZERO; RELEASE_LANES],
+            release_acc: Vec::new(),
+            inactive_ord: Vec::new(),
             edge_pair: Vec::new(),
             edge_dirty: Vec::new(),
             inactivated_touch: Vec::new(),
@@ -257,6 +284,11 @@ impl<F: FieldKernels> Hybrid<F> {
             schedule_size: Vec::new(),
             pivot_cols: Vec::new(),
             pivot_coeffs: Vec::new(),
+            pivot_frozen: Vec::new(),
+            pivot_all_cols: Vec::new(),
+            pivot_gathered: false,
+            frozen_ord: Vec::new(),
+            frozen_cols: Vec::new(),
             verify_rhs: Vec::new(),
             log: DeferredLog::new(),
             rank_ple: None,
@@ -467,11 +499,13 @@ impl<F: FieldKernels> Hybrid<F> {
             }
         }
         self.release_lane.clear();
-        self.release_lane.resize(n, [F::Elem::ZERO; 16]);
+        self.release_lane.resize(n, [F::Elem::ZERO; RELEASE_LANES]);
         self.release_mask.clear();
         self.pivot_time.clear();
         self.pivot_time.resize(n, 0);
-        self.release_mask.resize(n, 0);
+        self.release_mask.resize(n, 0u64);
+        self.inactive_ord.clear();
+        self.inactive_ord.resize(n, RELEASE_NOT_INACTIVE);
         self.deferred_rhs_ops.clear();
         self.active_weight.clear();
         self.active_weight.resize(m, 0);
@@ -483,6 +517,9 @@ impl<F: FieldKernels> Hybrid<F> {
             self.col[column as usize] = Col::Inactive;
             self.inactive.push(column);
         }
+        // Frozen-ordinal space: the initially inactive columns take the
+        // first ordinals, then packed work rows split their input support.
+        self.assign_initial_frozen();
 
         // Active weights are maintained incrementally from here on: the
         // scheduling loop never recounts them. Rows change weight only
@@ -505,13 +542,9 @@ impl<F: FieldKernels> Hybrid<F> {
             if !self.alive[r] {
                 continue;
             }
-            self.active_weight[r] = self.work_rows[r]
-                .cols
-                .iter()
-                .filter(|&&c| self.col[c as usize] == Col::Active)
-                .count();
-            if self.active_weight[r] > 0 {
-                let weight = self.active_weight[r];
+            let weight = self.initial_active_weight(r);
+            self.active_weight[r] = weight;
+            if weight > 0 {
                 self.bucket_pos[r] = self.weight_bucket[weight].len() as u32;
                 self.weight_bucket[weight].push(r as u32);
             }
@@ -560,6 +593,44 @@ impl<F: FieldKernels> Hybrid<F> {
 
     fn rhs_row(&self, r: usize) -> &[u8] {
         &self.work_rhs[r * self.sym_len..(r + 1) * self.sym_len]
+    }
+
+    /// Gives the initially inactive columns the first frozen ordinals and
+    /// splits every packed work row's support accordingly: those columns
+    /// leave the active lists and become bit words before any scheduling.
+    fn assign_initial_frozen(&mut self) {
+        self.frozen_ord.clear();
+        self.frozen_ord.resize(self.cols, NOT_FROZEN);
+        self.frozen_cols.clear();
+        for (ordinal, &column) in self.initial_inactive.iter().enumerate() {
+            self.frozen_ord[column as usize] = ordinal as u32;
+            self.frozen_cols.push(column);
+        }
+        if self.frozen_cols.is_empty() {
+            return;
+        }
+        let columns = &self.frozen_cols;
+        let ordinals = &self.frozen_ord;
+        for work in &mut self.work_rows {
+            if work.binary {
+                work.freeze_from_list(columns, ordinals);
+            }
+        }
+    }
+
+    /// The row's active weight at prepare time: a packed row's list is
+    /// exactly its active support after the split; a widened row keeps
+    /// frozen entries in the list and counts active ones directly.
+    fn initial_active_weight(&self, r: usize) -> usize {
+        if self.work_rows[r].binary {
+            self.work_rows[r].cols.len()
+        } else {
+            self.work_rows[r]
+                .cols
+                .iter()
+                .filter(|&&c| self.col[c as usize] == Col::Active)
+                .count()
+        }
     }
 
     /// `rhs[dst] ^= factor · rhs[src]`.
@@ -615,7 +686,12 @@ impl<F: FieldKernels> Hybrid<F> {
         let mut coefficients = SmallMatrix::<F, K>::zeros();
         for (row_index, &source_row) in self.basis_rows.iter().enumerate() {
             for (col_index, &column) in self.inactive.iter().enumerate() {
-                coefficients.set(row_index, col_index, self.work_rows[source_row].get(column));
+                let ordinal = self.frozen_ord[column as usize];
+                coefficients.set(
+                    row_index,
+                    col_index,
+                    self.work_rows[source_row].get(column, ordinal),
+                );
             }
         }
         coefficients.solve_into(
@@ -729,12 +805,19 @@ impl<F: FieldKernels> Hybrid<F> {
 
             self.pivot_cols.clear();
             self.pivot_coeffs.clear();
+            self.pivot_frozen.clear();
+            self.pivot_gathered = false;
             self.pivot_cols
                 .extend_from_slice(&self.work_rows[pivot_row].cols);
-            self.pivot_coeffs
-                .extend_from_slice(&self.work_rows[pivot_row].coeffs);
+            if self.work_rows[pivot_row].binary {
+                self.pivot_frozen
+                    .extend_from_slice(&self.work_rows[pivot_row].frozen);
+            } else {
+                self.pivot_coeffs
+                    .extend_from_slice(&self.work_rows[pivot_row].coeffs);
+            }
             let pivot_binary = self.work_rows[pivot_row].binary;
-            let pivot_inv = self.work_rows[pivot_row].get(pivot_col).inv();
+            let pivot_inv = self.work_rows[pivot_row].get(pivot_col, NOT_FROZEN).inv();
 
             self.generation += 1;
             let generation = self.generation;
@@ -749,26 +832,52 @@ impl<F: FieldKernels> Hybrid<F> {
                 if !self.alive[r] {
                     continue;
                 }
-                let entry = self.work_rows[r].get(pivot_col);
+                let entry = self.work_rows[r].get(pivot_col, NOT_FROZEN);
                 if entry.is_zero() {
                     continue; // stale listing (cancelled entry)
                 }
                 let factor = entry.mul(pivot_inv);
-                let (widened, merged_weight) = self.work_rows[r].axpy_coeffs_slices(
-                    factor,
-                    &self.pivot_cols,
-                    &self.pivot_coeffs,
-                    pivot_binary,
-                    |added| {
-                        // The merge widened this row's support; index the
-                        // new columns so their future pivots find it.
-                        self.col_rows[added as usize].push(r as u32);
-                    },
-                    |c| self.col[c as usize] == Col::Active,
-                );
-                if widened {
-                    stats.widenings += 1;
-                }
+                let merged_weight = if self.work_rows[r].binary && pivot_binary && factor.is_one() {
+                    // The hot GF(2) combination: active lists XOR, frozen
+                    // words XOR wholesale.
+                    self.work_rows[r].axpy_xor_parts(
+                        &self.pivot_cols,
+                        &self.pivot_frozen,
+                        |added| {
+                            // The merge widened this row's support; index the
+                            // new columns so their future pivots find it.
+                            self.col_rows[added as usize].push(r as u32);
+                        },
+                        |c| self.col[c as usize] == Col::Active,
+                    )
+                } else {
+                    // Cold path: a widened destination or a non-unit factor.
+                    // A packed source needs its full sorted support flat.
+                    if pivot_binary && !self.pivot_gathered {
+                        self.gather_pivot_all_cols();
+                        self.pivot_gathered = true;
+                    }
+                    if self.work_rows[r].binary && self.work_rows[r].materialize(&self.frozen_cols)
+                    {
+                        stats.widenings += 1;
+                    }
+                    let src_cols = if pivot_binary {
+                        &self.pivot_all_cols
+                    } else {
+                        &self.pivot_cols
+                    };
+                    let (_, weight) = self.work_rows[r].axpy_coeffs_slices(
+                        factor,
+                        src_cols,
+                        &self.pivot_coeffs,
+                        pivot_binary,
+                        |added| {
+                            self.col_rows[added as usize].push(r as u32);
+                        },
+                        |c| self.col[c as usize] == Col::Active,
+                    );
+                    weight
+                };
                 // The merge rewrote the row's support: its cached edge
                 // (if any) is stale even when the active weight is not.
                 self.edge_dirty[r] = true;
@@ -788,6 +897,9 @@ impl<F: FieldKernels> Hybrid<F> {
             }
         }
         self.inactive.sort_unstable();
+        for (ordinal, &column) in self.inactive.iter().enumerate() {
+            self.inactive_ord[column as usize] = ordinal as u32;
+        }
         stats.inactivations = self.inactive.len();
         stats.initial_inactivations = self.initial_inactive.len();
         stats.deferred_rows = self.deferred.iter().filter(|&&d| d).count();
@@ -810,7 +922,8 @@ impl<F: FieldKernels> Hybrid<F> {
             let matrix = rank_ple.matrix_for_redecomposition();
             for (i, &row) in self.residual.iter().enumerate() {
                 for (j, &column) in self.inactive.iter().enumerate() {
-                    let coefficient = self.work_rows[row].get(column);
+                    let ordinal = self.frozen_ord[column as usize];
+                    let coefficient = self.work_rows[row].get(column, ordinal);
                     if !coefficient.is_zero() {
                         matrix.set(i, j, coefficient);
                     }
@@ -866,7 +979,8 @@ impl<F: FieldKernels> Hybrid<F> {
             let matrix = solve_ple.matrix_for_redecomposition();
             for (i, &row) in self.basis_rows.iter().enumerate() {
                 for (j, &column) in self.inactive.iter().enumerate() {
-                    let coefficient = self.work_rows[row].get(column);
+                    let ordinal = self.frozen_ord[column as usize];
+                    let coefficient = self.work_rows[row].get(column, ordinal);
                     if !coefficient.is_zero() {
                         matrix.set(i, j, coefficient);
                     }
@@ -913,15 +1027,19 @@ impl<F: FieldKernels> Hybrid<F> {
             values
                 .row_mut(pivot_col as usize)
                 .copy_from_slice(self.rhs_row(row));
-            for &column in &self.work_rows[row].cols {
-                if column == pivot_col {
-                    continue;
-                }
-                let coefficient = self.work_rows[row].get(column);
-                let (dst, src) = values.two_live_rows(pivot_col as usize, column as usize);
-                crate::row_ops::mul_add::<F>(dst, coefficient, src);
+            {
+                let work_row = &self.work_rows[row];
+                let frozen_cols = &self.frozen_cols;
+                work_row.for_each_entry(frozen_cols, |column, coefficient| {
+                    if column == pivot_col {
+                        return;
+                    }
+                    let (dst, src) = values.two_live_rows(pivot_col as usize, column as usize);
+                    crate::row_ops::mul_add::<F>(dst, coefficient, src);
+                });
             }
-            let pivot = self.work_rows[row].get(pivot_col);
+            let ordinal = self.frozen_ord[pivot_col as usize];
+            let pivot = self.work_rows[row].get(pivot_col, ordinal);
             if !pivot.is_one() {
                 ops::mul_assign::<F>(values.row_mut(pivot_col as usize), pivot.inv());
             }
@@ -950,16 +1068,20 @@ impl<F: FieldKernels> Hybrid<F> {
                         .copy_from_slice(dense_kernel.row(j));
                 }
                 for &(row, pivot_col) in self.pivots.iter().rev() {
-                    for &column in &self.work_rows[row].cols {
-                        if column == pivot_col {
-                            continue;
-                        }
-                        let coefficient = self.work_rows[row].get(column);
-                        let (dst, src) =
-                            dependencies.two_live_rows(pivot_col as usize, column as usize);
-                        crate::row_ops::mul_add::<F>(dst, coefficient, src);
+                    {
+                        let work_row = &self.work_rows[row];
+                        let frozen_cols = &self.frozen_cols;
+                        work_row.for_each_entry(frozen_cols, |column, coefficient| {
+                            if column == pivot_col {
+                                return;
+                            }
+                            let (dst, src) =
+                                dependencies.two_live_rows(pivot_col as usize, column as usize);
+                            crate::row_ops::mul_add::<F>(dst, coefficient, src);
+                        });
                     }
-                    let pivot = self.work_rows[row].get(pivot_col);
+                    let ordinal = self.frozen_ord[pivot_col as usize];
+                    let pivot = self.work_rows[row].get(pivot_col, ordinal);
                     if !pivot.is_one() {
                         ops::mul_assign::<F>(dependencies.row_mut(pivot_col as usize), pivot.inv());
                     }
@@ -969,7 +1091,7 @@ impl<F: FieldKernels> Hybrid<F> {
                     for basis in 0..free {
                         let mut sum = F::Elem::ZERO;
                         for &column in &source.cols {
-                            let coefficient = source.get(column);
+                            let coefficient = source.get_input(column);
                             sum =
                                 sum.add(coefficient.mul(dependencies.get(column as usize, basis)));
                         }
@@ -984,19 +1106,50 @@ impl<F: FieldKernels> Hybrid<F> {
 
         // Pivot and dense-basis equations are satisfied by construction. Only
         // rows outside that independent set can contradict the assembled
-        // answer.
+        // answer. Each such row is checked in the cheapest form that is
+        // algebraically equivalent to its input equation:
+        //
+        // * a released deferred row already carries its fully substituted
+        //   coefficients over the inactive columns, and its payload absorbed
+        //   the pivot factors above — the reduced equation holds exactly when
+        //   the original one does;
+        // * a binary row's coefficients are all units, so evaluation is one
+        //   XOR of the selected value rows;
+        // * anything else evaluates entry by entry over the input support.
         for (row, source) in self.rows.iter().enumerate() {
             if self.needed[row] {
                 continue;
             }
             self.verify_rhs.fill(0);
-            for &column in &source.cols {
-                let coefficient = source.get(column);
-                crate::row_ops::mul_add::<F>(
-                    &mut self.verify_rhs,
-                    coefficient,
-                    values.row(column as usize),
-                );
+            if self.deferred[row] {
+                let work = &self.work_rows[row];
+                let frozen_cols = &self.frozen_cols;
+                work.for_each_entry(frozen_cols, |column, coefficient| {
+                    crate::row_ops::mul_add::<F>(
+                        &mut self.verify_rhs,
+                        coefficient,
+                        values.row(column as usize),
+                    );
+                });
+                let expected = &self.work_rhs[row * self.sym_len..(row + 1) * self.sym_len];
+                if self.verify_rhs != expected {
+                    return Err(SolveError::Inconsistent { row });
+                }
+                continue;
+            }
+            if source.binary {
+                for &column in &source.cols {
+                    ops::add_assign::<F>(&mut self.verify_rhs, values.row(column as usize));
+                }
+            } else {
+                for &column in &source.cols {
+                    let coefficient = source.get_input(column);
+                    crate::row_ops::mul_add::<F>(
+                        &mut self.verify_rhs,
+                        coefficient,
+                        values.row(column as usize),
+                    );
+                }
             }
             let expected = &self.rhs[row * self.sym_len..(row + 1) * self.sym_len];
             if self.verify_rhs != expected {
@@ -1005,30 +1158,34 @@ impl<F: FieldKernels> Hybrid<F> {
         }
 
         for (work, source) in self.work_rows.iter_mut().zip(&self.rows) {
-            if work.cols.capacity() < source.cols.len() {
-                work.cols
-                    .reserve(source.cols.len().saturating_sub(work.cols.len()));
-            }
-            if work.coeffs.capacity() < source.coeffs.len() {
-                work.coeffs
-                    .reserve(source.coeffs.len().saturating_sub(work.coeffs.len()));
+            work.reserve_like(source);
+            if work.frozen.capacity() < self.frozen_cols.len() {
+                work.frozen
+                    .reserve(self.frozen_cols.len().saturating_sub(work.frozen.len()));
             }
         }
         stats.rank = self.pivots.len() + dense_rank;
         Ok(stats)
     }
 
-    /// Decrements the active weight of every row containing one of the
-    /// just-inactivated columns (`self.inactivated_cols`). Inactivation is
-    /// rare (the schedule inactivates only fill-producing columns), so a
-    /// scan with a support lookup per row keeps the incremental-weight
-    /// invariant without a column-to-row index.
+    /// Freezes the just-inactivated columns (`self.inactivated_cols`): each
+    /// takes the next frozen ordinal, and every live row containing one
+    /// moves those entries out of its active list and into its bit words.
+    /// Inactivation is rare (the schedule inactivates only fill-producing
+    /// columns), so a scan with a support lookup per row keeps the
+    /// incremental-weight invariant without touching unaffected rows. From
+    /// here on, merges carry these columns as whole-word XORs instead of
+    /// per-entry list walks.
     fn weights_on_inactivated(&mut self) {
         // The column-to-row index names the candidate rows; stale
         // entries (cancelled coefficients) are filtered by the lookup.
         // A generation guard deduplicates repeated listings without
-        // sorting, and each affected row then counts every one of the
-        // just-inactivated columns it still contains.
+        // sorting; each affected row is then migrated once.
+        for &column in &self.inactivated_cols {
+            debug_assert_eq!(self.frozen_ord[column as usize], NOT_FROZEN);
+            self.frozen_ord[column as usize] = self.frozen_cols.len() as u32;
+            self.frozen_cols.push(column);
+        }
         self.generation += 1;
         let generation = self.generation;
         let mut seen = core::mem::take(&mut self.inactivated_touch);
@@ -1040,7 +1197,9 @@ impl<F: FieldKernels> Hybrid<F> {
                 if self.row_gen[r] == generation || !self.alive[r] {
                     continue;
                 }
-                if self.work_rows[r].get(column).is_zero() {
+                // Containment in the *active* list: frozen bits are not
+                // consulted because the entries have not moved yet.
+                if !self.work_rows[r].contains_in_list(column) {
                     continue;
                 }
                 self.row_gen[r] = generation;
@@ -1048,15 +1207,38 @@ impl<F: FieldKernels> Hybrid<F> {
             }
         }
         for &r in &seen {
-            let mut lost = 0usize;
-            for &column in &self.inactivated_cols {
-                if !self.work_rows[r].get(column).is_zero() {
-                    lost += 1;
-                }
-            }
+            let lost = if self.work_rows[r].binary {
+                let columns = &self.inactivated_cols;
+                let ordinals = &self.frozen_ord;
+                self.work_rows[r].freeze_from_list(columns, ordinals)
+            } else {
+                // Widened rows keep entries in place (bits cannot carry a
+                // coefficient); only the active weight drops.
+                self.inactivated_cols
+                    .iter()
+                    .filter(|&&column| self.work_rows[r].contains_in_list(column))
+                    .count()
+            };
             self.bucket_move(r, self.active_weight[r] - lost);
         }
         self.inactivated_touch = seen;
+    }
+
+    /// Flattens a packed pivot row's snapshot into one sorted column list
+    /// (active entries plus frozen bits) for the cold list-merge path.
+    fn gather_pivot_all_cols(&mut self) {
+        self.pivot_all_cols.clear();
+        self.pivot_all_cols.extend_from_slice(&self.pivot_cols);
+        for (word, &bits) in self.pivot_frozen.iter().enumerate() {
+            let mut bits = bits;
+            while bits != 0 {
+                let bit = bits.trailing_zeros();
+                bits &= bits - 1;
+                self.pivot_all_cols
+                    .push(self.frozen_cols[word * 64 + bit as usize]);
+            }
+        }
+        self.pivot_all_cols.sort_unstable();
     }
 
     /// Moves row `r` into the queue for `new_weight` (0 parks it). The
@@ -1110,26 +1292,34 @@ impl<F: FieldKernels> Hybrid<F> {
         if self.release_order.is_empty() {
             return;
         }
-        // Lanes are processed in groups of sixteen (the accumulator
-        // width); RaptorQ needs one group, arbitrary systems may need
-        // more.
-        for start in (0..self.release_order.len()).step_by(16) {
-            let end = (start + 16).min(self.release_order.len());
+        self.release_acc.clear();
+        self.release_acc
+            .resize(self.inactive.len(), [F::Elem::ZERO; RELEASE_LANES]);
+        // Lanes are processed in groups of the accumulator width; a wider
+        // dense band simply takes more groups.
+        for start in (0..self.release_order.len()).step_by(RELEASE_LANES) {
+            let end = (start + RELEASE_LANES).min(self.release_order.len());
             self.release_chunk_start = start;
             self.release_chunk_end = end;
             self.release_deferred_chunk();
         }
     }
 
-    /// The batched substitution for one group of deferred rows: one pass
-    /// over the pivots in time order with a per-column lane mask, so the
-    /// frozen pivot rows stream through memory once per group instead of
-    /// once per deferred row, with no ordering heap.
+    /// The batched substitution for one group of deferred rows.
+    ///
+    /// Substitutions write only to inactive columns — pivot rows carry
+    /// nothing on pivoted columns, so a pivot column's seeded coefficient
+    /// is untouched until its own pivot fires and its factor can be read
+    /// straight from the seed. That makes the substitution sums order-free
+    /// per column: contributions land in a `g`-wide accumulator indexed by
+    /// inactive ordinal instead of an `n`-wide lane store, and each
+    /// triggered pivot walks its support once for the whole group with the
+    /// live lanes hoisted out of the inner loop.
     fn release_deferred_chunk(&mut self) {
         let chunk = &self.release_order[self.release_chunk_start..self.release_chunk_end];
-        self.release_lane.fill([F::Elem::ZERO; 16]);
+        self.release_lane.fill([F::Elem::ZERO; RELEASE_LANES]);
         self.release_mask.fill(0);
-        let mut lanes = [0usize; 16];
+        let mut lanes = [0usize; RELEASE_LANES];
         let mut lane_count = 0usize;
         for &r in chunk {
             self.alive[r] = true;
@@ -1140,73 +1330,78 @@ impl<F: FieldKernels> Hybrid<F> {
                 let column = self.work_rows[r].cols[index];
                 let coefficient = self.work_rows[r].coeffs[index];
                 self.release_lane[column as usize][lane] = coefficient;
-                self.release_mask[column as usize] |= 1 << lane;
+                self.release_mask[column as usize] |= 1u64 << lane;
             }
         }
         let deferred_count = lane_count;
+        let mut live_lanes = [0usize; RELEASE_LANES];
         for &(pivot_row, pivot_col) in &self.pivots {
             let mask = self.release_mask[pivot_col as usize];
             if mask == 0 {
                 continue;
             }
-            let pivot_value = self.work_rows[pivot_row].get(pivot_col);
+            let pivot_value = self.work_rows[pivot_row].get(pivot_col, NOT_FROZEN);
             let pivot_inv = pivot_value.inv();
-            let pivot_is_binary = self.work_rows[pivot_row].binary;
-            let pivot_len = self.work_rows[pivot_row].cols.len();
-            // Record each live lane's factor and clear its substituted
-            // pivot-column entry.
+            let mut live_count = 0usize;
             let mut lane = 0;
             while lane < deferred_count {
-                if mask & (1 << lane) != 0 {
+                if mask & (1u64 << lane) != 0 {
                     let factor = self.release_lane[pivot_col as usize][lane].mul(pivot_inv);
-                    self.release_lane[pivot_col as usize][lane] = F::Elem::ZERO;
-                    if factor.is_zero() {
-                        self.release_factors[lane] = F::Elem::ZERO;
-                    } else {
+                    if !factor.is_zero() {
                         self.deferred_rhs_ops
                             .push((lanes[lane] as u32, pivot_row as u32, factor));
                         self.release_factors[lane] = factor;
+                        live_lanes[live_count] = lane;
+                        live_count += 1;
                     }
                 }
                 lane += 1;
             }
-            for k in 0..pivot_len {
-                let column = self.work_rows[pivot_row].cols[k] as usize;
-                let value = if pivot_is_binary {
-                    F::Elem::ONE
-                } else {
-                    self.work_rows[pivot_row].coeffs[k]
-                };
-                let mut lane = 0;
-                while lane < deferred_count {
-                    if mask & (1 << lane) != 0 {
-                        let factor = self.release_factors[lane];
-                        if !factor.is_zero() {
-                            let updated = self.release_lane[column][lane].add(factor.mul(value));
-                            self.release_lane[column][lane] = updated;
-                            if !updated.is_zero() {
-                                self.release_mask[column] |= 1 << lane;
-                            }
-                        }
+            {
+                let pivot = &self.work_rows[pivot_row];
+                let frozen_cols = &self.frozen_cols;
+                let ordinals = &self.inactive_ord;
+                let factors = &self.release_factors;
+                let acc = &mut self.release_acc;
+                pivot.for_each_entry(frozen_cols, |column, value| {
+                    let column = column as usize;
+                    if column == pivot_col as usize {
+                        return; // already substituted out above
                     }
-                    lane += 1;
-                }
+                    let slot = ordinals[column];
+                    debug_assert_ne!(
+                        slot, RELEASE_NOT_INACTIVE,
+                        "pivot rows carry nothing outside their pivot column and the inactive set"
+                    );
+                    if slot == RELEASE_NOT_INACTIVE {
+                        return;
+                    }
+                    let slot = slot as usize;
+                    for &lane in &live_lanes[..live_count] {
+                        let updated = acc[slot][lane].add(factors[lane].mul(value));
+                        acc[slot][lane] = updated;
+                    }
+                });
             }
             // The pivot column is fully substituted out for these lanes.
             self.release_mask[pivot_col as usize] = 0;
         }
-        // Emit each deferred row over the (sorted) inactive columns.
+        // Emit each released row over the (sorted) inactive columns: the
+        // seeded coefficient plus everything substituted onto it.
         for (lane, &lane_row) in lanes.iter().enumerate().take(lane_count) {
-            self.work_rows[lane_row].cols.clear();
-            self.work_rows[lane_row].coeffs.clear();
-            for &column in &self.inactive {
-                let coefficient = self.release_lane[column as usize][lane];
-                if !coefficient.is_zero() {
-                    self.work_rows[lane_row].cols.push(column);
-                    self.work_rows[lane_row].coeffs.push(coefficient);
+            let work = &mut self.work_rows[lane_row];
+            work.cols.clear();
+            work.coeffs.clear();
+            work.frozen.clear();
+            for (ordinal, &column) in self.inactive.iter().enumerate() {
+                let value =
+                    self.release_lane[column as usize][lane].add(self.release_acc[ordinal][lane]);
+                if !value.is_zero() {
+                    work.cols.push(column);
+                    work.coeffs.push(value);
                 }
             }
-            self.work_rows[lane_row].binary = false;
+            work.binary = false;
         }
     }
 }

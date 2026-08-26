@@ -7,6 +7,31 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Changed
+- Deferred-row release runs in the inactive column space: substitutions
+  accumulate into a `g`-wide accumulator indexed by inactive ordinal
+  instead of an `n`-wide lane store, factors read straight from the seeded
+  coefficients (substitutions never touch pivot columns), live lanes are
+  hoisted out of the per-entry loop, and groups widen from sixteen to
+  sixty-four lanes. Consumer prepare at max K drops another 19%; answers
+  stay byte-identical under the eager/deferred differentials. See
+  `BENCHMARKS.md`.
+- Dependent-row verification in `Hybrid` runs in reduced form: released
+  deferred rows evaluate their substituted inactive-column coefficients
+  against their substituted right-hand side instead of re-walking L-wide
+  input supports, and binary rows evaluate as a plain XOR of value rows.
+  Per-row verdicts are equivalent identities, so inconsistency reports name
+  the same row; deferral semantics and op counters are unchanged. Synthetic
+  max-K solves drop ~31% and mid-range shapes up to ~43%. See
+  `BENCHMARKS.md`.
+- Packed frozen rows in `Hybrid`: each binary sparse row splits its support
+  into the columns still active in the schedule and bit-packed words over
+  the inactivated columns, keyed by a global frozen ordinal; freezing moves
+  entries out of the lists once at inactivation time, so later combinations
+  XOR whole words. Field-valued rows keep flat lists and widen packed rows
+  exactly once on first contact. Answers, schedules, and stats are
+  byte-identical; consumer prepare at max K drops ~60% and decode up to
+  ~51%, with a measured +4% standing cost on one synthetic max-K shape.
+  See `BENCHMARKS.md`.
 - GF(2) trailing updates read a panel's L-factor selector in one masked
   byte-window load (`BitMatrix::row_selector`) rather than a bounds-checked
   bit read per pivot column, and walk set bits with `trailing_zeros`.

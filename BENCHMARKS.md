@@ -531,3 +531,195 @@ next order of magnitude and a representation project, not a patch.
 
 A lane-group regression test covers systems with more than sixteen
 deferred rows (the bench shapes caught the original cap).
+
+## Third round: packed frozen rows in the sparse domain (2026-08-26)
+
+The round-two diagnosis attributed the remaining max-`K` gap to the
+u32-per-column GF(2) representation. This round acted on it: each packed
+(binary) row now splits its support into `cols`, the columns still active in
+the schedule, and `frozen`, bit-packed words over the inactivated columns
+keyed by a global frozen ordinal — the same split the reference PI solvers
+draw between sparse lists and a dense trailing block. Freezing moves entries
+out of the lists once, at inactivation time; merges then XOR whole words.
+Field-valued rows keep flat lists and pay list merges (a bit cannot carry a
+GF(2^8) coefficient); widening materializes a packed row exactly once.
+
+### Where the time actually was
+
+Phase timers inside `run_into` on the synthetic `lt_hdpc_deferred/56403`
+shape (Core Ultra 7 258V, rustc 1.93, pinned CPU, medians of eight runs)
+corrected the cost model before any tuning:
+
+| Phase | share |
+| --- | ---: |
+| redundant-row verification | ~38% |
+| release (sweep, deferred substitution) | ~15% |
+| dense assembly + solves | ~14% |
+| sparse loop | ~15% |
+| prepare_work | ~13% |
+| back-substitution + kernel lift | ~6% |
+
+The sparse loop the representation targets was already only ~15% — the
+column-index scheduling of rounds one and two made merges rare — and the
+single largest line item is consistency verification of dependent rows,
+which walks *input* rows (~1018 verified rows carrying ~5900 accumulated
+entries each at this shape, ~6.0M coefficient-payload operations per solve).
+Verification is untouched by any working-row representation.
+
+### Consumer paired runs (real RFC systems, Gf8D)
+
+Three interleaved criterion medians per state, same host, pinned CPU;
+worst median shown. `raptor-q` builds against this crate by path, so
+prepare/decode/repair measure end-to-end consumer impact.
+
+| Case | flat list | packed frozen | change |
+| --- | ---: | ---: | ---: |
+| `raptor-q` prepare K=56403 | 1.4995 s | 0.5952 s | −60% |
+| `raptor-q` prepare K=1000 | 4.454 ms | 2.167 ms | −51% |
+| `raptor-q` decode k=10 | 24.78 µs | 22.23 µs | −10% |
+| `raptor-q` decode k=100 | 229.6 µs | 148.9 µs | −35% |
+| `raptor-q` decode k=1000 | 4.514 ms | 2.218 ms | −51% |
+| `raptor-q` repair t=64 | 87.9 ns | 86.4 ns | −2% |
+| `raptor-q` repair t=1024 | 192.8 ns | 171.7 ns | −11% |
+
+Repair generation does not enter the solver after preparation; its shift is
+code-layout noise on an untouched path. The real-system wins come mostly
+from tuple-structured G_ENC supports, which fill far more aggressively than
+uniform random rows and had been paying full-length list merges.
+
+### Synthetic shapes (Gf8B)
+
+Same protocol against this crate's own benches:
+
+| Case | flat list | packed frozen | change |
+| --- | ---: | ---: | ---: |
+| `rfc_scale` lt_only 1000 | 293 µs | 267 µs | −9% |
+| `rfc_scale` lt_only 5000 | 1.806 ms | 1.698 ms | −6% |
+| `rfc_scale` lt_only 20000 | 10.27 ms | 10.05 ms | −2% |
+| `hybrid` k1000 hybrid | 472 µs | 440 µs | −7% |
+| `hybrid` k1000 dense_ple (control) | 8.068 ms | 8.066 ms | 1.00x |
+| `rfc_scale` lt_hdpc_deferred 500 | 674 µs | 576 µs | −15% |
+| `rfc_scale` lt_hdpc_deferred 4000 | 26.11 ms | 25.62 ms | −2% |
+| `rfc_scale` lt_hdpc_deferred 56403 | 293.7 ms | 305.4 ms | +4% |
+
+The one standing cost is the synthetic max-K shape. Its band is wider than
+the real system's (108 pre-inactivated columns versus H=190 over a column
+space the deferred rows span), and its uniform-random rows peel so cleanly
+that sequential iteration over pivot-row frozen bits during deferred release
+is slightly slower than the contiguous u32 walk it replaced. On the real
+workload that same scale runs 2.5x faster, which is the trade this record
+keeps. Answers are byte-identical: the schedule depends only on active-set
+weights, which are unchanged, and the existing eager/deferred, cross-domain,
+and exact-value differentials pass unchanged.
+
+## Fourth round: verify dependent rows in reduced form (2026-08-26)
+
+The phase-timer profile above put redundant-row verification at ~38% of the
+max-K solve, walking input supports (~6.0M coefficient-payload operations on
+`lt_hdpc_deferred/56403`, about 90% of it released HDPC rows re-walking
+their L-wide original supports). The verifier now checks each dependent row
+in the cheapest algebraically equivalent form:
+
+- **Released deferred rows** evaluate their rebuilt coefficients over the
+  inactive columns against their substituted right-hand side. Release
+  substitutes pivots out of coefficients and collects the matching payload
+  factors, so the reduced equation holds exactly when the original one does;
+  the L-wide input walk disappears.
+- **Binary rows** evaluate as one XOR of the selected value rows — unit
+  coefficients need no lookup and no multiply (`ops::add_assign`).
+- Field rows keep the entry-by-entry input-support evaluation.
+
+Deferral semantics and `row_ops` counting are untouched: the sparse-phase
+log still replays only to needed rows, and surplus sparse rows still verify
+from their inputs. Per-row verdicts are equivalent identities, so
+`Inconsistent { row }` names the same first failing row.
+
+Synthetic shapes, same protocol as round three (packed-frozen state vs this
+round; HEAD baseline shown for reference):
+
+| Case | HEAD | packed | reduced verify |
+| --- | ---: | ---: | ---: |
+| `rfc_scale` lt_hdpc_deferred 500 | 674 µs | 576 µs | 456 µs |
+| `rfc_scale` lt_hdpc_deferred 1000 | 1.757 ms | 1.751 ms | 1.152 ms |
+| `rfc_scale` lt_hdpc_deferred 2000 | 6.46 ms | 6.46 ms | 3.88 ms |
+| `rfc_scale` lt_hdpc_deferred 4000 | 26.11 ms | 25.62 ms | 14.84 ms |
+| `rfc_scale` lt_hdpc_deferred 56403 | 293.7 ms | 305.4 ms | 203.9 ms |
+| `rfc_scale` lt_only 20000 | 10.27 ms | 10.05 ms | 9.95 ms |
+| `hybrid` k1000 hybrid | 472 µs | 440 µs | 440 µs |
+| `hybrid` k1000 dense_ple (control) | 8.068 ms | 8.066 ms | 7.915 ms |
+
+Against the pre-round baseline, max-K drops 31% and the mid-range shapes
+34–43%; the control sits inside run-to-run noise. The consumer is unmoved:
+encoder and decoder systems carry few redundant equations (prepare K=56403
+600 ms vs 595 ms), so its remaining cost stays in the merge machinery this
+record's round-three tables already describe.
+
+## Fifth round: release in the inactive column space (2026-08-26)
+
+Consumer profiling after round four put 42.8% of `raptor-q` prepare
+K=56403 inside the deferred-release substitution. Counters added to the
+release loop showed two shapes: on the real system the substitution walks
+touch ~11.0M entries with a 16-wide lane inner loop over an `n`-wide
+(900 KB) accumulator; on the synthetic max-K shape the same loop records
+~6.0M right-hand-side op tuples and rescans all pivots once per group
+(seven groups for 108 deferred rows).
+
+The rewrite rests on one invariant: pivot rows carry nothing outside their
+pivot column and the inactive set, so substitutions never write a pivot
+column, and every walked non-pivot column is inactive (now pinned by a
+debug assertion). That makes each seeded coefficient at a pivot column
+immutable until its own pivot fires — factors need no evolution tracking —
+and lets the accumulation live in a `g`-wide accumulator indexed by
+inactive ordinal:
+
+- the lane store becomes read-only seed; emission adds seed to accumulator;
+- the per-entry inner loop iterates a hoisted live-lane list instead of
+  re-testing the mask bit for every lane of every entry;
+- the pivot's own column is skipped instead of written and discarded;
+- dead mask bookkeeping on substituted-in columns is gone;
+- groups widen from sixteen lanes to sixty-four (`RELEASE_LANES`),
+  dividing group-rescan and walk overhead by four where bands are wide.
+
+Same protocol as rounds three and four (verify-fix state vs this round):
+
+| Case | verify fix | release fix | change |
+| --- | ---: | ---: | ---: |
+| `rfc_scale` lt_hdpc_deferred 500 | 456 µs | 392 µs | −14% |
+| `rfc_scale` lt_hdpc_deferred 1000 | 1.152 ms | 1.034 ms | −10% |
+| `rfc_scale` lt_hdpc_deferred 2000 | 3.88 ms | 3.50 ms | −10% |
+| `rfc_scale` lt_hdpc_deferred 4000 | 14.84 ms | 13.57 ms | −9% |
+| `rfc_scale` lt_hdpc_deferred 56403 | 203.9 ms | 177.7 ms | −13% |
+| `raptor-q` prepare K=56403 | 603 ms | 486 ms | −19% |
+| `raptor-q` prepare K=1000 | 2.153 ms | 1.973 ms | −8% |
+| `raptor-q` decode k=1000 | 2.243 ms | 2.098 ms | −6% |
+
+Cumulative against the session-start baseline in this file's round-three
+table: consumer prepare at max K falls from 1.4995 s to 0.486 s (−68%),
+decode K=1000 from 4.514 ms to 2.098 ms, and the synthetic max-K solve
+from 293.7 ms to 177.7 ms. Answers remain byte-identical under the
+eager/deferred differentials, including a dense band wider than one lane
+group. The remaining prepare profile now leads with the sparse-phase merge
+walks and payload replay rather than any single dominant phase.
+
+### Rejected: unit-coefficient fast paths and component-tracking variants
+
+Three follow-up micro-candidates were built and measured against the
+release-fix state, and none survived:
+
+- **Unit spread in release** (skip the per-entry multiply when the pivot
+  row is binary) and **XOR back-substitution** (`add_assign` for packed
+  pivot rows): symbol shares moved as designed (release 27.7% → 22.8%,
+  back-substitution 10.6% → 7.2%), but end-to-end totals stayed flat —
+  the saved table multiplies reappeared as per-entry kernel-dispatch
+  overhead in the XOR path (`xor_impl` grew by roughly what `mul_add`
+  lost). The cost is call granularity, not arithmetic.
+- **Amortized union-find for the weight-2 tie-break**, both as a
+  touched-list reset over the full column arrays and as a compact sorted
+  endpoint universe: flat to worse. Measured selection structure on
+  `raptor-q` prepare K=56403 is ~800 calls averaging ~8273 edges (~130 on
+  the synthetic max-K shape); the sort-per-call variant regressed prepare
+  by ~15%. A meaningful win here needs incremental component maintenance,
+  which is schedule surgery, not a constant-factor patch.
+
+All three were reverted; the working tree matches the committed release-fix
+state.

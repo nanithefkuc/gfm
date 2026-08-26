@@ -1,11 +1,18 @@
 //! The sparse coefficient rows the sparse phase pivots over.
 //!
-//! A row is a sorted column-index list with parallel coefficients. Rows start
-//! *binary* — every coefficient one, the GF(2) common case — and widen to
-//! field-valued only when a field row operation first touches them (the lazy
-//! GF(2)→GF(2^m) widening). Row combination merges two sorted supports through
-//! caller-owned scratch, so a reused store allocates nothing after its buffers
-//! reach steady size.
+//! A binary row keeps two parts: `cols`, the sorted columns still *active*
+//! in the schedule, and `frozen`, bit-packed words over the columns that
+//! have already been inactivated, indexed by the solver's global frozen
+//! ordinal. Inactivation moves a column's entry out of every packed row's
+//! list and into its bit words, so later combinations stop walking the
+//! accumulated fill one index at a time and XOR whole words instead — the
+//! same split the reference PI solvers draw between sparse lists and a
+//! dense trailing block. A field operation widens the row once into a
+//! flat list (`cols` over *all* columns with parallel `coeffs`), which
+//! never packs again: field coefficients cannot ride a bit.
+//!
+//! Row combination merges two sorted supports through caller-owned scratch,
+//! so a reused store allocates nothing after its buffers reach steady size.
 //!
 //! The right-hand-side payload lives outside the row (a flat per-row byte
 //! buffer in the driver), because the deferred log replays payload operations
@@ -20,30 +27,39 @@ use alloc::vec::Vec;
 use fgf::FieldKernels;
 use fgf::field::Elem;
 
-/// One sparse row: `coeffs[t]` sits at column `cols[t]`, `cols` strictly
-/// ascending.
+/// Sentinel frozen ordinal for a column that is not (yet) inactivated.
+pub(crate) const NOT_FROZEN: u32 = u32::MAX;
+
+/// One sparse row over GF(2)-majority systems: unit coefficients on `cols`
+/// until a field operation touches the row.
 ///
-/// A `binary` row carries implicit unit coefficients: `coeffs` is empty
-/// and every stored column means one. This keeps the GF(2) majority of
-/// rows (LT/LDPC graphs) at half the memory traffic and lets row
-/// combination degenerate into a support XOR. A field operation widens
-/// the row once by materializing the units.
+/// A packed row (`binary == true`) carries implicit unit coefficients:
+/// `coeffs` is empty, `cols` holds exactly the active columns, and `frozen`
+/// holds one bit per inactivated column keyed by the global frozen ordinal
+/// (word `w` covers ordinals `[64w, 64w + 64)`, padding zero). A widened row
+/// (`binary == false`) carries explicit coefficients parallel to `cols`,
+/// which then lists every column — active and frozen alike.
 pub(crate) struct Row<F: FieldKernels> {
     pub cols: Vec<u32>,
     pub coeffs: Vec<F::Elem>,
+    /// Bit-packed inactivated-column support of a packed row; unused
+    /// (empty) once the row widens.
+    pub frozen: Vec<u64>,
     spare_cols: Vec<u32>,
     spare_coeffs: Vec<F::Elem>,
-    /// Whether every coefficient is one (with `coeffs` empty) and no
-    /// field operation has touched the row — the lazy-widening bit.
+    /// Whether every coefficient is one and the row still splits into the
+    /// active list plus frozen words — the lazy-widening bit.
     pub binary: bool,
 }
 
 impl<F: FieldKernels> Row<F> {
-    /// A binary row: unit coefficients on `support` (assumed sorted, distinct).
+    /// A binary row: unit coefficients on `support` (assumed sorted, distinct,
+    /// and all active — packing splits it later, in `prepare_work`).
     pub(crate) fn binary(support: Vec<u32>) -> Self {
         Self {
             cols: support,
             coeffs: Vec::new(),
+            frozen: Vec::new(),
             spare_cols: Vec::new(),
             spare_coeffs: Vec::new(),
             binary: true,
@@ -56,6 +72,7 @@ impl<F: FieldKernels> Row<F> {
         Self {
             cols: support,
             coeffs,
+            frozen: Vec::new(),
             spare_cols: Vec::new(),
             spare_coeffs: Vec::new(),
             binary: false,
@@ -65,17 +82,20 @@ impl<F: FieldKernels> Row<F> {
         Self {
             cols: Vec::new(),
             coeffs: Vec::new(),
+            frozen: Vec::new(),
             spare_cols: Vec::new(),
             spare_coeffs: Vec::new(),
             binary: true,
         }
     }
 
+    /// Copies an *input* row (flat list over all columns, never packed).
     pub(crate) fn reset_from(&mut self, source: &Self) {
         self.cols.clear();
         self.cols.extend_from_slice(&source.cols);
         self.coeffs.clear();
         self.coeffs.extend_from_slice(&source.coeffs);
+        self.frozen.clear();
         self.binary = source.binary;
     }
 
@@ -84,8 +104,16 @@ impl<F: FieldKernels> Row<F> {
         self.cols.len()
     }
 
-    /// The coefficient at `col`, or zero if absent.
-    pub(crate) fn get(&self, col: u32) -> F::Elem {
+    /// The coefficient at `col`, given the column's global frozen ordinal.
+    ///
+    /// Callers pass [`NOT_FROZEN`] for columns known active. A packed row
+    /// answers a frozen column from its bits; everything else searches the
+    /// list. Input rows must go through [`Self::get_input`]: a valid
+    /// ordinal describes the *working* system, not the untouched input.
+    pub(crate) fn get(&self, col: u32, frozen_ordinal: u32) -> F::Elem {
+        if self.binary && frozen_ordinal != NOT_FROZEN {
+            return self.frozen_bit(frozen_ordinal);
+        }
         match self.cols.binary_search(&col) {
             Ok(t) => {
                 if self.binary {
@@ -98,26 +126,128 @@ impl<F: FieldKernels> Row<F> {
         }
     }
 
-    /// `self += factor · src`. Returns `true` if this widened `self` from
-    /// binary to field-valued.
-    ///
-    /// Zero results are dropped, keeping the support minimal. Each row owns
-    /// both sides of the merge ping-pong, so a warmed row never steals the
-    /// shared scratch capacity another row needs.
-    ///
-    /// `self += factor · src`, reporting columns newly added to the
-    /// support through `added`; the caller uses them to extend its
-    /// column-to-row index. (The no-op closure keeps the common path
-    /// allocation-free without a second merge implementation.)
-    /// The GF(2) XOR fast path of the merge: unit coefficients on both
-    /// sides and a unit factor. Returns the new active weight of the
-    /// surviving support.
-    fn axpy_xor(
+    /// The coefficient at `col` of an input row: pure list lookup.
+    pub(crate) fn get_input(&self, col: u32) -> F::Elem {
+        match self.cols.binary_search(&col) {
+            Ok(t) => {
+                if self.binary {
+                    F::Elem::ONE
+                } else {
+                    self.coeffs[t]
+                }
+            }
+            Err(_) => F::Elem::ZERO,
+        }
+    }
+
+    /// Whether the packed row's list still contains `col` — membership in
+    /// the *active* part only, ignoring frozen bits. Used by the freeze
+    /// migration before the entries move.
+    pub(crate) fn contains_in_list(&self, col: u32) -> bool {
+        self.cols.binary_search(&col).is_ok()
+    }
+
+    fn frozen_bit(&self, ordinal: u32) -> F::Elem {
+        let word = ordinal as usize / 64;
+        let bit = ordinal % 64;
+        if word < self.frozen.len() && self.frozen[word] >> bit & 1 == 1 {
+            F::Elem::ONE
+        } else {
+            F::Elem::ZERO
+        }
+    }
+
+    /// Moves every listed column out of the active list and into the frozen
+    /// bits. The columns must currently sit in the list; the row stays packed.
+    /// Returns how many entries moved (the row's active-weight loss).
+    pub(crate) fn freeze_from_list(&mut self, columns: &[u32], ordinals: &[u32]) -> usize {
+        debug_assert!(self.binary);
+        self.spare_cols.clear();
+        let mut moved = 0usize;
+        // Direct field access: the scan reads `cols` while the migration
+        // writes `frozen`, which are disjoint.
+        for index in 0..self.cols.len() {
+            let col = self.cols[index];
+            if columns.binary_search(&col).is_ok() {
+                let ordinal = ordinals[col as usize];
+                let word = ordinal as usize / 64;
+                if word >= self.frozen.len() {
+                    self.frozen.resize(word + 1, 0);
+                }
+                self.frozen[word] |= 1 << (ordinal % 64);
+                moved += 1;
+            } else {
+                self.spare_cols.push(col);
+            }
+        }
+        core::mem::swap(&mut self.cols, &mut self.spare_cols);
+        if self.spare_cols.capacity() < self.cols.len() {
+            self.spare_cols
+                .reserve(self.cols.len().saturating_sub(self.spare_cols.len()));
+        }
+        moved
+    }
+
+    /// Widens a packed row into the flat list form: all columns (active plus
+    /// frozen, re-sorted) with unit coefficients. Never reverses.
+    pub(crate) fn materialize(&mut self, frozen_cols: &[u32]) -> bool {
+        if !self.binary {
+            return false;
+        }
+        debug_assert!(self.coeffs.is_empty());
+        self.spare_cols.clear();
+        for (word, &bits) in self.frozen.iter().enumerate() {
+            let mut bits = bits;
+            while bits != 0 {
+                let bit = bits.trailing_zeros();
+                bits &= bits - 1;
+                self.spare_cols.push(frozen_cols[word * 64 + bit as usize]);
+            }
+        }
+        self.cols.append(&mut self.spare_cols);
+        self.cols.sort_unstable();
+        self.coeffs.resize(self.cols.len(), F::Elem::ONE);
+        self.frozen.clear();
+        self.binary = false;
+        true
+    }
+
+    /// Runs `f` over every nonzero entry `(column, coefficient)` of the row —
+    /// the active list, then the frozen bits of a packed row, then (for a
+    /// widened row) nothing further. Order is not column-sorted across the
+    /// two parts; every consumer here folds commutatively.
+    pub(crate) fn for_each_entry(&self, frozen_cols: &[u32], mut f: impl FnMut(u32, F::Elem)) {
+        if self.binary {
+            for &col in &self.cols {
+                f(col, F::Elem::ONE);
+            }
+            for (word, &bits) in self.frozen.iter().enumerate() {
+                let mut bits = bits;
+                while bits != 0 {
+                    let bit = bits.trailing_zeros();
+                    bits &= bits - 1;
+                    f(frozen_cols[word * 64 + bit as usize], F::Elem::ONE);
+                }
+            }
+        } else {
+            for (&col, &value) in self.cols.iter().zip(&self.coeffs) {
+                f(col, value);
+            }
+        }
+    }
+
+    /// The packed-row GF(2) combination: `self += src` with unit coefficients
+    /// on both sides. The active lists merge as a support XOR; the frozen
+    /// words XOR wholesale, cancellation included. Returns the new active
+    /// weight. Columns newly added to the active list go through `added`.
+    pub(crate) fn axpy_xor_parts(
         &mut self,
         src_cols: &[u32],
+        src_frozen: &[u64],
         mut added: impl FnMut(u32),
         mut is_active: impl FnMut(u32) -> bool,
     ) -> usize {
+        debug_assert!(self.binary);
         let mut active = 0usize;
         self.spare_cols.clear();
         let (mut i, mut j) = (0usize, 0usize);
@@ -150,6 +280,17 @@ impl<F: FieldKernels> Row<F> {
             self.spare_cols
                 .reserve(self.cols.len().saturating_sub(self.spare_cols.len()));
         }
+        // Frozen half: bulk XOR over the shared ordinal space, then trim
+        // words that fully cancelled.
+        if self.frozen.len() < src_frozen.len() {
+            self.frozen.resize(src_frozen.len(), 0);
+        }
+        for (dst, &src) in self.frozen.iter_mut().zip(src_frozen) {
+            *dst ^= src;
+        }
+        while self.frozen.last() == Some(&0) {
+            self.frozen.pop();
+        }
         active
     }
 
@@ -163,20 +304,10 @@ impl<F: FieldKernels> Row<F> {
         mut added: impl FnMut(u32),
         mut is_active: impl FnMut(u32) -> bool,
     ) -> (bool, usize) {
-        // GF(2) fast path: unit coefficients on both sides and a unit
-        // factor make the merge a pure support XOR — no coefficient
-        // traffic, no field multiplies.
-        if self.binary && src_binary && factor.is_one() {
-            let active = self.axpy_xor(src_cols, added, is_active);
-            return (false, active);
-        }
-        let widened = self.binary;
-        if widened {
-            // Materialize the implicit units once; from here on the row
-            // carries explicit coefficients.
-            self.coeffs.clear();
-            self.coeffs.resize(self.cols.len(), F::Elem::ONE);
-        }
+        debug_assert!(
+            !self.binary,
+            "packed rows take axpy_xor_parts or widen first"
+        );
         let mut active = 0usize;
         self.spare_cols.clear();
         self.spare_coeffs.clear();
@@ -234,12 +365,21 @@ impl<F: FieldKernels> Row<F> {
         }
         if self.spare_coeffs.capacity() < self.coeffs.len() {
             self.spare_coeffs
-                .reserve(self.coeffs.len().saturating_sub(self.spare_coeffs.len()));
+                .reserve(self.coeffs.len().saturating_sub(self.coeffs.len()));
         }
-        if widened {
-            self.binary = false;
+        (false, active)
+    }
+
+    /// Reserves working-buffer capacity against an input row's shape.
+    pub(crate) fn reserve_like(&mut self, source: &Self) {
+        if self.cols.capacity() < source.cols.len() {
+            self.cols
+                .reserve(source.cols.len().saturating_sub(self.cols.len()));
         }
-        (widened, active)
+        if self.coeffs.capacity() < source.coeffs.len() {
+            self.coeffs
+                .reserve(source.coeffs.len().saturating_sub(self.coeffs.len()));
+        }
     }
 }
 

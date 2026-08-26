@@ -829,13 +829,14 @@ fn deferred_rows_are_counted_and_releases_are_stable() {
 }
 
 #[test]
-fn more_than_sixteen_deferred_rows_still_solve() {
-    // The batched release processes deferred rows in lane groups of
-    // sixteen; a wider dense band must still match the dense Ple.
+fn more_than_lane_width_deferred_rows_still_solve() {
+    // The batched release processes deferred rows in lane groups of the
+    // accumulator width; a wider dense band must still match the dense
+    // Ple, across group boundaries.
     for seed in 0..6u64 {
         let mut st = 0x0FF_0000 ^ seed;
-        let n = 30 + draw(&mut st, 30);
-        let band = 17 + draw(&mut st, 8);
+        let band = 65 + draw(&mut st, 8);
+        let n = 2 * band + 10 + draw(&mut st, 30);
         let (sys, initial, _x) = dense_band_system(n, band, seed);
         assert_matches_ple_with(&sys, &initial);
         let eager = sys.build_hybrid_with(&initial).solve().unwrap();
