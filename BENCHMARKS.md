@@ -531,3 +531,83 @@ next order of magnitude and a representation project, not a patch.
 
 A lane-group regression test covers systems with more than sixteen
 deferred rows (the bench shapes caught the original cap).
+
+## Third round: packed frozen rows in the sparse domain (2026-08-26)
+
+The round-two diagnosis attributed the remaining max-`K` gap to the
+u32-per-column GF(2) representation. This round acted on it: each packed
+(binary) row now splits its support into `cols`, the columns still active in
+the schedule, and `frozen`, bit-packed words over the inactivated columns
+keyed by a global frozen ordinal — the same split the reference PI solvers
+draw between sparse lists and a dense trailing block. Freezing moves entries
+out of the lists once, at inactivation time; merges then XOR whole words.
+Field-valued rows keep flat lists and pay list merges (a bit cannot carry a
+GF(2^8) coefficient); widening materializes a packed row exactly once.
+
+### Where the time actually was
+
+Phase timers inside `run_into` on the synthetic `lt_hdpc_deferred/56403`
+shape (Core Ultra 7 258V, rustc 1.93, pinned CPU, medians of eight runs)
+corrected the cost model before any tuning:
+
+| Phase | share |
+| --- | ---: |
+| redundant-row verification | ~38% |
+| release (sweep, deferred substitution) | ~15% |
+| dense assembly + solves | ~14% |
+| sparse loop | ~15% |
+| prepare_work | ~13% |
+| back-substitution + kernel lift | ~6% |
+
+The sparse loop the representation targets was already only ~15% — the
+column-index scheduling of rounds one and two made merges rare — and the
+single largest line item is consistency verification of dependent rows,
+which walks *input* rows (~1018 verified rows carrying ~5900 accumulated
+entries each at this shape, ~6.0M coefficient-payload operations per solve).
+Verification is untouched by any working-row representation.
+
+### Consumer paired runs (real RFC systems, Gf8D)
+
+Three interleaved criterion medians per state, same host, pinned CPU;
+worst median shown. `raptor-q` builds against this crate by path, so
+prepare/decode/repair measure end-to-end consumer impact.
+
+| Case | flat list | packed frozen | change |
+| --- | ---: | ---: | ---: |
+| `raptor-q` prepare K=56403 | 1.4995 s | 0.5952 s | −60% |
+| `raptor-q` prepare K=1000 | 4.454 ms | 2.167 ms | −51% |
+| `raptor-q` decode k=10 | 24.78 µs | 22.23 µs | −10% |
+| `raptor-q` decode k=100 | 229.6 µs | 148.9 µs | −35% |
+| `raptor-q` decode k=1000 | 4.514 ms | 2.218 ms | −51% |
+| `raptor-q` repair t=64 | 87.9 ns | 86.4 ns | −2% |
+| `raptor-q` repair t=1024 | 192.8 ns | 171.7 ns | −11% |
+
+Repair generation does not enter the solver after preparation; its shift is
+code-layout noise on an untouched path. The real-system wins come mostly
+from tuple-structured G_ENC supports, which fill far more aggressively than
+uniform random rows and had been paying full-length list merges.
+
+### Synthetic shapes (Gf8B)
+
+Same protocol against this crate's own benches:
+
+| Case | flat list | packed frozen | change |
+| --- | ---: | ---: | ---: |
+| `rfc_scale` lt_only 1000 | 293 µs | 267 µs | −9% |
+| `rfc_scale` lt_only 5000 | 1.806 ms | 1.698 ms | −6% |
+| `rfc_scale` lt_only 20000 | 10.27 ms | 10.05 ms | −2% |
+| `hybrid` k1000 hybrid | 472 µs | 440 µs | −7% |
+| `hybrid` k1000 dense_ple (control) | 8.068 ms | 8.066 ms | 1.00x |
+| `rfc_scale` lt_hdpc_deferred 500 | 674 µs | 576 µs | −15% |
+| `rfc_scale` lt_hdpc_deferred 4000 | 26.11 ms | 25.62 ms | −2% |
+| `rfc_scale` lt_hdpc_deferred 56403 | 293.7 ms | 305.4 ms | +4% |
+
+The one standing cost is the synthetic max-K shape. Its band is wider than
+the real system's (108 pre-inactivated columns versus H=190 over a column
+space the deferred rows span), and its uniform-random rows peel so cleanly
+that sequential iteration over pivot-row frozen bits during deferred release
+is slightly slower than the contiguous u32 walk it replaced. On the real
+workload that same scale runs 2.5x faster, which is the trade this record
+keeps. Answers are byte-identical: the schedule depends only on active-set
+weights, which are unchanged, and the existing eager/deferred, cross-domain,
+and exact-value differentials pass unchanged.

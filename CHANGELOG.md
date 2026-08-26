@@ -7,6 +7,15 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Changed
+- Packed frozen rows in `Hybrid`: each binary sparse row splits its support
+  into the columns still active in the schedule and bit-packed words over
+  the inactivated columns, keyed by a global frozen ordinal; freezing moves
+  entries out of the lists once at inactivation time, so later combinations
+  XOR whole words. Field-valued rows keep flat lists and widen packed rows
+  exactly once on first contact. Answers, schedules, and stats are
+  byte-identical; consumer prepare at max K drops ~60% and decode up to
+  ~51%, with a measured +4% standing cost on one synthetic max-K shape.
+  See `BENCHMARKS.md`.
 - GF(2) trailing updates read a panel's L-factor selector in one masked
   byte-window load (`BitMatrix::row_selector`) rather than a bounds-checked
   bit read per pivot column, and walk set bits with `trailing_zeros`.
