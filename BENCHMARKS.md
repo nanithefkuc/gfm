@@ -723,3 +723,76 @@ release-fix state, and none survived:
 
 All three were reverted; the working tree matches the committed release-fix
 state.
+
+### Rejected: kernel-dispatched deferred-release substitution (2026-08-26)
+
+Two further candidates for the release inner loop, both measured against the
+release-fix state with the same protocol (`rfc_scale` `lt_hdpc_deferred`
+500–56403, paired criterion medians, pinned CPU) and both **slower**, so both
+were reverted:
+
+- **Per-entry lane-vector AXPY**: the accumulator became a byte slab with the
+  64-lane dimension contiguous, dead lanes neutralized by zero factors, and
+  the scalar live-lane loop replaced by one dispatched `mul_add` per pivot
+  entry. Result: **+0.5% to +6.9%** across the deferred shapes. The per-entry
+  kernel dispatch costs more than the 64 inlined table multiplies it replaces
+  — the accumulator is L1-resident and the scalar chain pipelines.
+- **Per-pivot scattered-matrix kernel**: one `ops::mul_add_matrix_scattered`
+  call per fired pivot (touched accumulator rows collected with their
+  coefficients, lane-major factor bytes as the single term). Result: **+0.2%
+  to +6.1%**. The public wrapper's O(k²) disjointness validation plus
+  per-row coefficient preparation inside the kernel outweigh the arithmetic
+  saving; a profiled run showed the cost sitting in dispatch and validation
+  rather than the multiply itself.
+
+Both confirm round five's diagnosis at lane width 64: the release loop's cost
+is call granularity and per-call fixed work, not field arithmetic. A winning
+path needs an fgf op shaped as a sequential indexed row-scatter with O(k)
+validation and no per-row preparation — recorded as a candidate, not built;
+the scalar lane loop stays production.
+
+### Rejected: dropping the weight-two component tie-break (2026-08-26)
+
+Replacing the RFC §5.4.2.2 largest-component selection with plain
+bucket-order first-row selection (deleting the edge cache and union-find
+entirely). The acceptance tests' `g` bounds held easily — worst
+`g/sqrt(k)` moved 0.443 → 0.537 on pure LT shapes, band shapes unchanged —
+but the wall clock split by shape family (same protocol, paired medians):
+
+| Shape family | Change |
+| --- | --- |
+| `rfc_scale` `lt_only` 1k–20k | **+1.0% to +7.7%** (regression) |
+| `rfc_scale` `lt_hdpc_deferred` 500–56403 | −2.9% to −12.3% |
+| `raptor-q` prepare K=1000 / 56403 | −3.6% / −6.3% |
+
+Pure-LT peeling pays for the component rule with longer chains and a better
+merge structure; the banded RaptorQ-like shapes paid the rule's analysis
+cost without needing its protection. A generic crate serves both families,
+so the component rule stays. Reverted to the committed schedule.
+
+### Scoped out on recorded numbers: dense-only small systems, gather replay
+
+Two more candidates from the same consumer-driven list were rejected on this
+file's own measurements without building:
+
+- **Dense-only dispatch for small systems** (skip the sparse phase below a
+  column threshold): the compact-`SmallMatrix` record prices order-32
+  construction + factorization + a 1024-byte solve at ~18 µs — already the
+  whole of the consumer's `prepare` at `K = 10` (~23 µs) — and the
+  competitor record prices a GF(2^8) rank at order 128 at ~127 µs against a
+  ~90 µs solve share at `K = 100`. A dense-only path loses at both ends of
+  the small range; the small-`K` consumer gap is plan caching and per-symbol
+  tuple derivation on the codec side, not solver dispatch.
+- **Gather-fused deferred-log replay**: the consumer profile caps all
+  payload kernel time (`xor_impl`, `mul_add_affine_impl`, `xor`) at ~3.6%
+  of max-`K` prepare; fusing the per-destination ops through the existing
+  gather kernels bounds the win under half of that — below the session's
+  noise band.
+
+What remains for the consumer gap are the two structural projects already
+named in earlier records: the split-domain dense phase (packed-word GF(2)
+elimination for the binary majority with a field fix-up for the HDPC band —
+the reference implementation's core advantage) and an incremental-solve API
+(warm-started re-solves for the decoder's repeated attempts). Both are
+representation and API projects with their own measured changes, not
+constant-factor patches.
