@@ -611,3 +611,45 @@ workload that same scale runs 2.5x faster, which is the trade this record
 keeps. Answers are byte-identical: the schedule depends only on active-set
 weights, which are unchanged, and the existing eager/deferred, cross-domain,
 and exact-value differentials pass unchanged.
+
+## Fourth round: verify dependent rows in reduced form (2026-08-26)
+
+The phase-timer profile above put redundant-row verification at ~38% of the
+max-K solve, walking input supports (~6.0M coefficient-payload operations on
+`lt_hdpc_deferred/56403`, about 90% of it released HDPC rows re-walking
+their L-wide original supports). The verifier now checks each dependent row
+in the cheapest algebraically equivalent form:
+
+- **Released deferred rows** evaluate their rebuilt coefficients over the
+  inactive columns against their substituted right-hand side. Release
+  substitutes pivots out of coefficients and collects the matching payload
+  factors, so the reduced equation holds exactly when the original one does;
+  the L-wide input walk disappears.
+- **Binary rows** evaluate as one XOR of the selected value rows — unit
+  coefficients need no lookup and no multiply (`ops::add_assign`).
+- Field rows keep the entry-by-entry input-support evaluation.
+
+Deferral semantics and `row_ops` counting are untouched: the sparse-phase
+log still replays only to needed rows, and surplus sparse rows still verify
+from their inputs. Per-row verdicts are equivalent identities, so
+`Inconsistent { row }` names the same first failing row.
+
+Synthetic shapes, same protocol as round three (packed-frozen state vs this
+round; HEAD baseline shown for reference):
+
+| Case | HEAD | packed | reduced verify |
+| --- | ---: | ---: | ---: |
+| `rfc_scale` lt_hdpc_deferred 500 | 674 µs | 576 µs | 456 µs |
+| `rfc_scale` lt_hdpc_deferred 1000 | 1.757 ms | 1.751 ms | 1.152 ms |
+| `rfc_scale` lt_hdpc_deferred 2000 | 6.46 ms | 6.46 ms | 3.88 ms |
+| `rfc_scale` lt_hdpc_deferred 4000 | 26.11 ms | 25.62 ms | 14.84 ms |
+| `rfc_scale` lt_hdpc_deferred 56403 | 293.7 ms | 305.4 ms | 203.9 ms |
+| `rfc_scale` lt_only 20000 | 10.27 ms | 10.05 ms | 9.95 ms |
+| `hybrid` k1000 hybrid | 472 µs | 440 µs | 440 µs |
+| `hybrid` k1000 dense_ple (control) | 8.068 ms | 8.066 ms | 7.915 ms |
+
+Against the pre-round baseline, max-K drops 31% and the mid-range shapes
+34–43%; the control sits inside run-to-run noise. The consumer is unmoved:
+encoder and decoder systems carry few redundant equations (prepare K=56403
+600 ms vs 595 ms), so its remaining cost stays in the merge machinery this
+record's round-three tables already describe.

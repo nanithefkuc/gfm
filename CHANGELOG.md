@@ -7,6 +7,14 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Changed
+- Dependent-row verification in `Hybrid` runs in reduced form: released
+  deferred rows evaluate their substituted inactive-column coefficients
+  against their substituted right-hand side instead of re-walking L-wide
+  input supports, and binary rows evaluate as a plain XOR of value rows.
+  Per-row verdicts are equivalent identities, so inconsistency reports name
+  the same row; deferral semantics and op counters are unchanged. Synthetic
+  max-K solves drop ~31% and mid-range shapes up to ~43%. See
+  `BENCHMARKS.md`.
 - Packed frozen rows in `Hybrid`: each binary sparse row splits its support
   into the columns still active in the schedule and bit-packed words over
   the inactivated columns, keyed by a global frozen ordinal; freezing moves

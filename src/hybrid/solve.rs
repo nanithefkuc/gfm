@@ -1086,19 +1086,50 @@ impl<F: FieldKernels> Hybrid<F> {
 
         // Pivot and dense-basis equations are satisfied by construction. Only
         // rows outside that independent set can contradict the assembled
-        // answer.
+        // answer. Each such row is checked in the cheapest form that is
+        // algebraically equivalent to its input equation:
+        //
+        // * a released deferred row already carries its fully substituted
+        //   coefficients over the inactive columns, and its payload absorbed
+        //   the pivot factors above — the reduced equation holds exactly when
+        //   the original one does;
+        // * a binary row's coefficients are all units, so evaluation is one
+        //   XOR of the selected value rows;
+        // * anything else evaluates entry by entry over the input support.
         for (row, source) in self.rows.iter().enumerate() {
             if self.needed[row] {
                 continue;
             }
             self.verify_rhs.fill(0);
-            for &column in &source.cols {
-                let coefficient = source.get_input(column);
-                crate::row_ops::mul_add::<F>(
-                    &mut self.verify_rhs,
-                    coefficient,
-                    values.row(column as usize),
-                );
+            if self.deferred[row] {
+                let work = &self.work_rows[row];
+                let frozen_cols = &self.frozen_cols;
+                work.for_each_entry(frozen_cols, |column, coefficient| {
+                    crate::row_ops::mul_add::<F>(
+                        &mut self.verify_rhs,
+                        coefficient,
+                        values.row(column as usize),
+                    );
+                });
+                let expected = &self.work_rhs[row * self.sym_len..(row + 1) * self.sym_len];
+                if self.verify_rhs != expected {
+                    return Err(SolveError::Inconsistent { row });
+                }
+                continue;
+            }
+            if source.binary {
+                for &column in &source.cols {
+                    ops::add_assign::<F>(&mut self.verify_rhs, values.row(column as usize));
+                }
+            } else {
+                for &column in &source.cols {
+                    let coefficient = source.get_input(column);
+                    crate::row_ops::mul_add::<F>(
+                        &mut self.verify_rhs,
+                        coefficient,
+                        values.row(column as usize),
+                    );
+                }
             }
             let expected = &self.rhs[row * self.sym_len..(row + 1) * self.sym_len];
             if self.verify_rhs != expected {
