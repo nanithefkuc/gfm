@@ -700,3 +700,26 @@ from 293.7 ms to 177.7 ms. Answers remain byte-identical under the
 eager/deferred differentials, including a dense band wider than one lane
 group. The remaining prepare profile now leads with the sparse-phase merge
 walks and payload replay rather than any single dominant phase.
+
+### Rejected: unit-coefficient fast paths and component-tracking variants
+
+Three follow-up micro-candidates were built and measured against the
+release-fix state, and none survived:
+
+- **Unit spread in release** (skip the per-entry multiply when the pivot
+  row is binary) and **XOR back-substitution** (`add_assign` for packed
+  pivot rows): symbol shares moved as designed (release 27.7% → 22.8%,
+  back-substitution 10.6% → 7.2%), but end-to-end totals stayed flat —
+  the saved table multiplies reappeared as per-entry kernel-dispatch
+  overhead in the XOR path (`xor_impl` grew by roughly what `mul_add`
+  lost). The cost is call granularity, not arithmetic.
+- **Amortized union-find for the weight-2 tie-break**, both as a
+  touched-list reset over the full column arrays and as a compact sorted
+  endpoint universe: flat to worse. Measured selection structure on
+  `raptor-q` prepare K=56403 is ~800 calls averaging ~8273 edges (~130 on
+  the synthetic max-K shape); the sort-per-call variant regressed prepare
+  by ~15%. A meaningful win here needs incremental component maintenance,
+  which is schedule surgery, not a constant-factor patch.
+
+All three were reverted; the working tree matches the committed release-fix
+state.
