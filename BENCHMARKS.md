@@ -796,3 +796,64 @@ the reference implementation's core advantage) and an incremental-solve API
 (warm-started re-solves for the decoder's repeated attempts). Both are
 representation and API projects with their own measured changes, not
 constant-factor patches.
+
+### Scoped out by measurement: the split-domain dense phase (2026-08-26)
+
+Phase timers inside `run_into` (env-gated, temporary) over the *real* consumer
+systems — `raptor-q` prepare and 5%-loss decode at `K = 56403`, `T = 64`,
+pinned CPU, medians of five — put the dense phase far below the share that
+motivated the split-domain design (the ~14% figure dated from round three,
+on the synthetic shape, before the round-five release rewrite):
+
+| Phase | prepare share | decode share |
+| --- | ---: | ---: |
+| release (deferred substitution) | 35–36% | 35–36% |
+| sparse loop | 30–31% | 31–32% |
+| **back-substitution (per-entry dispatch)** | **20–21%** | **20%** |
+| prepare_work | 5–7% | 5–7% |
+| deferred replay | 2% | 2% |
+| **rank Ple + solve Ple + dense solve** | **~3% (12 ms)** | **~3% (13 ms)** |
+| kernel lift + verification | ~0% | ~0% |
+
+`g = 530–558`, `residual ≈ g` at both shapes (the extra received rows are
+consumed as pivot rows, not residual rows). A split-domain dense phase —
+packed GF(2) elimination of the binary residual majority plus a field fix-up
+for the ≤16 released HDPC rows — bounds the win at roughly two-thirds of
+12–13 ms even if the dense phase vanished: **under the session's ±3–5% noise
+band, unkeepable by the measured-change rule.** Not built; the phase-timer
+table redirects attention to the back-substitution loop (below).
+
+### Rejected: gathered XOR back-substitution, including a new fgf gather op
+
+The phase table made the back-substitution loop (~20%, ~85 ms) the top
+actionable target. Its per-entry shape — one dispatched `mul_add` per
+support entry — looked dispatch-bound, matching round five's call-granularity
+diagnosis. Two layers were built and measured:
+
+1. **fgf `add_assign_gather`**: a unit-coefficient gather (one backend
+   resolve, tight per-source XOR loop) wired as a `FieldKernels` override
+   for every binary field, with oracle and panic tests — used by gfm to
+   substitute each wide binary pivot through one gathered call (chunked
+   source arrays, owned scratch, zero steady-state allocation).
+2. **gfm consumption**: binary pivot rows with 16–1024-entry supports
+   substitute via the gather; everything else keeps the per-entry path.
+
+Result: **flat.** The gather fired on ~97% of pivots (~270 sources each,
+frozen-word-dominated) and back-substitution stayed at 82–86 ms — medians
+85.6 → 85.4 ms across adjacent instrumented runs, with end-to-end walls
+unchanged. The measured cost model explains it: the per-entry loop was
+already at ~5.7 ns per source — the dispatched `mul_add` for a one-
+coefficient 64-byte row costs ~4 ns after inlining, not the ~12 ns
+assumed — while the gather's staging (frozen-bit enumeration, column
+collection, source-slice construction, chunk-array initialization) adds
+~3–4 ns per source, exactly replacing the dispatch it saved. Enumeration,
+staging, and kernel work are co-dominant; no batching level in this
+representation separates them by more than the noise band. A register-held
+kernel variant would attack only the ~1.5–2 ns of arithmetic left per
+source — bounded under ~4% end-to-end, below the keep bar.
+
+Both layers were reverted (the fgf branch deleted; gfm tree restored); the
+only surviving artifact is this record. The back-substitution loop, like
+the release loop before it, is at a representation-bound local optimum:
+the next step change requires pivot supports in a form that removes the
+per-entry enumeration itself.
