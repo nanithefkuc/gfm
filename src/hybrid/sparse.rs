@@ -212,6 +212,22 @@ impl<F: FieldKernels> Row<F> {
         true
     }
 
+    /// Runs `f` over every frozen ordinal a packed row carries, one word
+    /// scan at a time. The caller resolves the ordinal itself, which lets a
+    /// consumer that only wants the ordinal's image under one map skip the
+    /// column round trip [`Self::for_each_entry`] pays.
+    pub(crate) fn for_each_frozen_ordinal(&self, mut f: impl FnMut(usize)) {
+        debug_assert!(self.binary);
+        for (word, &bits) in self.frozen.iter().enumerate() {
+            let mut bits = bits;
+            while bits != 0 {
+                let bit = bits.trailing_zeros() as usize;
+                bits &= bits - 1;
+                f(word * 64 + bit);
+            }
+        }
+    }
+
     /// Runs `f` over every nonzero entry `(column, coefficient)` of the row —
     /// the active list, then the frozen bits of a packed row, then (for a
     /// widened row) nothing further. Order is not column-sorted across the
@@ -233,6 +249,44 @@ impl<F: FieldKernels> Row<F> {
             for (&col, &value) in self.cols.iter().zip(&self.coeffs) {
                 f(col, value);
             }
+        }
+    }
+
+    /// Eliminates `pivot_col` out of a packed row against a packed pivot
+    /// whose only active entry *is* that column — the shape every sparse
+    /// pivot takes once its surplus columns have inactivated, and by far
+    /// the most common combination in the phase.
+    ///
+    /// The destination's matching entry cancels, so the active list only
+    /// loses one index and the merge collapses to one search, one shift,
+    /// and the frozen word XOR. No column can enter the active list, which
+    /// is why this needs neither the caller's index callback nor an
+    /// active-weight recount: a live packed row's list is exactly its
+    /// active support, so its new weight is the list's new length.
+    ///
+    /// Returns `false` when the destination does not carry the column — a
+    /// stale column-index listing — leaving the row untouched.
+    pub(crate) fn eliminate_singleton(&mut self, pivot_col: u32, src_frozen: &[u64]) -> bool {
+        debug_assert!(self.binary);
+        let Ok(at) = self.cols.binary_search(&pivot_col) else {
+            return false;
+        };
+        self.cols.remove(at);
+        self.xor_frozen(src_frozen);
+        true
+    }
+
+    /// `self.frozen ^= src_frozen`, widening to the source's ordinal span
+    /// and dropping words that fully cancelled.
+    fn xor_frozen(&mut self, src_frozen: &[u64]) {
+        if self.frozen.len() < src_frozen.len() {
+            self.frozen.resize(src_frozen.len(), 0);
+        }
+        for (dst, &src) in self.frozen.iter_mut().zip(src_frozen) {
+            *dst ^= src;
+        }
+        while self.frozen.last() == Some(&0) {
+            self.frozen.pop();
         }
     }
 
@@ -282,15 +336,7 @@ impl<F: FieldKernels> Row<F> {
         }
         // Frozen half: bulk XOR over the shared ordinal space, then trim
         // words that fully cancelled.
-        if self.frozen.len() < src_frozen.len() {
-            self.frozen.resize(src_frozen.len(), 0);
-        }
-        for (dst, &src) in self.frozen.iter_mut().zip(src_frozen) {
-            *dst ^= src;
-        }
-        while self.frozen.last() == Some(&0) {
-            self.frozen.pop();
-        }
+        self.xor_frozen(src_frozen);
         active
     }
 

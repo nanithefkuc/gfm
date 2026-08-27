@@ -857,3 +857,224 @@ only surviving artifact is this record. The back-substitution loop, like
 the release loop before it, is at a representation-bound local optimum:
 the next step change requires pivot supports in a form that removes the
 per-entry enumeration itself.
+
+## Sixth round: word-domain release and batched back-substitution (2026-08-27)
+
+The measurement gate that stopped the packed-sparse rewrite left a corrected
+phase table and one unlanded winning candidate. This round starts from a
+release-profile instruction profile of the *real* consumer solve rather than
+the phase timers, and lands every candidate that beat the noise band.
+
+Host: Intel Core Ultra 7 258V, Linux, rustc 1.98.0, backend
+`v3_gfni_crypto`, `taskset -c 2`. Consumer numbers come from two single-shot
+drivers built against `raptor-q` at `perf/gfm-consumer-rounds` (`K = 56403`,
+`T = 64`, one source block): max-`K` encoder preparation, and a 5%-loss
+decode driven to completion. Each driver reports the minimum of four
+(prepare) or three (decode) in-process iterations, and base/new binaries are
+interleaved round by round. Synthetic numbers are Criterion medians from
+`rfc_scale` and `hybrid`, `gfm`'s own `fgf` rev pin (so they exclude the
+`fgf` prerequisite below).
+
+### The instruction profile that set the order
+
+`perf record` over max-`K` prepare, self time, entering state:
+
+| Symbol | Share |
+| --- | ---: |
+| `Row::for_each_entry` (release substitution closure) | 28.2% |
+| `run_into` (probe loop, dense assembly, back-substitution outer) | 17.4% |
+| `largest_component_edge` | 8.9% |
+| `Row::axpy_xor_parts` | 8.8% |
+| `Row::for_each_entry` (back-substitution closure) | 6.0% |
+| `xor_avx2_impl` | 5.2% |
+| `Matrix::two_live_rows` | 4.6% |
+| libc `memcpy`/`memset`/`realloc` | 5.7% |
+
+Instruction-level annotation of the release closure put 91% of its samples
+in five instructions: a destination-length bounds check reloaded every
+iteration, the `acc[slot][lane]` byte load/store pair, and the scalar GF
+multiply. Temporary counters on one max-`K` prepare (removed afterwards)
+fixed the shapes the candidates had to serve:
+
+| Counter | Value |
+| --- | ---: |
+| column-index probes | 379,929 |
+| probes that fired a merge | 379,929 |
+| stale probes | 0 |
+| pivots whose active list was not the pivot column alone | 0 |
+| mean active-list length at merge | 46.05 |
+| maximum active-list length | 187 |
+| release support visits | 10,988,074 |
+| back-substitution support entries | 10,988,074 |
+| weight-two tie-break calls | 155 |
+| mean edges per tie-break call | 8,273.2 |
+| mean distinct endpoints per call | 10,585.8 |
+
+### Accepted, in landing order
+
+Each row is the interleaved minimum-of-four max-`K` prepare after the change,
+against the state before it.
+
+| Change | prepare | change |
+| --- | ---: | ---: |
+| entering state | 427.5 ms | — |
+| word-domain release accumulation + frozen-ordinal slot table | 348.7 ms | −18.4% |
+| fused singleton merge + amortized-reset tie-break | 314.4 ms | −9.8% |
+| back-substitution reads the dense block directly | 291.9 ms | −7.2% |
+| back-substitution sources batched through `mul_add_gather` | 282.7 ms | −3.2% |
+| union-by-size tie-break, no size pass, early-exit edge scan | 261.9 ms | −7.4% |
+| `prepare_work` hygiene (lane/mask memsets, bucket span, dead-row index) | 249.4 ms | −4.8% |
+| dense-block row-offset table for substitution sources | 242.2 ms | −2.9% |
+
+**Word-domain release accumulation.** A packed pivot row's coefficients are
+all one, so `acc[slot][lane] += factor[lane] · value` is `acc[slot] +=
+factors`. Staging factors over the full lane width with zeros on dead lanes
+turns the inner loop into one fixed-width array addition the compiler keeps
+in vector registers, with no bounds check and no scalar multiply. The
+release closure left the profile entirely: 28.2% → 2.1%. The earlier
+"per-entry lane-vector `mul_add`" reject differs in that it called a
+dispatched kernel per entry; this one calls nothing.
+
+**Fused singleton merge.** Every binary pivot source carried exactly the
+pivot column, so the sorted-list merge collapses to one search, one shift,
+and the frozen word XOR — and the destination's new active weight is its new
+list length, so the `is_active` recount disappears with it. This is the
+candidate the previous gate identified and deferred; the generic-shape A/B it
+was waiting for is the synthetic table below.
+
+**Back-substitution over the dense block.** A pivot row carries its pivot
+column and frozen bits over inactivated columns only, and every inactivated
+column is a row of the already-final dense block. Reading sources there
+instead of back through the solution matrix removes the aliasing split
+(`two_live_rows`, 4.6% of the entering profile) and resolves each source
+through one flat offset table. Sources are then staged in groups of 64 and
+folded by one `mul_add_gather` call per group, which holds the destination
+row in registers across the group: `xor_avx2_impl` fell 11.7% → 1.3%.
+
+**Tie-break.** `largest_component_edge` cleared three column-wide arrays and
+swept the column space on every one of its 155 calls. It now sizes its
+arrays once, resets only its own endpoints through a sentinel, carries
+component sizes in the union (no endpoint sweep), and stops the edge scan at
+the first edge attaining the maximum size. The partition and every component
+size are invariant under union-by-size, so the chosen edge is unchanged.
+8.9% → 7.9% of a 1.7x smaller total.
+
+**`prepare_work` hygiene.** The `n`-wide lane store and mask are sized, not
+cleared — every lane read is gated on the mask, and the release pass zeroes
+the `g` inactive slots it reads unconditionally. `pivot_time` was written and
+never read; removed. Weight queues span the maximum input weight instead of
+the column count, growing on demand from `bucket_move`. Deferred rows are
+left out of the column index: they never pivot and never merge, and at max
+`K` they contributed one entry per dense HDPC coefficient in every column.
+
+### Rejected in this round
+
+| Candidate | Result |
+| --- | --- |
+| Interned dense node universe for the tie-break | 239.7 / 247.7 / 263.4 ms against 241.2 / 238.5 / 240.6 ms — flat to worse, rejected |
+| Linear scan-and-compact instead of binary search in the singleton merge | 247.1 / 244.7 / 242.8 ms against 240.8 / 242.5 / 240.6 ms — consistently ~1–2% worse, rejected |
+| Per-entry `add_assign` instead of the batched gather | 255.1 / 250.9 / 252.2 ms against 242.8 / 241.8 / 243.3 ms — the gather wins ~4%, kept |
+
+The interned-universe reject reproduces the previous round's finding that
+compacting the tie-break's node space does not pay; the win there is
+entirely in not touching the column space at all.
+
+### Synthetic shapes, Criterion medians
+
+| Case | before | after | change |
+| --- | ---: | ---: | ---: |
+| `rfc_scale` lt_only 1000 | 252.91 µs | 181.71 µs | −28.2% |
+| `rfc_scale` lt_only 5000 | 1.6019 ms | 1.2592 ms | −21.4% |
+| `rfc_scale` lt_only 10000 | 4.0118 ms | 3.1930 ms | −20.4% |
+| `rfc_scale` lt_only 20000 | 9.4353 ms | 7.6048 ms | −19.4% |
+| `rfc_scale` lt_hdpc_eager 500 | 10.050 ms | 9.0609 ms | −9.8% |
+| `rfc_scale` lt_hdpc_eager 1000 | 62.649 ms | 53.690 ms | −14.3% |
+| `rfc_scale` lt_hdpc_eager 2000 | 433.12 ms | 386.47 ms | −10.8% |
+| `rfc_scale` lt_hdpc_eager 4000 | 3.3569 s | 2.9879 s | −11.0% |
+| `rfc_scale` lt_hdpc_deferred 500 | 395.58 µs | 285.02 µs | −27.9% |
+| `rfc_scale` lt_hdpc_deferred 1000 | 1.0266 ms | 749.68 µs | −27.0% |
+| `rfc_scale` lt_hdpc_deferred 2000 | 3.4796 ms | 2.6235 ms | −24.6% |
+| `rfc_scale` lt_hdpc_deferred 4000 | 13.101 ms | 9.8897 ms | −24.5% |
+| `rfc_scale` lt_hdpc_deferred 56403 | 172.93 ms | 112.35 ms | −35.0% |
+| `hybrid` k1000 hybrid | 434.43 µs | 362.67 µs | −16.5% |
+| `hybrid` k1000 dense_ple (control) | 7.8008 ms | 7.7455 ms | 0.99x |
+
+No shape regresses, the pure-LT family included, and the dense-`Ple` control
+holds. The eager dense-band family — the one the first round accepted a 12%
+regression on — improves 9.8–14.3%.
+
+### Consumer, paired and interleaved
+
+| Case | before | after | change |
+| --- | ---: | ---: | ---: |
+| `raptor-q` prepare K=56403 | 438.5 / 445.5 / 450.3 ms | 240.2 / 242.9 / 244.5 ms | −44.2% |
+| `raptor-q` decode K=56403, 5% loss | 423.9 / 424.4 / 433.3 ms | 224.5 / 233.2 / 228.4 ms | −45.0% |
+
+Percentages compare the worst measurement on each side. Every `gfm` and
+`raptor-q` test suite is green, including the eager/deferred byte-identity
+differentials, the dense-`Ple` oracle suites, the `with_initial_inactive`
+suites, the inconsistency-rejection tests, `raptor-q`'s frozen fixtures and
+`cberner/raptorq` interop vectors, and the zero-allocation steady-state
+proof.
+
+### Reference comparison, and what the reference was actually measuring
+
+`cberner/raptorq` 2.0.1 (pin `83cf194`), same host, same drivers,
+`taskset -c 2`. **`raptorq` carries a process-global, 64-entry
+`SourceBlockEncodingPlan` cache keyed by symbol count**
+(`src/encoder.rs:207`), so a second encode at the same `K` in the same
+process replays a cached operation list instead of solving: 124 ms on the
+first `SourceBlockEncoder::new`, 11 ms on every one after it. Only the
+first-solve number is comparable to a `gfm` solve, so the reference is run
+one iteration per fresh process.
+
+| Case | reference | `raptor-q` before | gap | `raptor-q` after | gap |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| prepare K=56403 | 129.6–131.2 ms | 438.5–450.3 ms | 3.39x | 240.2–244.5 ms | 1.86x |
+| decode K=56403 | 121.0–123.5 ms | 423.9–433.3 ms | 3.48x | 223.6–226.5 ms | 1.84x |
+
+The plan cache is also the measurement that sizes `raptor-q`'s own deferred
+detached-schedule item: an 11x saving on repeated same-`K` encodes, entirely
+codec-side.
+
+### The `fgf` prerequisite, isolated
+
+`gf8d`'s N-to-1 gather was wired to `gather_impl::<Affine8D, false, 4>`, so
+for rows below the 128-byte main tile it fell through to one single-source
+AXPY per source — the exact body `gather_gfni` stopped using for `Gf8B` when
+the source-fused short-row rule landed ("Native GFNI source-fused short
+rows", `fgf/BENCHMARKS.md`). Giving `gather_affine` the same selection rule
+is worth, interleaved on the same drivers:
+
+| Case | `gfm` only | `gfm` + `fgf` fused tail | change |
+| --- | ---: | ---: | ---: |
+| prepare K=56403 | 252.6 / 248.6 / 251.2 ms | 243.7 / 247.9 / 243.9 ms | −1.5…−3.5% |
+| decode K=56403 | 237.7 / 234.6 / 233.7 ms | 232.8 / 232.5 / 229.4 ms | −1.8…−2.1% |
+
+This lands in `fgf` first, on its own revision, before `gfm` repins — the
+`gfm` numbers above are the pinned-`fgf` state and do not depend on it.
+
+### What the profile says to do next
+
+Entering state 427.5 ms, leaving state 242.2 ms. The leaving profile:
+
+| Symbol | Share |
+| --- | ---: |
+| `run_into` (probe loop, dense assembly, back-substitution outer) | 28.0% |
+| `Row::for_each_frozen_ordinal` (back-substitution staging) | 11.1% |
+| `gather_impl::<Affine8D, true, 4>` | 9.0% |
+| `Row::eliminate_singleton` | 7.9% |
+| `Components::largest_component_edge` | 7.9% |
+| libc `memcpy`/`memset`/`realloc` | 9.0% |
+
+Back-substitution's remaining 20% is staging plus kernel, at ~4.5 ns for one
+64-byte accumulate whose source is L1-resident. The kernel's floor is set by
+the `VGF2P8AFFINEQB` latency in the accumulator's loop-carried chain, which
+every coefficient being one makes unnecessary: an `fgf` XOR gather taking a
+base, a row length, and an index list would remove both the staging and the
+multiply chain. `Row::eliminate_singleton` is latency-bound on per-row heap
+allocations (67% of its samples are the one binary search over a 46-entry
+list in a separately allocated `Vec`), which is an arena question, not a
+search question — the linear-scan reject above is the evidence that the
+search itself is not the cost.
+
