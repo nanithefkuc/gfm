@@ -7,6 +7,50 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Changed
+- Back-substitution folds its sources through `fgf`'s new blocked XOR
+  gather: the packed rows' frozen ordinals stage into a reused `u32`
+  scratch, the frozen-ordinal offset table shrinks to `u32`, and one
+  `ops::add_gather` call per pivot row replaces the staged fat-pointer
+  groups and all-ones `mul_add_gather`. The gather kernel is 1.4–2.4x at
+  the call and drops consumer preparation at max K 5.5% and 5%-loss decode
+  5.4% (paired, interleaved). The group-of-64 batching and its stack array
+  are gone. See `BENCHMARKS.md`.
+
+- `Hybrid`'s deferred-row release accumulates in the word domain. A packed
+  pivot row's coefficients are all one, so its substitution is a
+  whole-vector addition of the staged factor lanes per support entry
+  instead of one scalar field multiply per live lane; dead lanes are staged
+  as zero so the lane loop needs no live-lane list, and frozen ordinals
+  resolve to their accumulator slot through a flat table. Answers and
+  schedules are unchanged.
+- The sparse phase eliminates a pivot column whose source row is that
+  column alone through a fused path: one search, one shift, and the frozen
+  word XOR, with the destination's new active weight read off its list
+  length instead of recounted. This is the shape of every pivot in a
+  peeling schedule; the general sorted merge stays for widened
+  destinations and non-unit factors.
+- Back-substitution reads its sources from the dense block rather than back
+  through the solution matrix. A pivot row carries its pivot column and
+  inactivated columns only, so every source is an already-final dense-block
+  row reachable through one offset table, with no aliasing split; sources
+  are folded in groups of sixty-four by one gather call each, which holds
+  the destination row in registers across the group.
+- The weight-two tie-break sizes its union-find once and touches only its
+  own edge endpoints: component sizes ride along in the union, the endpoint
+  sweep is gone, and the edge scan stops at the first edge attaining the
+  maximum component size. The partition, every component size, and the
+  chosen edge are unchanged.
+- `Hybrid`'s per-solve setup stops clearing what it does not read: the lane
+  store and mask are sized rather than zeroed (the release pass zeroes the
+  slots it reads unconditionally), weight queues span the maximum input
+  weight instead of the column count and grow on demand, deferred rows are
+  left out of the column index, and the write-only `pivot_time` array is
+  removed.
+
+  Together these drop consumer preparation at max K by 44% and 5%-loss
+  decode by 45%, improve every synthetic shape by 9.8–35% with the
+  dense-`Ple` control flat, and close the `cberner/raptorq` gap at max K
+  from 3.4x/3.5x to 1.9x/1.8x. See `BENCHMARKS.md`.
 - Deferred-row release runs in the inactive column space: substitutions
   accumulate into a `g`-wide accumulator indexed by inactive ordinal
   instead of an `n`-wide lane store, factors read straight from the seeded

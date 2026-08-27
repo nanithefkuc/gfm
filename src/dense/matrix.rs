@@ -156,6 +156,20 @@ impl<F: FieldKernels> Matrix<F> {
         self.cols * F::BYTES
     }
 
+    /// Byte offset of logical row `r` inside [`Self::region`].
+    ///
+    /// For callers that resolve many rows through an index table of their
+    /// own: one table build replaces a row-map lookup and a multiply per
+    /// access.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `r` is out of bounds.
+    pub(crate) fn row_offset(&self, r: usize) -> usize {
+        assert!(r < self.rows, "row index out of bounds");
+        self.map[r] * self.pitch
+    }
+
     /// The element at `(row, col)`, decoded from its little-endian bytes.
     ///
     /// # Panics
