@@ -44,11 +44,6 @@ const RELEASE_LANES: usize = 64;
 /// Inactive-ordinal sentinel for a column that is not in the dense block.
 const RELEASE_NOT_INACTIVE: u32 = u32::MAX;
 
-/// Substitution sources staged per gather call. One kernel entry amortized
-/// over this many rows keeps the destination in registers for the whole
-/// group; the buffer is a stack array, so a solve stays allocation-free.
-const GATHER_GROUP: usize = 64;
-
 use fgf::field::Elem;
 use fgf::{FieldKernels, ops};
 
@@ -179,8 +174,12 @@ pub struct Hybrid<F: FieldKernels> {
     active_of_pivot: Vec<u32>,
     residual: Vec<usize>,
     basis_rows: Vec<usize>,
-    /// Frozen ordinal → byte offset of that column's dense-block row.
-    frozen_src: Vec<usize>,
+    /// Frozen ordinal → u32 byte offset of that column's dense-block row.
+    frozen_src: Vec<u32>,
+    /// Frozen ordinals of the pivot row being substituted, as scratch for
+    /// one gather call; reused across pivots so a solve allocates nothing
+    /// after the first pivots size it.
+    gather_scratch: Vec<u32>,
     needed: Vec<bool>,
     schedule: Components,
     pivot_cols: Vec<u32>,
@@ -303,6 +302,7 @@ impl<F: FieldKernels> Hybrid<F> {
             needed: Vec::new(),
             schedule: Components::new(),
             frozen_src: Vec::new(),
+            gather_scratch: Vec::new(),
             pivot_cols: Vec::new(),
             pivot_coeffs: Vec::new(),
             pivot_frozen: Vec::new(),
@@ -1103,26 +1103,28 @@ impl<F: FieldKernels> Hybrid<F> {
                 .row_mut(column as usize)
                 .copy_from_slice(x_inactive.row(j));
         }
-        // Frozen ordinal → byte offset of that column's dense-block row.
+        // Frozen ordinal → u32 byte offset of that column's dense-block row.
         // Back-substitution resolves millions of sources through this, so
         // the row-map lookup and pitch multiply are paid once per column
-        // instead of once per entry.
+        // instead of once per entry, and the gather kernel reads the
+        // 4-byte table directly instead of staged fat pointers.
         let mut frozen_src = core::mem::take(&mut self.frozen_src);
         frozen_src.clear();
         frozen_src.reserve(self.frozen_slot.len());
         for &slot in &self.frozen_slot {
-            frozen_src.push(x_inactive.row_offset(slot as usize));
+            frozen_src.push(
+                u32::try_from(x_inactive.row_offset(slot as usize))
+                    .expect("dense-block region offset within 4 GiB"),
+            );
         }
         self.frozen_src = frozen_src;
 
-        // Substitution sources are staged in fixed-size groups so the gather
-        // kernel holds the destination row in registers across a whole group
-        // and the per-source cost is a load and an accumulate, not a kernel
-        // entry. The buffer lives on the stack: a solve allocates nothing.
-        let ones = [F::Elem::ONE; GATHER_GROUP];
-        let mut group: [&[u8]; GATHER_GROUP] = [&[]; GATHER_GROUP];
+        // The gather folds the packed rows' frozen supports — every
+        // coefficient one, so the fold is a raw XOR with the destination
+        // row held in vector registers across the whole support. The
+        // ordinal scratch is a persistent field: a solve allocates nothing
+        // once its first pivots have sized it.
         let dense_region = self.x_inactive.as_ref().expect("prepared").region();
-        let dense_live = self.x_inactive.as_ref().expect("prepared").live_bytes();
         for &(row, pivot_col) in self.pivots.iter().rev() {
             values
                 .row_mut(pivot_col as usize)
@@ -1137,19 +1139,13 @@ impl<F: FieldKernels> Hybrid<F> {
                 // split: the two matrices are disjoint.
                 let offsets = &self.frozen_src;
                 let dst = values.row_mut(pivot_col as usize);
-                let mut staged = 0usize;
+                let mut gather = core::mem::take(&mut self.gather_scratch);
+                gather.clear();
                 work_row.for_each_frozen_ordinal(|ordinal| {
-                    let start = offsets[ordinal];
-                    group[staged] = &dense_region[start..start + dense_live];
-                    staged += 1;
-                    if staged == GATHER_GROUP {
-                        ops::mul_add_gather::<F>(dst, &ones, &group);
-                        staged = 0;
-                    }
+                    gather.push(offsets[ordinal]);
                 });
-                if staged > 0 {
-                    ops::mul_add_gather::<F>(dst, &ones[..staged], &group[..staged]);
-                }
+                ops::add_gather::<F>(dense_region, dst, &gather);
+                self.gather_scratch = gather;
                 for &column in &work_row.cols {
                     if column != pivot_col {
                         let (dst, src) = values.two_live_rows(pivot_col as usize, column as usize);

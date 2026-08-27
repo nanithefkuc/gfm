@@ -858,6 +858,76 @@ the release loop before it, is at a representation-bound local optimum:
 the next step change requires pivot supports in a form that removes the
 per-entry enumeration itself.
 
+### Rejected: full-width packed active supports and lane-major release (2026-08-27)
+
+The remaining sparse-loop share suggested promoting binary active supports
+from sorted `u32` lists to full-width `u64` rows. Temporary instrumentation
+on the real consumer systems (`raptor-q` prepare and final 5%-loss decode at
+`K = 56403`, `T = 64`) tested the premise before any production
+representation was added. Both solves produced the same coefficient
+schedule:
+
+- 57,326 columns and rows;
+- 379,929 binary merges touching 56,955 rows;
+- every binary pivot source carried exactly one active entry;
+- destination active weights never increased: min/p25/p50/p75/p90/p95/p99/max
+  = 1/4/15/82/145/166/183/187;
+- the current list merge walked 17,875,978 entries in total;
+- destination/source frozen storage averaged 6.46/6.82 words per merge.
+
+A full-width active row at this size is 896 words (7,168 bytes). Simulating
+one-way promotion at thresholds 32, 64, or 128 promoted the same 907 rows
+(6.50 MB) and sent 167,840 merges through the packed path. Counting one unit
+per list entry or packed word, those paths perform 8.52x the current
+iteration work. Threshold 16 promotes 4,036 rows (28.93 MB) and models at
+12.36x. Threshold 256 or higher promotes nothing because the observed
+maximum active weight is 187.
+
+Standalone twins measured the exact hot operation: XOR a binary pivot whose
+active support is the singleton pivot column. Pinned CPU, criterion `--quick`;
+medians:
+
+| Active weight | current sorted-list XOR | direct singleton removal | full 896-word XOR |
+| ---: | ---: | ---: | ---: |
+| 15 | 19.0 ns | 7.0 ns | 396.5 ns |
+| 82 | 94.6 ns | 28.2 ns | 393.2 ns |
+| 166 | 173.7 ns | 48.8 ns | 389.2 ns |
+| 187 | 192.5 ns | 56.0 ns | 384.6 ns |
+
+Full-width XOR does not beat the current list walk until between weights 256
+and 512, outside the real distribution. Against direct singleton removal,
+the crossover moves between 1,024 and 2,048. Width sweeps show the same
+scaling: the packed/direct crossover lies between weights 16–32 at 1,000
+columns, 64–128 at 5,000, and 256–512 at 20,000. The pure-LT regression
+shapes remain below those width-dependent crossovers. Packing can win an
+isolated small-width, wider-row operation, but that does not justify a
+second row tier for the max-`K` problem this design targeted.
+
+The same instrumentation corrected the release cost model. One real
+max-`K` solve fired 56,796 pivots and walked 10,988,074 support entries;
+15.94 average live lanes (maximum 16) expand that to 175,122,735 scalar
+lane operations. Average/max pivot support was 193.47/312 entries. A
+lane-major standalone loop won at 128 entries × 16 lanes but lost at
+270 × 16; the real mixed distribution required an end-to-end check.
+
+Three adjacent max-`K` consumer prepare pairs:
+
+| Pair | entry-major | lane-major | change |
+| ---: | ---: | ---: | ---: |
+| 1 | 443.40 ms | 558.49 ms | +26.0% |
+| 2 | 478.21 ms | 546.98 ms | +14.4% |
+| 3 | 435.41 ms | 544.12 ms | +25.0% |
+
+The maximum-of-three comparison is +16.8%. Lane-major release is rejected.
+
+The simpler direct singleton-removal twin passed the full public Hybrid
+differential suite and improved adjacent max-`K` prepare pairs by 4.0%,
+11.4%, and 7.7% (maximum-of-three −10.7%). That result is independent of
+full-width packing and needs its own generic-shape A/B before any production
+change. All temporary counters, environment switches, and microbench code
+were removed after this record. No promotion threshold or packed-row budget
+is retained.
+
 ## Sixth round: word-domain release and batched back-substitution (2026-08-27)
 
 The measurement gate that stopped the packed-sparse rewrite left a corrected
@@ -1078,3 +1148,85 @@ list in a separately allocated `Vec`), which is an arena question, not a
 search question — the linear-scan reject above is the evidence that the
 search itself is not the cost.
 
+## Seventh round: the XOR-gather back-substitution (2026-08-27)
+
+The sixth round's leaving profile put back-substitution's residual cost at
+staging plus kernel — `for_each_frozen_ordinal` staging sources into fat
+pointers (11.1%) and `gather_impl::<Affine8D>` multiplying by an implicit
+one (9.0%), about 4.5 ns per 64-byte accumulate whose every coefficient is
+one. This round moves that fold into `fgf` as a blocked XOR gather:
+`ops::add_gather` folds byte-offset rows of the dense block with the
+destination row held in AVX2 registers across the whole support, no
+coefficient representation and no staged fat pointers at all. The packed
+rows' ordinals stage into a reused `u32` scratch and the frozen-ordinal
+offset table shrinks to `u32` (4 bytes per source instead of a 16-byte
+slice). The group-of-64 batching and its `GATHER_GROUP` stack array are
+gone: one call per pivot row.
+
+### Kernel level
+
+Interleaved minimum-of-twenty, one call, 64-byte rows, host
+`v3_gfni_crypto`, `taskset -c 2`. The old side includes its staging cost,
+as the production call site paid it:
+
+| Region rows | Sources | staged all-ones gather | `add_gather` | change |
+| ---: | ---: | ---: | ---: | ---: |
+| 64 (L1) | 8 | 0.02 µs | 0.01 µs | 1.9–2.4x |
+| 64 (L1) | 64 | 0.14 µs | 0.09 µs | 1.4–1.5x |
+| 64 (L1) | 187 | 0.41–0.45 µs | 0.23–0.28 µs | 1.5–1.9x |
+| 4096 (L2) | 64 | 0.14–0.16 µs | 0.09 µs | 1.5–1.7x |
+| 4096 (L2) | 187 | 0.42–0.45 µs | 0.24 µs | 1.7–1.9x |
+
+The microbenchmark and its numbers are recorded in `fgf`'s
+BENCHMARKS.md, "Blocked XOR gather"; the harness was deleted after the
+record.
+
+### Consumer, paired and interleaved
+
+Same drivers and protocol as the sixth round: `K = 56403`, `T = 64`,
+minimum-of-four (prepare) / three (decode) per binary, base and new
+binaries interleaved round by round, worst measurement on each side
+compared.
+
+| Case | base | new | change |
+| --- | ---: | ---: | ---: |
+| prepare K=56403 | 249.0 / 251.6 / 251.0 ms | 230.7 / 237.7 / 237.1 ms | −5.5% |
+| decode K=56403, 5% loss | 232.6 / 236.9 / 235.4 ms | 222.5 / 224.0 / 223.5 ms | −5.4% |
+
+The whole session's absolute numbers ran 3–6% above the sixth round's
+recorded state (the base binaries measured 249–252 ms against the recorded
+240–244 ms); the drift is environmental and cancels in the paired
+comparison.
+
+### Synthetic recheck, same session, same drift
+
+Criterion medians on this host, compared against the sixth round's
+recorded numbers taken hours earlier on the same machine:
+
+| Case | sixth round | now | drift |
+| --- | ---: | ---: | ---: |
+| `rfc_scale` lt_hdpc_deferred/56403 | 112.35 ms | 114.51 ms | +1.9% |
+| `rfc_scale` lt_hdpc_deferred/4000 | 9.8897 ms | 10.497 ms | +6.2% |
+| `rfc_scale` lt_hdpc_deferred/1000 | 749.68 µs | 785.13 µs | +4.7% |
+| `hybrid` k1000 hybrid | 362.67 µs | 387.74 µs | +6.9% |
+| `hybrid` k1000 dense_ple (control) | 7.7455 ms | 8.1670 ms | +5.4% |
+
+Every case, including the untouched dense-`Ple` control, drifts up within
+the same band; the hybrid/control ratio is unchanged (4.68% → 4.75%). The
+synthetics are parity within drift; the paired consumer numbers are the
+evidence.
+
+### The dense-block floor, updated
+
+Back-substitution now spends its time in the gather itself: one unaligned
+load and one XOR per source per lane, destination in registers. The
+remaining visible costs in a release profile of this state are the dense
+solve and the ordinary sparse loop. The next candidate this opens — an
+`eliminate_singleton` arena so packed rows stop being individually
+allocated `Vec`s — is unchanged from the sixth round's analysis and is a
+`gfm`-internal question.
+
+All suites green: `gfm`'s full matrix (default, all-features,
+no-default-features), the zero-allocation steady-state proof,
+`fgf`'s differential suite on the host and `SIMD_BACKEND=scalar` tiers,
+`raptor-q`'s frozen fixtures and interop vectors.
