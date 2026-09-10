@@ -1451,12 +1451,13 @@ impl<F: FieldKernels> Hybrid<F> {
             }
         }
 
+        // Pre-size the working rows for the next solve against the input
+        // shapes. The frozen words are deliberately *not* pre-sized to the
+        // ordinal space: a row carries a handful of frozen words, so one
+        // per inactivated column asked for `g` words in every row — 254 MiB
+        // at max `K`, allocated and never read.
         for (work, source) in self.work_rows.iter_mut().zip(&self.rows) {
             work.reserve_like(source);
-            if work.frozen.capacity() < self.frozen_cols.len() {
-                work.frozen
-                    .reserve(self.frozen_cols.len().saturating_sub(work.frozen.len()));
-            }
         }
         stats.rank = self.pivots.len() + dense_rank;
         Ok(stats)

@@ -19,6 +19,13 @@ All notable changes to this project are documented here. The format follows
   measuring solves. See `BENCHMARKS.md`.
 
 ### Changed
+- A solve no longer pre-sizes every working row's frozen words to the
+  whole inactivated-column space. A row carries a handful of frozen
+  words; the reserve asked for one per inactivated column in every row —
+  254 MiB allocated and never read on a max-`K` system, paid again by
+  every per-block solver. Consumer preparation drops 29.6% and 5%-loss
+  decode 27.8%, with the warm synthetic shapes inside ±1.7%. See
+  `BENCHMARKS.md`.
 - The sparse phase stops allocating per row and per column at setup. The
   column-to-row index is one arena — a span per column in a flat buffer,
   laid out from the counted supports with a quarter of slack, moved to a

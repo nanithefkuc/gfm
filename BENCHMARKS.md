@@ -1421,3 +1421,69 @@ side. A change that helps one microarchitecture's pure-LT peeling and
 costs another's banded shapes is not a portable win, and this crate keeps
 one code path. It stays rejected, now with the reason recorded as
 *host-dependent* rather than *no effect*.
+
+## Ninth round: the pre-reserve that asked for 254 MiB (2026-09-10)
+
+Hosts and protocol as the eighth round; the accepted number below is from
+the 12700K with cores 8–11 isolated, pinned to core 8, and reproduced on
+the 258V laptop.
+
+An allocation census (counting global allocator, one cold max-`K` solve)
+opened the round:
+
+| Phase | before | after |
+| --- | ---: | ---: |
+| building the system (pushing rows) | 113,570 allocations, 44 MiB | unchanged |
+| one solve | 123,035 allocations, 297 MiB | 66,278 allocations, 187 MiB |
+
+Backtracing every allocation over 2 MiB found the cause in one line. The
+tail of a solve pre-sized each working row's frozen words to the whole
+ordinal space (`work.frozen.reserve(frozen_cols.len())`) so the *next*
+solve would not grow them. A row carries a handful of frozen words — six
+or seven on average, by this file's own round-three count — while the
+ordinal space at max `K` is `g ≈ 558` words. The reserve therefore asked
+for 4.4 KiB in each of 57k rows: **254 MiB allocated and never read**, on
+every solve, and pure loss for the per-block solver a codec builds.
+
+Removing it is the round:
+
+| Case | base | new | change |
+| --- | ---: | ---: | ---: |
+| `raptor-q` prepare K=56403 | 185.6 ms | 130.7 ms | **−29.6%** |
+| `raptor-q` decode K=56403, 5% loss | 181.9 ms | 131.4 ms | **−27.8%** |
+| `rfc_scale` lt_only 1000 | 0.181 ms | 0.178 ms | −1.7% |
+| `rfc_scale` lt_only 5000 | 1.202 ms | 1.183 ms | −1.6% |
+| `rfc_scale` lt_only 20000 | 6.845 ms | 6.747 ms | −1.4% |
+| `rfc_scale` lt_hdpc_deferred 500 | 0.283 ms | 0.281 ms | −0.7% |
+| `rfc_scale` lt_hdpc_deferred 1000 | 0.764 ms | 0.768 ms | +0.5% |
+| `rfc_scale` lt_hdpc_deferred 4000 | 9.042 ms | 9.028 ms | −0.2% |
+| `rfc_scale` lt_hdpc_deferred 56403 | 94.756 ms | 93.394 ms | −1.4% |
+| `lt_hdpc_eager` 1000 | 32.391 ms | 32.724 ms | +1.0% |
+
+The warm shapes barely move — they are exactly the case the reserve was
+meant to serve, and a row's own capacity already survives from the
+previous solve — while the cold consumer, which pays the reserve once per
+block and reads none of it, drops by nearly a third.
+
+### Rejected in this round
+
+| Candidate | Result |
+| --- | --- |
+| Pre-sizing the deferred log from the counted support entries | The log reaches millions of ops and doubles from empty on a cold solver, but the entry count under-estimates it by 16x on the max-`K` shape, so the doublings stay — and `lt_hdpc_eager` regressed **+10%**. Reverted |
+| Dropping the trailing `reserve_like` pass as well | Mixed: `lt_only` −1.3 to −5.0%, `lt_hdpc_eager` +3.5%, consumer inside noise |
+| Input rows in one arena (supports concatenated, two `Vec`s per equation removed) | Halves build-time allocations (113,570 → 57,084) and buys consumer prepare −2.4% / decode −0.8%, but `lt_only/1000` regresses **+6 to +8%** and its replay +10.6%, reproducibly over three runs. Reverted |
+
+### What the profile says to do next
+
+With the reserve gone, allocator symbols fall to ~4% of consumer prepare
+and the profile reads: `analyze` 35.8%, `apply` 13.9%,
+`largest_component_edge` **11.7%**, gather kernels 8.6%.
+
+The tie-break is now the largest named item, and the eighth round's
+reject bounds what restructuring its passes can win. The remaining cost
+is not only the union-find: the caller rebuilds the edge list by scanning
+the whole weight-two bucket on every call (~8,300 edges, ~800 calls at max
+`K`), so an exact connectivity oracle alone would still leave that scan.
+A win needs the weight-two rows bucketed *by component*, with the largest
+component indexed and maintained across peeling steps — a decremental
+connectivity structure, which is a design, not a patch.
