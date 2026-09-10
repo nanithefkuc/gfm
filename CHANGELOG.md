@@ -6,7 +6,40 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- `Hybrid::replace_rhs` and `Hybrid::resolve_into`: the schedule, the
+  reduced coefficients, the pivot order, and the dense factorization are
+  functions of the pushed equations' coefficients alone, so a system whose
+  payloads changed pays the payload pass only. Replays run 2.0–4.2x faster
+  than the solve they replace on the sparse shapes and 38x on an eagerly
+  eliminated dense band; the answer, the determinedness, and the
+  inconsistency verdict are the ones `solve_into` would give, proven by a
+  differential test against a fresh solver. Reuse is opt-in — `solve_into`
+  always re-analyzes, so a benchmark that re-solves one system keeps
+  measuring solves. See `BENCHMARKS.md`.
+
 ### Changed
+- The sparse phase stops allocating per row and per column at setup. The
+  column-to-row index is one arena — a span per column in a flat buffer,
+  laid out from the counted supports with a quarter of slack, moved to a
+  doubled span only when a merge overruns it, and reused across solves of
+  the same equations — and packed rows share one merge scratch instead of
+  carrying two buffers each, which also takes 48 bytes out of every row
+  header the pivot probe touches. Freezing a column and widening a row
+  compact in place. Consumer preparation at max K drops 8.4% and 5%-loss
+  decode 8.9% together with the changes below. See `BENCHMARKS.md`.
+- A field merge whose source adds no column to the destination runs in
+  place, compacting over the entries that cancel, instead of building the
+  result in a second buffer and swapping. This is every merge between two
+  full-width rows: the eagerly eliminated dense band drops 20%.
+- The dense solve reads the rank decomposition directly when the residual
+  block has full row rank, which is when its independent subset is every
+  row it holds. The second assembly and the second elimination of the same
+  matrix are gone; the eager dense-band shape halves.
+- Pivot inverses ride in the pivot list instead of being searched for
+  again by the release substitution, back-substitution, and the kernel
+  lift. Widened rows carry their pivot coefficient in an `n`-wide list, so
+  the search was a full binary search per pivot per pass.
 - Back-substitution folds its sources through `fgf`'s new blocked XOR
   gather: the packed rows' frozen ordinals stage into a reused `u32`
   scratch, the frozen-ordinal offset table shrinks to `u32`, and one

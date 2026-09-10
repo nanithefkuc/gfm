@@ -1230,3 +1230,194 @@ All suites green: `gfm`'s full matrix (default, all-features,
 no-default-features), the zero-allocation steady-state proof,
 `fgf`'s differential suite on the host and `SIMD_BACKEND=scalar` tiers,
 `raptor-q`'s frozen fixtures and interop vectors.
+
+## Eighth round: setup allocation, in-place dense merges, payload replay (2026-09-10)
+
+Host: Intel Core Ultra 7 258V, Linux, rustc 1.98.0, backend
+`v3_gfni_crypto`, `taskset -c 2`. Consumer numbers come from single-shot
+drivers built against `raptor-q` by path (`K = 56403`, `T = 64`, one source
+block): max-`K` encoder preparation (minimum of four in-process iterations)
+and a 5%-loss decode driven to completion (minimum of three). Synthetic
+numbers come from a single-shot shape driver, minimum over four to six
+order-alternating rounds. **Order matters on this host**: running base and
+new in the same order every round biased the second binary by 3–8% on the
+sub-millisecond shapes, so every pair below alternates which binary runs
+first. Measured that way, base against itself sits inside ±1.3%.
+
+### The profile that set the order
+
+`perf record` over max-`K` prepare, self time, entering state:
+
+| Symbol | Share |
+| --- | ---: |
+| `run_into` (probe loop, release, dense assembly, back-substitution) | 38.0% |
+| `Components::largest_component_edge` | 9.4% |
+| `Row::eliminate_singleton` | 7.8% |
+| libc `malloc`/`realloc`/`free` | ~9% |
+| `xor_gather` + `xor_gather_avx2_impl` | 6.7% |
+| `Row::freeze_from_list` | 2.2% |
+| `Ple::redecompose_impl` (both decompositions) | 1.3% |
+
+The allocator share is setup and teardown, not steady state: a codec builds
+one solver per block, so every per-row and per-column `Vec` is allocated and
+freed inside the measured window. `drop_glue<Row>` alone held 2.4%.
+
+### Accepted
+
+| Change | What it removes |
+| --- | --- |
+| Pivot inverse cached in the pivot list | Three binary searches per pivot per release group, per back-substitution, and per kernel-lift row |
+| Column-to-row index in one arena | One `Vec` per column (`n` allocations and most of their growth reallocs per fresh solver); the span layout is reused across solves of the same system |
+| Packed rows share one merge scratch; freeze and widen compact in place | Two `Vec`s per row (48 bytes of every row header a probe touches, plus their allocations) |
+| Field merges that add no column run in place | The second buffer and the swap for every merge between two full-width rows |
+| Full-rank residual reuses the rank decomposition for the solve | One `basis × g` assembly and one whole elimination |
+| `replace_rhs` + `resolve_into` | The entire coefficient analysis on a re-solve of the same equations |
+
+Consumer, paired and order-alternating, worst measurement on each side:
+
+| Case | base | new | change |
+| --- | ---: | ---: | ---: |
+| `raptor-q` prepare K=56403 | 252.8 ms | 231.5 ms | −8.4% |
+| `raptor-q` decode K=56403, 5% loss | 248.7 ms | 226.6 ms | −8.9% |
+
+Synthetic shapes, minimum over six alternating rounds:
+
+| Case | base | new | change |
+| --- | ---: | ---: | ---: |
+| `lt_only` 1000 | 0.185 ms | 0.180 ms | −2.7% |
+| `lt_only` 5000 | 1.329 ms | 1.285 ms | −3.3% |
+| `lt_only` 20000 | 8.351 ms | 7.742 ms | −7.3% |
+| `lt_hdpc_deferred` 500 | 0.319 ms | 0.313 ms | −1.9% |
+| `lt_hdpc_deferred` 1000 | 0.832 ms | 0.828 ms | −0.5% |
+| `lt_hdpc_deferred` 4000 | 10.756 ms | 10.715 ms | −0.4% |
+| `lt_hdpc_deferred` 56403 | 124.078 ms | 119.343 ms | −3.8% |
+| `lt_hdpc_eager` 1000 | 68.182 ms | 32.734 ms | −52.0% |
+
+No shape regresses. The eager dense-band family — the one that pays full
+list merges instead of deferral — takes most of the in-place merge and all
+of the skipped second elimination: −20% from the in-place merge alone, the
+rest when the full-rank residual stopped being factored twice.
+
+### Payload-only re-solve
+
+`resolve_into` after `replace_rhs` replays the cached analysis. Same
+binary, same systems, full solve against replay:
+
+| Case | full solve | replay | speedup |
+| --- | ---: | ---: | ---: |
+| `lt_only` 1000 | 0.184 ms | 0.044 ms | 4.2x |
+| `lt_only` 5000 | 1.241 ms | 0.353 ms | 3.5x |
+| `lt_only` 20000 | 7.323 ms | 2.771 ms | 2.6x |
+| `lt_hdpc_deferred` 500 | 0.300 ms | 0.118 ms | 2.5x |
+| `lt_hdpc_deferred` 1000 | 0.787 ms | 0.355 ms | 2.2x |
+| `lt_hdpc_deferred` 4000 | 10.244 ms | 5.027 ms | 2.0x |
+| `lt_hdpc_deferred` 56403 | 112.472 ms | 56.712 ms | 2.0x |
+| `lt_hdpc_eager` 1000 | 34.701 ms | 0.903 ms | 38x |
+
+What is left in a replay is back-substitution, the recorded payload
+operations, the dense solve, and the consistency check — the phases that
+read payload bytes. The ratio is therefore a direct measurement of how
+much of a solve is coefficient work: half of it at max `K`, and all but
+3% of it on a dense band eliminated eagerly.
+
+Reuse is opt-in through `resolve_into`, not implicit in `solve_into`: an
+implicit cache would make every benchmark that re-solves one system in a
+loop — including this file's own shapes — measure the replay instead of
+the solve.
+
+### Rejected in this round
+
+| Candidate | Result |
+| --- | --- |
+| Single-pass weight-two tie-break (seed, union, and select fused; per-component smallest edge index carried through the union) | Symbol share 9.4% → 8.5%, consumer flat, synthetic −2.2% to +2.8% with the deferred and eager shapes worse. The pass count is not the cost; the union-find's random access into the column-wide arrays is. Host-dependent — see the second-host section below — and reverted |
+| Shared merge scratch for widened rows, result copied back into the row | +8% on `lt_hdpc_eager`: the copy is the full row on every merge |
+| Shared merge scratch swapped, capacity restored to a high-water mark | +3.7 to +5.8% on `lt_hdpc_eager` |
+| Per-row merge buffers behind a `Box` | +18.7% on `lt_hdpc_eager` |
+| Per-row merge buffers in a solver-owned side table | Within ±1.6% of the shared scratch everywhere — the buffer's owner is not the variable |
+| Merge buffers inline in `Row` again (header back to 128 bytes) | Recovers the eager shape but costs 2.0–6.6% on the packed shapes, `lt_hdpc_deferred/56403` worst |
+| Padding `Row` back to 128 bytes with the shared scratch | No effect; the header size was not the eager cost either |
+
+The eager-shape sensitivity is resolved by the in-place subset merge, which
+removes the second buffer from that path entirely rather than arguing about
+where it should live.
+
+### What the profile says to do next
+
+With the setup allocations gone the leaving profile is again dominated by
+`run_into` itself, with `largest_component_edge` (~9%) and
+`eliminate_singleton` (~8%) behind it. Both are latency-bound on random
+access into column-wide arrays; the tie-break reject above is the evidence
+that restructuring its passes does not pay, and a decremental-connectivity
+structure that survives across weight-two steps is the only remaining shape
+of that candidate. It is schedule surgery, not a constant-factor patch.
+
+All suites green: `gfm`'s full matrix (default, all-features,
+no-default-features), clippy on both feature sets, the zero-allocation
+steady-state proof, and the `Ple` oracle and eager/deferred differential
+suites, extended with a replay-versus-fresh-solve differential and a
+matching-inconsistency test.
+
+### Second host: 12700K with isolated cores (2026-09-10)
+
+Every number above was reproduced on a second machine before the round was
+accepted: 12th Gen Core i7-12700K, CachyOS 7.2.3, rustc 1.98.1, cores 8–11
+isolated at boot (`isolcpus=domain,managed_irq,8-11 nohz_full=8-11
+rcu_nocbs=8-11 irqaffinity=0-7,12-19`), everything pinned to core 8. The
+drivers are the same single-shot binaries, built into the release profile
+with the bench profile's settings (`lto = "thin"`, one codegen unit), so
+the comparison is like for like without criterion in the loop.
+
+Isolation is worth what it costs: base against a byte-identical copy of
+itself sits inside **±0.7%** here, against ±1.3% on the Lunar Lake laptop.
+
+| Case | base | new | change (12700K) | change (258V) |
+| --- | ---: | ---: | ---: | ---: |
+| `raptor-q` prepare K=56403 | 202.2 ms | 182.8 ms | −9.6% | −8.4% |
+| `raptor-q` decode K=56403, 5% loss | 197.5 ms | 179.8 ms | −9.0% | −8.9% |
+| `lt_only` 1000 | 0.185 ms | 0.183 ms | −1.1% | −2.7% |
+| `lt_only` 5000 | 1.214 ms | 1.195 ms | −1.6% | −3.3% |
+| `lt_only` 20000 | 7.025 ms | 6.733 ms | −4.2% | −7.3% |
+| `lt_hdpc_deferred` 500 | 0.282 ms | 0.282 ms | 0.0% | −1.9% |
+| `lt_hdpc_deferred` 1000 | 0.761 ms | 0.765 ms | +0.5% | −0.5% |
+| `lt_hdpc_deferred` 4000 | 9.091 ms | 8.991 ms | −1.1% | −0.4% |
+| `lt_hdpc_deferred` 56403 | 99.131 ms | 94.566 ms | −4.6% | −3.8% |
+| `lt_hdpc_eager` 1000 | 60.683 ms | 32.582 ms | −46.3% | −52.0% |
+
+Same direction everywhere, and the two cases that move least here
+(`lt_hdpc_deferred` 500 and 1000, ±0.5%) were already inside the laptop's
+noise band. The consumer gain is slightly larger on the quiet host, which
+is where the allocator and cache-locality work should show most cleanly.
+
+Replay against full solve on the same host:
+
+| Case | full solve | replay | speedup |
+| --- | ---: | ---: | ---: |
+| `lt_only` 1000 | 0.190 ms | 0.049 ms | 3.9x |
+| `lt_only` 5000 | 1.257 ms | 0.373 ms | 3.4x |
+| `lt_only` 20000 | 6.807 ms | 2.312 ms | 2.9x |
+| `lt_hdpc_deferred` 500 | 0.284 ms | 0.118 ms | 2.4x |
+| `lt_hdpc_deferred` 1000 | 0.769 ms | 0.348 ms | 2.2x |
+| `lt_hdpc_deferred` 4000 | 9.010 ms | 4.443 ms | 2.0x |
+| `lt_hdpc_deferred` 56403 | 95.503 ms | 46.937 ms | 2.0x |
+| `lt_hdpc_eager` 1000 | 32.745 ms | 0.867 ms | 38x |
+
+#### The tie-break reject is host-dependent
+
+Rebuilt on top of the accepted state and measured against it on the
+isolated cores, three independent six-round runs:
+
+| Case | change |
+| --- | ---: |
+| `lt_only` 1000 | 0.0 to −1.7% |
+| `lt_only` 5000 | −4.4 to −5.0% |
+| `lt_only` 20000 | −0.4 to −0.8% |
+| `lt_hdpc_deferred` 500/1000/4000/56403 | −0.4 to +0.4% |
+| `lt_hdpc_eager` 1000 | +0.02% |
+
+So the fused tie-break is a repeatable ~5% win on one pure-LT shape on
+Raptor Lake and flat elsewhere, while on Lunar Lake the same binary pair
+measured −2.2% to +2.8% with the deferred and eager shapes on the losing
+side. A change that helps one microarchitecture's pure-LT peeling and
+costs another's banded shapes is not a portable win, and this crate keeps
+one code path. It stays rejected, now with the reason recorded as
+*host-dependent* rather than *no effect*.
