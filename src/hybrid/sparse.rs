@@ -45,13 +45,56 @@ pub(crate) struct Row<F: FieldKernels> {
     /// Bit-packed inactivated-column support of a packed row; unused
     /// (empty) once the row widens.
     pub frozen: Vec<u64>,
-    spare_cols: Vec<u32>,
-    spare_coeffs: Vec<F::Elem>,
     /// Whether every coefficient is one and the row still splits into the
     /// active list plus frozen words — the lazy-widening bit.
     pub binary: bool,
 }
 
+/// The merge buffers every row edit borrows.
+///
+/// A merge builds its result out of place, so it needs somewhere to put it.
+/// Holding that somewhere per row costs one allocation per row that ever
+/// merges and forty-eight bytes in every row header a probe touches; one
+/// shared pair costs a copy back into the row's own buffer, which is
+/// already sized for it.
+pub(crate) struct MergeScratch<F: FieldKernels> {
+    pub cols: Vec<u32>,
+    pub coeffs: Vec<F::Elem>,
+    /// The widest merge seen so far. A swap hands the row the scratch
+    /// buffer and takes the row's, so without a high-water mark the
+    /// scratch would shrink to whatever the last row happened to need and
+    /// grow again on the next wide one.
+    high_water: usize,
+}
+
+impl<F: FieldKernels> MergeScratch<F> {
+    pub(crate) const fn new() -> Self {
+        Self {
+            cols: Vec::new(),
+            coeffs: Vec::new(),
+            high_water: 0,
+        }
+    }
+
+    /// Restores the scratch buffers to the high-water capacity after a
+    /// swap handed their storage to a row. The swapped-in contents are
+    /// dead, so they are dropped first: a reserve over live entries would
+    /// copy them.
+    fn restore(&mut self, width: usize, with_coeffs: bool) {
+        self.high_water = self.high_water.max(width);
+        let want = self.high_water;
+        self.cols.clear();
+        if self.cols.capacity() < want {
+            self.cols.reserve(want);
+        }
+        if with_coeffs {
+            self.coeffs.clear();
+            if self.coeffs.capacity() < want {
+                self.coeffs.reserve(want);
+            }
+        }
+    }
+}
 impl<F: FieldKernels> Row<F> {
     /// A binary row: unit coefficients on `support` (assumed sorted, distinct,
     /// and all active — packing splits it later, in `prepare_work`).
@@ -60,8 +103,6 @@ impl<F: FieldKernels> Row<F> {
             cols: support,
             coeffs: Vec::new(),
             frozen: Vec::new(),
-            spare_cols: Vec::new(),
-            spare_coeffs: Vec::new(),
             binary: true,
         }
     }
@@ -73,8 +114,6 @@ impl<F: FieldKernels> Row<F> {
             cols: support,
             coeffs,
             frozen: Vec::new(),
-            spare_cols: Vec::new(),
-            spare_coeffs: Vec::new(),
             binary: false,
         }
     }
@@ -83,8 +122,6 @@ impl<F: FieldKernels> Row<F> {
             cols: Vec::new(),
             coeffs: Vec::new(),
             frozen: Vec::new(),
-            spare_cols: Vec::new(),
-            spare_coeffs: Vec::new(),
             binary: true,
         }
     }
@@ -162,10 +199,10 @@ impl<F: FieldKernels> Row<F> {
     /// Returns how many entries moved (the row's active-weight loss).
     pub(crate) fn freeze_from_list(&mut self, columns: &[u32], ordinals: &[u32]) -> usize {
         debug_assert!(self.binary);
-        self.spare_cols.clear();
         let mut moved = 0usize;
-        // Direct field access: the scan reads `cols` while the migration
-        // writes `frozen`, which are disjoint.
+        let mut kept = 0usize;
+        // The active list only loses entries here, so it compacts in place:
+        // `kept` never overtakes the read index.
         for index in 0..self.cols.len() {
             let col = self.cols[index];
             if columns.binary_search(&col).is_ok() {
@@ -177,14 +214,11 @@ impl<F: FieldKernels> Row<F> {
                 self.frozen[word] |= 1 << (ordinal % 64);
                 moved += 1;
             } else {
-                self.spare_cols.push(col);
+                self.cols[kept] = col;
+                kept += 1;
             }
         }
-        core::mem::swap(&mut self.cols, &mut self.spare_cols);
-        if self.spare_cols.capacity() < self.cols.len() {
-            self.spare_cols
-                .reserve(self.cols.len().saturating_sub(self.spare_cols.len()));
-        }
+        self.cols.truncate(kept);
         moved
     }
 
@@ -195,16 +229,14 @@ impl<F: FieldKernels> Row<F> {
             return false;
         }
         debug_assert!(self.coeffs.is_empty());
-        self.spare_cols.clear();
-        for (word, &bits) in self.frozen.iter().enumerate() {
-            let mut bits = bits;
+        for word in 0..self.frozen.len() {
+            let mut bits = self.frozen[word];
             while bits != 0 {
                 let bit = bits.trailing_zeros();
                 bits &= bits - 1;
-                self.spare_cols.push(frozen_cols[word * 64 + bit as usize]);
+                self.cols.push(frozen_cols[word * 64 + bit as usize]);
             }
         }
-        self.cols.append(&mut self.spare_cols);
         self.cols.sort_unstable();
         self.coeffs.resize(self.cols.len(), F::Elem::ONE);
         self.frozen.clear();
@@ -298,12 +330,13 @@ impl<F: FieldKernels> Row<F> {
         &mut self,
         src_cols: &[u32],
         src_frozen: &[u64],
+        scratch: &mut MergeScratch<F>,
         mut added: impl FnMut(u32),
         mut is_active: impl FnMut(u32) -> bool,
     ) -> usize {
         debug_assert!(self.binary);
         let mut active = 0usize;
-        self.spare_cols.clear();
+        scratch.cols.clear();
         let (mut i, mut j) = (0usize, 0usize);
         while i < self.cols.len() || j < src_cols.len() {
             let take_self =
@@ -318,35 +351,33 @@ impl<F: FieldKernels> Row<F> {
                 if is_active(self.cols[i]) {
                     active += 1;
                 }
-                self.spare_cols.push(self.cols[i]);
+                scratch.cols.push(self.cols[i]);
                 i += 1;
             } else {
                 if is_active(src_cols[j]) {
                     active += 1;
                 }
                 added(src_cols[j]);
-                self.spare_cols.push(src_cols[j]);
+                scratch.cols.push(src_cols[j]);
                 j += 1;
             }
         }
-        core::mem::swap(&mut self.cols, &mut self.spare_cols);
-        if self.spare_cols.capacity() < self.cols.len() {
-            self.spare_cols
-                .reserve(self.cols.len().saturating_sub(self.spare_cols.len()));
-        }
+        core::mem::swap(&mut self.cols, &mut scratch.cols);
+        scratch.restore(self.cols.len(), false);
         // Frozen half: bulk XOR over the shared ordinal space, then trim
         // words that fully cancelled.
         self.xor_frozen(src_frozen);
         active
     }
 
-    #[allow(clippy::type_complexity)]
+    #[allow(clippy::type_complexity, clippy::too_many_arguments)]
     pub(crate) fn axpy_coeffs_slices(
         &mut self,
         factor: F::Elem,
         src_cols: &[u32],
         src_coeffs: &[F::Elem],
         src_binary: bool,
+        scratch: &mut MergeScratch<F>,
         mut added: impl FnMut(u32),
         mut is_active: impl FnMut(u32) -> bool,
     ) -> (bool, usize) {
@@ -355,8 +386,42 @@ impl<F: FieldKernels> Row<F> {
             "packed rows take axpy_xor_parts or widen first"
         );
         let mut active = 0usize;
-        self.spare_cols.clear();
-        self.spare_coeffs.clear();
+        // A source whose columns the destination already carries adds
+        // nothing to the support: the update runs in place, compacting
+        // over the entries that cancel. This is every merge between two
+        // full-width rows, the shape a dense band degenerates to, and it
+        // halves the traffic the out-of-place merge pays.
+        if contains_all(&self.cols, src_cols) {
+            let mut kept = 0usize;
+            let mut j = 0usize;
+            for i in 0..self.cols.len() {
+                let column = self.cols[i];
+                let mut value = self.coeffs[i];
+                if j < src_cols.len() && src_cols[j] == column {
+                    let term = if src_binary {
+                        factor
+                    } else {
+                        factor.mul(src_coeffs[j])
+                    };
+                    value = value.add(term);
+                    j += 1;
+                }
+                if !value.is_zero() {
+                    if is_active(column) {
+                        active += 1;
+                    }
+                    self.cols[kept] = column;
+                    self.coeffs[kept] = value;
+                    kept += 1;
+                }
+            }
+            self.cols.truncate(kept);
+            self.coeffs.truncate(kept);
+            return (false, active);
+        }
+        let (merged_cols, merged_coeffs) = (&mut scratch.cols, &mut scratch.coeffs);
+        merged_cols.clear();
+        merged_coeffs.clear();
         let (mut i, mut j) = (0usize, 0usize);
         while i < self.cols.len() || j < src_cols.len() {
             let take_self =
@@ -374,8 +439,8 @@ impl<F: FieldKernels> Row<F> {
                     if is_active(self.cols[i]) {
                         active += 1;
                     }
-                    self.spare_cols.push(self.cols[i]);
-                    self.spare_coeffs.push(value);
+                    merged_cols.push(self.cols[i]);
+                    merged_coeffs.push(value);
                 }
                 i += 1;
                 j += 1;
@@ -383,8 +448,8 @@ impl<F: FieldKernels> Row<F> {
                 if is_active(self.cols[i]) {
                     active += 1;
                 }
-                self.spare_cols.push(self.cols[i]);
-                self.spare_coeffs.push(self.coeffs[i]);
+                merged_cols.push(self.cols[i]);
+                merged_coeffs.push(self.coeffs[i]);
                 i += 1;
             } else {
                 let value = if src_binary {
@@ -397,22 +462,15 @@ impl<F: FieldKernels> Row<F> {
                         active += 1;
                     }
                     added(src_cols[j]);
-                    self.spare_cols.push(src_cols[j]);
-                    self.spare_coeffs.push(value);
+                    merged_cols.push(src_cols[j]);
+                    merged_coeffs.push(value);
                 }
                 j += 1;
             }
         }
-        core::mem::swap(&mut self.cols, &mut self.spare_cols);
-        core::mem::swap(&mut self.coeffs, &mut self.spare_coeffs);
-        if self.spare_cols.capacity() < self.cols.len() {
-            self.spare_cols
-                .reserve(self.cols.len().saturating_sub(self.spare_cols.len()));
-        }
-        if self.spare_coeffs.capacity() < self.coeffs.len() {
-            self.spare_coeffs
-                .reserve(self.coeffs.len().saturating_sub(self.coeffs.len()));
-        }
+        core::mem::swap(&mut self.cols, &mut scratch.cols);
+        core::mem::swap(&mut self.coeffs, &mut scratch.coeffs);
+        scratch.restore(self.cols.len(), true);
         (false, active)
     }
 
@@ -436,4 +494,23 @@ impl<F: FieldKernels> core::fmt::Debug for Row<F> {
             .field("binary", &self.binary)
             .finish_non_exhaustive()
     }
+}
+
+/// Whether every column of the sorted list `src` appears in the sorted
+/// list `dst`.
+fn contains_all(dst: &[u32], src: &[u32]) -> bool {
+    if src.len() > dst.len() {
+        return false;
+    }
+    let mut i = 0usize;
+    for &column in src {
+        while i < dst.len() && dst[i] < column {
+            i += 1;
+        }
+        if i == dst.len() || dst[i] != column {
+            return false;
+        }
+        i += 1;
+    }
+    true
 }

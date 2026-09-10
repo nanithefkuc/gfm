@@ -7,6 +7,7 @@
 //! to a full dense solve over the same system — inactivation is an ordering,
 //! not a different computation.
 
+mod colindex;
 mod deferred;
 mod schedule;
 mod solve;

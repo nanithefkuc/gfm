@@ -852,3 +852,66 @@ fn more_than_lane_width_deferred_rows_still_solve() {
         }
     }
 }
+
+/// A payload-only re-solve must be the solve it replaces: same rank, same
+/// determinedness, same bytes — including through a deferred dense band.
+#[test]
+fn replayed_solve_matches_a_fresh_solve() {
+    let (n, band) = (120usize, 12usize);
+    let (sys, initial, _x) = dense_band_system(n, band, 0x4E9A_0011);
+    let y = random_solution::<Gf8B>(n, sys.sym, 0x4E9A_0022);
+    let mut updated = System::<Gf8B>::new(n, sys.sym);
+    for (support, coeffs, _) in &sys.rows {
+        updated.push_consistent(support.clone(), coeffs.clone(), &y);
+    }
+
+    let mut solver = build_hybrid_deferring(&sys, band, &initial);
+    let mut values = Matrix::<Gf8B>::zeros(n, sys.sym).unwrap();
+    let mut determined = vec![false; n];
+    solver.solve_into(&mut values, &mut determined).unwrap();
+    for (row, (_, _, rhs)) in updated.rows.iter().enumerate() {
+        solver.replace_rhs(row, rhs);
+    }
+    let replayed = solver.resolve_into(&mut values, &mut determined).unwrap();
+
+    let expected = build_hybrid_deferring(&updated, band, &initial)
+        .solve()
+        .unwrap();
+    assert_eq!(replayed, expected.rank());
+    for column in 0..n {
+        assert_eq!(determined[column], expected.is_determined(column));
+        assert_eq!(values.row(column), expected.value(column));
+    }
+}
+
+/// The replay path verifies the rows outside the independent set against
+/// the new payloads, so it rejects exactly what a fresh solve rejects.
+#[test]
+fn replayed_solve_reports_the_same_inconsistency() {
+    let (n, band) = (60usize, 6usize);
+    let (mut sys, initial, _x) = dense_band_system(n, band, 0x4E9A_0033);
+    // A duplicate of the first equation: redundant while its payload
+    // agrees, contradictory the moment it does not.
+    let (support, coeffs, _) = sys.rows[0].clone();
+    sys.rows.push((support, coeffs, sys.rows[0].2.clone()));
+    let duplicate = sys.rows.len() - 1;
+
+    let mut solver = build_hybrid_deferring(&sys, band, &initial);
+    let mut values = Matrix::<Gf8B>::zeros(n, sys.sym).unwrap();
+    let mut determined = vec![false; n];
+    solver.solve_into(&mut values, &mut determined).unwrap();
+
+    let mut corrupt = sys.rows[duplicate].2.clone();
+    corrupt[0] ^= 0xFF;
+    solver.replace_rhs(duplicate, &corrupt);
+    let replayed = solver.resolve_into(&mut values, &mut determined);
+
+    sys.rows[duplicate].2 = corrupt;
+    let fresh = build_hybrid_deferring(&sys, band, &initial).solve();
+    match (replayed, fresh) {
+        (Err(SolveError::Inconsistent { row: left }), Err(SolveError::Inconsistent { row })) => {
+            assert_eq!(left, row);
+        }
+        other => panic!("expected matching inconsistency, got {other:?}"),
+    }
+}

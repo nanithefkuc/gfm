@@ -24,9 +24,10 @@ use alloc::vec::Vec;
 use super::{DenseRow, DenseRows};
 use crate::SolveError;
 use crate::dense::{Matrix, Ple, PleScratch, SmallMatrix, SolveScratch};
+use crate::hybrid::colindex::ColumnIndex;
 use crate::hybrid::deferred::DeferredLog;
 use crate::hybrid::schedule::Components;
-use crate::hybrid::sparse::{NOT_FROZEN, Row};
+use crate::hybrid::sparse::{MergeScratch, NOT_FROZEN, Row};
 macro_rules! dispatch_small_solve {
     ($solver:expr, $order:expr; $($k:literal),+ $(,)?) => {
         match $order {
@@ -86,6 +87,40 @@ pub struct SolveStats {
     pub deferred_rows: usize,
     /// System rank.
     pub rank: usize,
+}
+
+/// What the coefficient analysis leaves for the payload pass: everything a
+/// re-solve over the same equations does not have to recompute.
+struct Analysis {
+    /// Whether the cached analysis still describes the pushed equations.
+    valid: bool,
+    /// Counters the analysis produced.
+    stats: SolveStats,
+    /// Rank of the residual dense block.
+    dense_rank: usize,
+    /// Whether the dense solve takes the compact fixed-order path.
+    use_small: bool,
+    /// Whether the dense solve reads the rank decomposition directly.
+    reuse_rank: bool,
+}
+
+impl Analysis {
+    const fn new() -> Self {
+        Self {
+            valid: false,
+            stats: SolveStats {
+                inactivations: 0,
+                initial_inactivations: 0,
+                row_ops: 0,
+                widenings: 0,
+                deferred_rows: 0,
+                rank: 0,
+            },
+            dense_rank: 0,
+            use_small: false,
+            reuse_rank: false,
+        }
+    }
 }
 
 /// The recovered unknowns.
@@ -154,7 +189,13 @@ pub struct Hybrid<F: FieldKernels> {
     inactive_ord: Vec<u32>,
     weight_bucket: Vec<Vec<u32>>,
     bucket_pos: Vec<u32>,
-    col_rows: Vec<Vec<u32>>,
+    col_rows: ColumnIndex,
+    /// The out-of-place buffers a packed row's merge borrows.
+    merge: MergeScratch<F>,
+    /// Whether a pushed row has invalidated the column index's span layout.
+    index_layout_dirty: bool,
+    /// What the coefficient analysis left for the payload pass.
+    analysis: Analysis,
     row_gen: Vec<u32>,
     generation: u32,
     deferred_rhs_ops: Vec<(u32, u32, F::Elem)>,
@@ -165,7 +206,11 @@ pub struct Hybrid<F: FieldKernels> {
     release_chunk_start: usize,
     release_chunk_end: usize,
     alive: Vec<bool>,
-    pivots: Vec<(usize, u32)>,
+    /// Pivot row, pivot column, and the inverse of that row's pivot
+    /// coefficient — read back by release substitution, back-substitution,
+    /// and the kernel lift, none of which can search for it more cheaply
+    /// than the pivot loop already knew it.
+    pivots: Vec<(usize, u32, F::Elem)>,
     inactive: Vec<u32>,
     initial_inactive: Vec<u32>,
     active_weight: Vec<usize>,
@@ -268,7 +313,10 @@ impl<F: FieldKernels> Hybrid<F> {
             deferred: Vec::new(),
             weight_bucket: Vec::new(),
             bucket_pos: Vec::new(),
-            col_rows: Vec::new(),
+            col_rows: ColumnIndex::new(),
+            merge: MergeScratch::new(),
+            index_layout_dirty: true,
+            analysis: Analysis::new(),
             row_gen: Vec::new(),
             generation: 0,
             release_lane: Vec::new(),
@@ -336,6 +384,8 @@ impl<F: FieldKernels> Hybrid<F> {
         self.rows.push(Row::binary(support.to_vec()));
         self.rhs.extend_from_slice(rhs);
         self.deferred.push(false);
+        self.index_layout_dirty = true;
+        self.analysis.valid = false;
     }
 
     /// Adds a field-valued equation with `coeffs` parallel to `support`.
@@ -351,6 +401,8 @@ impl<F: FieldKernels> Hybrid<F> {
             .push(Row::field(support.to_vec(), coeffs.to_vec()));
         self.rhs.extend_from_slice(rhs);
         self.deferred.push(false);
+        self.index_layout_dirty = true;
+        self.analysis.valid = false;
     }
 
     /// Adds a field-valued equation that is **deferred**: excluded from
@@ -374,6 +426,27 @@ impl<F: FieldKernels> Hybrid<F> {
             .push(Row::field(support.to_vec(), coeffs.to_vec()));
         self.rhs.extend_from_slice(rhs);
         self.deferred.push(true);
+        self.index_layout_dirty = true;
+        self.analysis.valid = false;
+    }
+
+    /// Replaces the payload of an already-pushed equation, leaving its
+    /// coefficients alone.
+    ///
+    /// The schedule, the reduced coefficients, and the dense factorization
+    /// depend only on the coefficients, so a solve after nothing but
+    /// `replace_rhs` calls replays that analysis instead of recomputing it:
+    /// the same system with new payloads costs the payload pass alone.
+    /// Pushing a row invalidates the analysis and the next solve rebuilds
+    /// it.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `row` is out of range or `rhs` is not `sym_len` bytes.
+    pub fn replace_rhs(&mut self, row: usize, rhs: &[u8]) {
+        assert!(row < self.rows.len(), "row out of range");
+        assert_eq!(rhs.len(), self.sym_len, "payload length");
+        self.rhs[row * self.sym_len..(row + 1) * self.sym_len].copy_from_slice(rhs);
     }
     /// Appends every equation exposed by `rows`, preserving source order.
     ///
@@ -421,7 +494,7 @@ impl<F: FieldKernels> Hybrid<F> {
         let mut values =
             Matrix::<F>::zeros(self.cols, self.sym_cols).expect("validated hybrid output geometry");
         let mut determined = vec![false; self.cols];
-        let stats = self.run_into(true, &mut values, &mut determined)?;
+        let stats = self.run_into(true, false, &mut values, &mut determined)?;
         Ok(Solution {
             values,
             determined,
@@ -447,7 +520,33 @@ impl<F: FieldKernels> Hybrid<F> {
         values: &mut Matrix<F>,
         determined: &mut [bool],
     ) -> Result<usize, SolveError> {
-        Ok(self.run_into(true, values, determined)?.rank)
+        Ok(self.run_into(true, false, values, determined)?.rank)
+    }
+
+    /// Solves reusing the analysis of the previous solve: the schedule, the
+    /// reduced coefficients, the pivot order, and the dense factorization
+    /// are all functions of the pushed *coefficients*, so a system whose
+    /// payloads changed through [`Self::replace_rhs`] only needs the
+    /// payload pass.
+    ///
+    /// The answer is the answer [`Self::solve_into`] would give. When no
+    /// usable analysis is cached — nothing solved yet, or a row pushed
+    /// since — this falls back to the full solve and caches the analysis
+    /// for the next call.
+    ///
+    /// # Errors
+    ///
+    /// [`SolveError::Inconsistent`] if the system has no solution.
+    ///
+    /// # Panics
+    ///
+    /// Panics under the same conditions as [`Self::solve_into`].
+    pub fn resolve_into(
+        &mut self,
+        values: &mut Matrix<F>,
+        determined: &mut [bool],
+    ) -> Result<usize, SolveError> {
+        Ok(self.run_into(true, true, values, determined)?.rank)
     }
 
     /// Solves and reports the schedule/op counters. `defer` selects the
@@ -468,7 +567,7 @@ impl<F: FieldKernels> Hybrid<F> {
         let mut values =
             Matrix::<F>::zeros(self.cols, self.sym_cols).expect("validated hybrid output geometry");
         let mut determined = vec![false; self.cols];
-        let stats = self.run_into(defer, &mut values, &mut determined)?;
+        let stats = self.run_into(defer, false, &mut values, &mut determined)?;
         Ok((
             Solution {
                 values,
@@ -495,7 +594,7 @@ impl<F: FieldKernels> Hybrid<F> {
         values: &mut Matrix<F>,
         determined: &mut [bool],
     ) -> Result<SolveStats, SolveError> {
-        self.run_into(defer, values, determined)
+        self.run_into(defer, false, values, determined)
     }
 
     fn prepare_work(&mut self) {
@@ -632,17 +731,31 @@ impl<F: FieldKernels> Hybrid<F> {
     /// column.
     fn rebuild_column_index(&mut self) {
         let n = self.cols;
-        self.col_rows.resize(n, Vec::new());
-        self.col_rows.truncate(n);
-        for column in &mut self.col_rows {
-            column.clear();
+        // The listed supports are a function of the pushed rows alone, so a
+        // second solve over the same system reuses the span layout — and
+        // the spans a merge grew last time, which is where they wanted to
+        // be. Only a pushed row invalidates it.
+        if self.index_layout_dirty || !self.col_rows.covers(n) {
+            self.col_rows.begin(n);
+            for r in 0..self.rows.len() {
+                if !self.alive[r] {
+                    continue;
+                }
+                for &column in &self.work_rows[r].cols {
+                    self.col_rows.count(column as usize);
+                }
+            }
+            self.col_rows.finish_counts();
+            self.index_layout_dirty = false;
+        } else {
+            self.col_rows.clear();
         }
         for r in 0..self.rows.len() {
             if !self.alive[r] {
                 continue;
             }
             for &column in &self.work_rows[r].cols {
-                self.col_rows[column as usize].push(r as u32);
+                self.col_rows.place(column as usize, r as u32);
             }
         }
     }
@@ -756,22 +869,36 @@ impl<F: FieldKernels> Hybrid<F> {
         )
     }
 
-    #[allow(clippy::too_many_lines, clippy::needless_range_loop)]
+    /// Solves, reusing the cached coefficient analysis when the pushed
+    /// equations have not changed since the last solve.
     fn run_into(
         &mut self,
         defer: bool,
+        reuse: bool,
         values: &mut Matrix<F>,
         determined: &mut [bool],
     ) -> Result<SolveStats, SolveError> {
-        let (n, m) = (self.cols, self.rows.len());
+        let n = self.cols;
         assert_eq!(values.rows(), n, "solution row count");
         assert_eq!(values.cols(), self.sym_cols, "solution column count");
         assert_eq!(determined.len(), n, "determinedness length");
-        self.prepare_work();
-        for row in 0..n {
-            values.row_mut(row).fill(0);
+        // The schedule, the reduced coefficients, the pivot list, the dense
+        // factorization, and the recorded payload operations are all
+        // functions of the pushed equations' *coefficients*. A solve after
+        // nothing but [`Self::replace_rhs`] replays them instead of
+        // recomputing them; a pushed row invalidates the lot.
+        let fresh = !(reuse && self.analysis.valid && defer);
+        if fresh {
+            self.analyze(defer);
+            self.analysis.valid = defer;
         }
-        determined.fill(false);
+        self.apply(defer, !fresh, values, determined)
+    }
+
+    #[allow(clippy::too_many_lines, clippy::needless_range_loop)]
+    fn analyze(&mut self, defer: bool) {
+        let (n, m) = (self.cols, self.rows.len());
+        self.prepare_work();
         let mut stats = SolveStats::default();
 
         // Sparse phase. Inactivation is a separate step: once a weight-r row
@@ -852,7 +979,6 @@ impl<F: FieldKernels> Hybrid<F> {
             self.col[pivot_col as usize] = Col::Pivoted;
             self.alive[pivot_row] = false;
             self.bucket_move(pivot_row, 0);
-            self.pivots.push((pivot_row, pivot_col));
 
             self.pivot_cols.clear();
             self.pivot_coeffs.clear();
@@ -869,6 +995,7 @@ impl<F: FieldKernels> Hybrid<F> {
             }
             let pivot_binary = self.work_rows[pivot_row].binary;
             let pivot_inv = self.work_rows[pivot_row].get(pivot_col, NOT_FROZEN).inv();
+            self.pivots.push((pivot_row, pivot_col, pivot_inv));
             // A packed pivot whose active list is the pivot column alone
             // takes the fused path: its destinations need one search, not a
             // full support merge. Weight-one selection makes this the shape
@@ -879,9 +1006,9 @@ impl<F: FieldKernels> Hybrid<F> {
             self.generation += 1;
             let generation = self.generation;
             let column = pivot_col as usize;
-            let listed = self.col_rows[column].len();
+            let listed = self.col_rows.len(column);
             for k in 0..listed {
-                let r = self.col_rows[column][k] as usize;
+                let r = self.col_rows.entry(column, k) as usize;
                 if self.row_gen[r] == generation {
                     continue; // duplicate listing (re-added entry)
                 }
@@ -909,11 +1036,12 @@ impl<F: FieldKernels> Hybrid<F> {
                         self.work_rows[r].axpy_xor_parts(
                             &self.pivot_cols,
                             &self.pivot_frozen,
+                            &mut self.merge,
                             |added| {
                                 // The merge widened this row's support; index
                                 // the new columns so their future pivots find
                                 // it.
-                                self.col_rows[added as usize].push(r as u32);
+                                self.col_rows.push(added as usize, r as u32);
                             },
                             |c| self.col[c as usize] == Col::Active,
                         )
@@ -940,8 +1068,9 @@ impl<F: FieldKernels> Hybrid<F> {
                             src_cols,
                             &self.pivot_coeffs,
                             pivot_binary,
+                            &mut self.merge,
                             |added| {
-                                self.col_rows[added as usize].push(r as u32);
+                                self.col_rows.push(added as usize, r as u32);
                             },
                             |c| self.col[c as usize] == Col::Active,
                         );
@@ -1022,35 +1151,24 @@ impl<F: FieldKernels> Hybrid<F> {
                 .map(|&i| self.residual[i]),
         );
 
-        for &(row, _) in &self.pivots {
+        for &(row, _, _) in &self.pivots {
             self.needed[row] = true;
         }
         for &row in &self.basis_rows {
             self.needed[row] = true;
         }
-        if defer {
-            for index in 0..self.log.ops().len() {
-                let op = self.log.ops()[index];
-                if self.needed[op.dst as usize] {
-                    self.rhs_axpy(op.dst as usize, op.src as usize, op.factor);
-                    stats.row_ops += 1;
-                }
-            }
-        }
-        // Deferred rows' right-hand sides combine the (now final) pivot
-        // row payloads with the factors collected at release.
-        for index in 0..self.deferred_rhs_ops.len() {
-            let (dst, src, factor) = self.deferred_rhs_ops[index];
-            self.rhs_axpy(dst as usize, src as usize, factor);
-            stats.row_ops += 1;
-        }
-
         // Solve only the independent residual rows over the inactive columns.
         // The compact path wins through its maximum supported order in three
         // pinned runs; the general decomposition handles wider, deficient, or
         // rectangular blocks.
         let use_small = F::BYTES == 1 && g <= 64 && self.basis_rows.len() == g;
-        if !use_small {
+        // A full-row-rank residual block *is* its own independent subset, so
+        // the rank decomposition already factors exactly the rows the solve
+        // needs: assembling and eliminating them a second time reproduces it
+        // entry for entry. Only a residual with dependent rows needs the
+        // narrower matrix.
+        let reuse_rank = dense_rank == self.residual.len();
+        if !use_small && !reuse_rank {
             let solve_ple = Self::prepare_ple(
                 &mut self.solve_ple,
                 self.basis_rows.len(),
@@ -1069,6 +1187,53 @@ impl<F: FieldKernels> Hybrid<F> {
             }
             solve_ple.redecompose(&mut self.ple_scratch);
             debug_assert_eq!(solve_ple.rank(), dense_rank);
+        }
+        self.analysis.dense_rank = dense_rank;
+        self.analysis.use_small = use_small;
+        self.analysis.reuse_rank = reuse_rank;
+        self.analysis.stats = stats;
+    }
+
+    /// Applies the payloads through the cached analysis: the recorded row
+    /// operations, the dense solve, back-substitution, the kernel lift, and
+    /// the consistency check of every row outside the independent set.
+    #[allow(clippy::too_many_lines, clippy::needless_range_loop)]
+    fn apply(
+        &mut self,
+        defer: bool,
+        replayed: bool,
+        values: &mut Matrix<F>,
+        determined: &mut [bool],
+    ) -> Result<SolveStats, SolveError> {
+        let (n, g) = (self.cols, self.inactive.len());
+        let dense_rank = self.analysis.dense_rank;
+        let (use_small, reuse_rank) = (self.analysis.use_small, self.analysis.reuse_rank);
+        let mut stats = self.analysis.stats;
+        for row in 0..n {
+            values.row_mut(row).fill(0);
+        }
+        determined.fill(false);
+        if replayed {
+            // The analysis left the working payloads reduced; a replay
+            // starts them over from the pushed right-hand sides.
+            self.work_rhs.clear();
+            self.work_rhs.extend_from_slice(&self.rhs);
+        }
+        if defer {
+            for index in 0..self.log.ops().len() {
+                let op = self.log.ops()[index];
+                if self.needed[op.dst as usize] {
+                    self.rhs_axpy(op.dst as usize, op.src as usize, op.factor);
+                    stats.row_ops += 1;
+                }
+            }
+        }
+        // Deferred rows' right-hand sides combine the (now final) pivot
+        // row payloads with the factors collected at release.
+        for index in 0..self.deferred_rhs_ops.len() {
+            let (dst, src, factor) = self.deferred_rhs_ops[index];
+            self.rhs_axpy(dst as usize, src as usize, factor);
+            stats.row_ops += 1;
         }
         {
             let dense_rhs =
@@ -1090,7 +1255,13 @@ impl<F: FieldKernels> Hybrid<F> {
                 62, 63, 64
             )?;
         } else {
-            self.solve_ple.as_ref().expect("prepared").solve_into(
+            let dense_ple = if reuse_rank {
+                self.rank_ple.as_ref()
+            } else {
+                self.solve_ple.as_ref()
+            }
+            .expect("prepared");
+            dense_ple.solve_into(
                 self.dense_rhs.as_ref().expect("prepared"),
                 self.x_inactive.as_mut().expect("prepared"),
                 &mut self.solve_scratch,
@@ -1125,7 +1296,7 @@ impl<F: FieldKernels> Hybrid<F> {
         // ordinal scratch is a persistent field: a solve allocates nothing
         // once its first pivots have sized it.
         let dense_region = self.x_inactive.as_ref().expect("prepared").region();
-        for &(row, pivot_col) in self.pivots.iter().rev() {
+        for &(row, pivot_col, pivot_inv) in self.pivots.iter().rev() {
             values
                 .row_mut(pivot_col as usize)
                 .copy_from_slice(self.rhs_row(row));
@@ -1162,10 +1333,8 @@ impl<F: FieldKernels> Hybrid<F> {
                     crate::row_ops::mul_add::<F>(dst, coefficient, src);
                 });
             }
-            let ordinal = self.frozen_ord[pivot_col as usize];
-            let pivot = self.work_rows[row].get(pivot_col, ordinal);
-            if !pivot.is_one() {
-                ops::mul_assign::<F>(values.row_mut(pivot_col as usize), pivot.inv());
+            if !pivot_inv.is_one() {
+                ops::mul_assign::<F>(values.row_mut(pivot_col as usize), pivot_inv);
             }
         }
 
@@ -1178,10 +1347,13 @@ impl<F: FieldKernels> Hybrid<F> {
             determined.fill(true);
         } else {
             Self::prepare_matrix(&mut self.dense_kernel, g, free);
-            self.solve_ple
-                .as_ref()
-                .expect("prepared")
-                .kernel_into(self.dense_kernel.as_mut().expect("prepared"));
+            let dense_ple = if reuse_rank {
+                self.rank_ple.as_ref()
+            } else {
+                self.solve_ple.as_ref()
+            }
+            .expect("prepared");
+            dense_ple.kernel_into(self.dense_kernel.as_mut().expect("prepared"));
             Self::prepare_matrix(&mut self.dependencies, n, free);
             {
                 let dense_kernel = self.dense_kernel.as_ref().expect("prepared");
@@ -1191,7 +1363,7 @@ impl<F: FieldKernels> Hybrid<F> {
                         .row_mut(column as usize)
                         .copy_from_slice(dense_kernel.row(j));
                 }
-                for &(row, pivot_col) in self.pivots.iter().rev() {
+                for &(row, pivot_col, pivot_inv) in self.pivots.iter().rev() {
                     {
                         let work_row = &self.work_rows[row];
                         let frozen_cols = &self.frozen_cols;
@@ -1204,10 +1376,8 @@ impl<F: FieldKernels> Hybrid<F> {
                             crate::row_ops::mul_add::<F>(dst, coefficient, src);
                         });
                     }
-                    let ordinal = self.frozen_ord[pivot_col as usize];
-                    let pivot = self.work_rows[row].get(pivot_col, ordinal);
-                    if !pivot.is_one() {
-                        ops::mul_assign::<F>(dependencies.row_mut(pivot_col as usize), pivot.inv());
+                    if !pivot_inv.is_one() {
+                        ops::mul_assign::<F>(dependencies.row_mut(pivot_col as usize), pivot_inv);
                     }
                 }
                 #[cfg(debug_assertions)]
@@ -1315,9 +1485,9 @@ impl<F: FieldKernels> Hybrid<F> {
         let mut seen = core::mem::take(&mut self.inactivated_touch);
         seen.clear();
         for &column in &self.inactivated_cols {
-            let listed = self.col_rows[column as usize].len();
+            let listed = self.col_rows.len(column as usize);
             for k in 0..listed {
-                let r = self.col_rows[column as usize][k] as usize;
+                let r = self.col_rows.entry(column as usize, k) as usize;
                 if self.row_gen[r] == generation || !self.alive[r] {
                     continue;
                 }
@@ -1485,13 +1655,11 @@ impl<F: FieldKernels> Hybrid<F> {
     /// order, into the inactive-space accumulator.
     fn substitute_release_lanes(&mut self, lanes: &[usize; RELEASE_LANES], deferred_count: usize) {
         let mut live_lanes = [0usize; RELEASE_LANES];
-        for &(pivot_row, pivot_col) in &self.pivots {
+        for &(pivot_row, pivot_col, pivot_inv) in &self.pivots {
             let mask = self.release_mask[pivot_col as usize];
             if mask == 0 {
                 continue;
             }
-            let pivot_value = self.work_rows[pivot_row].get(pivot_col, NOT_FROZEN);
-            let pivot_inv = pivot_value.inv();
             // Factors are staged over the full lane width with zeros on the
             // dead lanes: a zero factor contributes nothing, so a packed
             // pivot's substitution becomes one whole-vector addition per
