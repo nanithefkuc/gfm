@@ -35,7 +35,7 @@ fgf = { git = "https://github.com/nanithefkuc/fgf", rev = "d5a1fa5f4cf39e666725f
 # The poly-ring polynomial ring supplies the master/quotient algebra for the
 # Vandermonde inverse. Pinned by rev, the same revision syndrome-engine pins,
 # so one copy resolves across the ecosystem.
-poly-ring = { git = "https://github.com/nanithefkuc/poly-ring", rev = "091164ee4e547c54012a3cab994813c3c825d70c", default-features = false }
+poly-ring = { git = "https://github.com/nanithefkuc/poly-ring", rev = "7ba4370e277dee771af7e33a85a8ce627b9fba15", default-features = false }
 rayon = { version = "1.11", optional = true }
 
 [dev-dependencies]

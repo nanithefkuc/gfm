@@ -31,6 +31,28 @@
    twins compiled, record the ratio.
 10. **Oracles stay independent.** An implementation is never its own test.
 
+## Tooling
+
+`just validate` is the pull-request gate; the shared recipe surface is
+documented once in the umbrella's root `AGENTS.md`.
+
+- **`TIERS = v3_gfni_crypto v3 v2 v1 scalar`** — five, one more than the kernel
+  crates declare, because the `v1` x86-64 baseline is a distinct path for the
+  `fgf` row operations that elimination and scaling drive. `gfm` owns no
+  kernels of its own; it owns the aligned row layout they run over, which is
+  why the sweep is worth its runtime. `just test-tiers` and `just cover` re-run
+  pinned to each of the five.
+- **`MIRI` is empty** — non-negotiable 2, no `unsafe` at the crate root, so
+  `just unsafe-check` reports that and skips. `COV_IGNORE` is empty: every line
+  counts toward the 95% gate.
+- **Bench targets:** `cauchy_inverse`, `hybrid`, `rfc_scale`, `tuning`,
+  `parallel`, `competitors` — `just bench-save hybrid`, then `just bench
+  hybrid`. `tuning` needs `internals` and `parallel` needs `parallel` +
+  `internals`; the bench recipes pass `--all-features`, so both build.
+- `justfile` is a byte-identical vendored copy — editing it here fails the
+  umbrella's `just drift` check. Crate-specific values and recipes go in
+  `crate.just`.
+
 ## Working here
 
 - Edition 2024, MSRV 1.89. No toolchain pin; select `+1.89.0` explicitly for
