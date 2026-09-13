@@ -71,7 +71,7 @@ fn steady_state_ops_do_not_allocate() {
     {
         let mut v = m.as_view_mut();
         v.swap_rows(3, 11);
-        v.set(5, 6, fgf::gf8b::Elem(0x5A));
+        v.set(5, 6, fgf::gf8b::Elem::from_raw(0x5A));
         black_box(v.get(5, 6));
         black_box(v.row(7));
         black_box(v.row_mut(8));

@@ -176,18 +176,22 @@ mod flint {
             state = state
                 .wrapping_mul(6_364_136_223_846_793_005)
                 .wrapping_add(1);
-            let base = fgf::gf8b::Elem(x).mul(fgf::gf8b::Elem(y));
+            let base = fgf::gf8b::Elem::from_raw(x).mul(fgf::gf8b::Elem::from_raw(y));
             let wide = Gf16::read(&[x, 0]).mul(Gf16::read(&[y, 0]));
             let mut buf = [0u8; 2];
             Gf16::write(&mut buf, wide);
-            assert_eq!(buf, [base.0, 0], "GF(2^16) subfield multiplies as GF(2^8)");
+            assert_eq!(
+                buf,
+                [base.to_raw(), 0],
+                "GF(2^16) subfield multiplies as GF(2^8)"
+            );
             let wide =
                 Gf64::read(&[x, 0, 0, 0, 0, 0, 0, 0]).mul(Gf64::read(&[y, 0, 0, 0, 0, 0, 0, 0]));
             let mut buf = [0u8; 8];
             Gf64::write(&mut buf, wide);
             assert_eq!(
                 buf,
-                [base.0, 0, 0, 0, 0, 0, 0, 0],
+                [base.to_raw(), 0, 0, 0, 0, 0, 0, 0],
                 "GF(2^64) subfield multiplies as GF(2^8)"
             );
         }

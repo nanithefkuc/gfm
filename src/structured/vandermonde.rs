@@ -25,7 +25,7 @@ use alloc::vec::Vec;
 use fgf::FieldKernels;
 use fgf::field::Elem;
 
-use univariate::Polynomial;
+use poly_ring::Polynomial;
 
 use crate::GeometryError;
 use crate::dense::Matrix;
@@ -132,7 +132,7 @@ impl<F: FieldKernels> Vandermonde<F> {
             return;
         }
         // Master polynomial P(x) = ∏_m (x + x_m), degree n, monic, built
-        // through the shared univariate ring.
+        // through the shared poly-ring crate.
         let mut master = Polynomial::<F>::one().expect("one is a constant");
         for &xm in &self.points {
             master = master.multiply_x_plus(xm).expect("master product");

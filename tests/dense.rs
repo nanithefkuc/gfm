@@ -187,7 +187,7 @@ fn mutable_view_edits_the_matrix() {
     let mut m = Matrix::<Gf8B>::zeros(9, 7).unwrap();
     {
         let mut v = m.as_view_mut();
-        v.set(3, 4, fgf::gf8b::Elem(0xAB));
+        v.set(3, 4, fgf::gf8b::Elem::from_raw(0xAB));
         v.row_mut(5).fill(0x11);
         v.swap_rows(3, 5);
     }
@@ -195,7 +195,7 @@ fn mutable_view_edits_the_matrix() {
     assert_eq!(m.row(5)[4], 0xAB);
     assert!(m.row(5)[..4].iter().all(|&b| b == 0));
     assert!(m.row(5)[5..].iter().all(|&b| b == 0));
-    assert_eq!(m.get(5, 4), fgf::gf8b::Elem(0xAB));
+    assert_eq!(m.get(5, 4), fgf::gf8b::Elem::from_raw(0xAB));
 }
 
 #[test]
