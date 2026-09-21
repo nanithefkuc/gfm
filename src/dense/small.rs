@@ -5,8 +5,11 @@
 //! The const order removes pitch, row-map, and heap-allocation overhead from
 //! the small dense blocks produced by inactivation. Field arithmetic remains
 //! `fgf`'s; packed right-hand-side row operations use `fgf::ops`.
-//! The measured cutoff and three-run comparison with [`Matrix`](crate::Matrix)
-//! plus [`Ple`](crate::Ple) are recorded in `BENCHMARKS.md`.
+//!
+//! The order bound makes this a second, deliberately bounded pivot loop in
+//! the dense domain, beside [`Ple`](crate::Ple)'s: it is retained on the
+//! comparison recorded in `BENCHMARKS.md`, and the carve-out is stated in
+//! the crate's `AGENTS.md`.
 
 use core::fmt;
 
@@ -56,16 +59,24 @@ impl<F: FieldKernels, const K: usize> SmallMatrix<F, K> {
     }
 
     /// The element at `(row, col)`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `row` or `col` is outside `0..K`.
     #[must_use]
     pub fn get(&self, row: usize, col: usize) -> F::Elem {
         self.data[row][col]
     }
 
     /// Sets the element at `(row, col)`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `row` or `col` is outside `0..K`.
     pub fn set(&mut self, row: usize, col: usize, value: F::Elem) {
         self.data[row][col] = value;
         if F::BYTES == 1 {
-            F::write(&mut self.one_byte[row][col..=col], value);
+            F::encode(&mut self.one_byte[row][col..=col], value);
         }
     }
 
@@ -125,15 +136,15 @@ impl<F: FieldKernels, const K: usize> SmallMatrix<F, K> {
                 a.swap(found, pivot);
                 out.swap_rows(found, pivot);
             }
-            let pivot_value = F::read(&a[pivot][pivot..=pivot]);
+            let pivot_value = F::decode(&a[pivot][pivot..=pivot]);
             let inverse = pivot_value.inv();
             for row in (pivot + 1)..K {
-                let entry = F::read(&a[row][pivot..=pivot]);
+                let entry = F::decode(&a[row][pivot..=pivot]);
                 if entry.is_zero() {
                     continue;
                 }
                 let factor = entry.mul(inverse);
-                F::write(&mut a[row][pivot..=pivot], factor);
+                F::encode(&mut a[row][pivot..=pivot], factor);
                 let prepared = ops::Coeff::<F>::new(factor);
                 let (row_dst, row_src) = two_array_rows(&mut a, row, pivot);
                 ops::mul_add_with::<F>(&mut row_dst[pivot + 1..], &prepared, &row_src[pivot + 1..]);
@@ -143,13 +154,13 @@ impl<F: FieldKernels, const K: usize> SmallMatrix<F, K> {
         }
         for pivot in (0..K).rev() {
             for term in (pivot + 1)..K {
-                let factor = F::read(&a[pivot][term..=term]);
+                let factor = F::decode(&a[pivot][term..=term]);
                 if !factor.is_zero() {
                     let (rhs_dst, rhs_src) = out.two_live_rows(pivot, term);
                     crate::row_ops::mul_add::<F>(rhs_dst, factor, rhs_src);
                 }
             }
-            let pivot_value = F::read(&a[pivot][pivot..=pivot]);
+            let pivot_value = F::decode(&a[pivot][pivot..=pivot]);
             if !pivot_value.is_one() {
                 ops::mul_assign::<F>(out.row_mut(pivot), pivot_value.inv());
             }

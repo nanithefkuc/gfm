@@ -1,4 +1,4 @@
-//! The hybrid sparse→dense inactivation solver — the crate's differentiator.
+//! The hybrid sparse→dense inactivation solver.
 //!
 //! A caller pushes sparse equations (binary or field-valued) with packed
 //! symbol payloads; [`Hybrid::solve`] peels the sparse structure, inactivates

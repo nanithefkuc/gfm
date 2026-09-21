@@ -53,10 +53,9 @@ pub(crate) struct Row<F: FieldKernels> {
 /// The merge buffers every row edit borrows.
 ///
 /// A merge builds its result out of place, so it needs somewhere to put it.
-/// Holding that somewhere per row costs one allocation per row that ever
-/// merges and forty-eight bytes in every row header a probe touches; one
-/// shared pair costs a copy back into the row's own buffer, which is
-/// already sized for it.
+/// Per-row storage costs an allocation for every row that merges and widens
+/// the row header a probe touches; one shared pair costs a copy back into
+/// the row's own buffer, which is already sized for it.
 pub(crate) struct MergeScratch<F: FieldKernels> {
     pub cols: Vec<u32>,
     pub coeffs: Vec<F::Elem>,

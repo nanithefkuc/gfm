@@ -23,7 +23,6 @@ use alloc::vec::Vec;
 use core::fmt;
 use core::marker::PhantomData;
 
-#[cfg(feature = "internals")]
 use fgf::ops;
 use fgf::{FieldKernels, field::Elem};
 
@@ -93,7 +92,8 @@ impl<F: FieldKernels> fmt::Debug for Ple<F> {
 #[derive(Clone, Copy)]
 enum TrailingMode {
     Axpy,
-    #[cfg(feature = "internals")]
+    /// Reachable through the `internals` facade only.
+    #[allow(dead_code)]
     NewtonJohn,
 }
 
@@ -112,7 +112,7 @@ impl<F: FieldKernels> Ple<F> {
     /// decomposition, permutation vectors, and rank-profile allocations are
     /// then recomputed in place. This is the allocation-free counterpart of
     /// repeated [`Ple::decompose`] calls for fixed-geometry workloads.
-    pub fn redecompose_with(
+    pub fn redecompose_scratch(
         &mut self,
         scratch: &mut PleScratch<F>,
         fill: impl FnOnce(&mut Matrix<F>),
@@ -126,9 +126,9 @@ impl<F: FieldKernels> Ple<F> {
 
     /// Decomposes with an explicit panel width. The result is independent of
     /// the width, byte for byte.
-    #[cfg(feature = "internals")]
     #[must_use]
-    pub fn decompose_with_panel_width(
+    #[allow(dead_code)] // Reached through the `internals` facade.
+    pub(crate) fn decompose_with_panel_width(
         a: Matrix<F>,
         scratch: &mut PleScratch<F>,
         panel_width: usize,
@@ -140,9 +140,9 @@ impl<F: FieldKernels> Ple<F> {
     /// # Panics
     ///
     /// Panics unless field elements occupy one byte.
-    #[cfg(feature = "internals")]
     #[must_use]
-    pub fn decompose_newton_john(a: Matrix<F>, scratch: &mut PleScratch<F>) -> Self {
+    #[allow(dead_code)] // Reached through the `internals` facade.
+    pub(crate) fn decompose_newton_john(a: Matrix<F>, scratch: &mut PleScratch<F>) -> Self {
         assert_eq!(F::BYTES, 1, "Newton-John table requires one-byte elements");
         let (rows, cols) = (a.rows(), a.cols());
         Self::decompose_impl(
@@ -271,29 +271,6 @@ impl<F: FieldKernels> Ple<F> {
     }
 }
 
-/// Unstable inspection API, available only with feature `internals`.
-#[cfg(feature = "internals")]
-impl<F: FieldKernels> Ple<F> {
-    /// The in-place `L`/`U` storage: factors below the diagonal, `U` on and
-    /// above it, in the eliminated row and column order.
-    #[must_use]
-    pub fn lu(&self) -> &Matrix<F> {
-        self.lu_matrix()
-    }
-
-    /// The row permutation, as a LAPACK-style swap list.
-    #[must_use]
-    pub fn p(&self) -> &Perm {
-        self.p_perm()
-    }
-
-    /// The column permutation, as a LAPACK-style swap list.
-    #[must_use]
-    pub fn q(&self) -> &Perm {
-        self.q_perm()
-    }
-}
-
 /// Factors one panel: up to `wend - wstart` pivot steps starting at row and
 /// column position `k0`, with the pivot search restricted to column positions
 /// `[step, wend)`. Returns the number of pivots found; fewer than requested
@@ -380,8 +357,6 @@ fn bulk_update<F: FieldKernels>(
     mode: TrailingMode,
     scratch: &mut PleScratch<F>,
 ) {
-    #[cfg(not(feature = "internals"))]
-    let _ = scratch;
     let cols = mat.cols();
     if wend >= cols {
         return;
@@ -404,7 +379,6 @@ fn bulk_update<F: FieldKernels>(
     }
     match mode {
         TrailingMode::Axpy => update_trailing_axpy(mat, frontier, pivots, wend),
-        #[cfg(feature = "internals")]
         TrailingMode::NewtonJohn => {
             update_trailing_newton_john(mat, frontier, pivots, wend, scratch);
         }
@@ -435,9 +409,11 @@ fn update_trailing_axpy<F: FieldKernels>(
     }
 }
 
-#[cfg(feature = "internals")]
 /// One 256-entry multiplication table per pivot row. Table construction uses
 /// `fgf::ops`; applying a selected multiple is the field's XOR-add kernel.
+///
+/// Reached through [`Ple::decompose_newton_john`], the `internals` facade's
+/// trailing-update candidate.
 fn update_trailing_newton_john<F: FieldKernels>(
     mat: &mut Matrix<F>,
     frontier: usize,
@@ -456,7 +432,7 @@ fn update_trailing_newton_john<F: FieldKernels>(
             let start = usize::from(coefficient) * tail;
             let multiple = &mut scratch.table[start..start + tail];
             multiple.copy_from_slice(pivot_tail);
-            ops::mul_assign::<F>(multiple, F::read(&[coefficient]));
+            ops::mul_assign::<F>(multiple, F::decode(&[coefficient]));
         }
         for row in (frontier + pivots)..rows {
             let factor = mat.get(row, src);
@@ -464,7 +440,7 @@ fn update_trailing_newton_john<F: FieldKernels>(
                 continue;
             }
             let mut key = [0u8; 1];
-            F::write(&mut key, factor);
+            F::encode(&mut key, factor);
             let start = usize::from(key[0]) * tail;
             ops::add_assign::<F>(
                 &mut mat.row_mut(row)[wend..cols],

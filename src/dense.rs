@@ -12,10 +12,10 @@ mod small;
 mod trsm;
 
 pub use derive::SolveScratch;
-pub use gemm::{mul_add_into, mul_into};
+pub use gemm::{mul_add, mul_into};
 pub use matrix::{Matrix, View, ViewMut};
 pub use perm::Perm;
 pub(crate) use perm::invert_in_place;
 pub use ple::{Ple, PleScratch};
 pub use small::SmallMatrix;
-pub use trsm::{solve_lower_unit_into, solve_upper_into};
+pub use trsm::{solve_lower_unit_assign, solve_upper_assign};

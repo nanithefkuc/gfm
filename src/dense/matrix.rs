@@ -179,7 +179,7 @@ impl<F: FieldKernels> Matrix<F> {
     pub fn get(&self, row: usize, col: usize) -> F::Elem {
         assert!(row < self.rows && col < self.cols, "index out of bounds");
         let start = self.map[row] * self.pitch + col * F::BYTES;
-        F::read(&self.region()[start..start + F::BYTES])
+        F::decode(&self.region()[start..start + F::BYTES])
     }
 
     /// Sets the element at `(row, col)`.
@@ -190,7 +190,7 @@ impl<F: FieldKernels> Matrix<F> {
     pub fn set(&mut self, row: usize, col: usize, value: F::Elem) {
         assert!(row < self.rows && col < self.cols, "index out of bounds");
         let start = self.map[row] * self.pitch + col * F::BYTES;
-        F::write(&mut self.region_mut()[start..start + F::BYTES], value);
+        F::encode(&mut self.region_mut()[start..start + F::BYTES], value);
     }
 
     /// Borrows logical row `r`: the `cols * F::BYTES` live bytes. Padding is
@@ -438,13 +438,12 @@ impl<F: FieldKernels> fmt::Debug for Matrix<F> {
     }
 }
 
-/// Unstable inspection API, available only with feature `internals`.
-#[cfg(feature = "internals")]
+/// Physical-layout inspection, reached through the `internals` facade.
+#[allow(dead_code)]
 impl<F: FieldKernels> Matrix<F> {
     /// Address of the first byte of the physical backing region. A multiple
     /// of [`crate::dense::layout::ALIGN`] by construction.
-    #[must_use]
-    pub fn base_addr(&self) -> usize {
+    pub(crate) fn base_addr(&self) -> usize {
         self.region().as_ptr() as usize
     }
 
@@ -453,16 +452,14 @@ impl<F: FieldKernels> Matrix<F> {
     /// # Panics
     ///
     /// Panics if `r` is out of bounds.
-    #[must_use]
-    pub fn physical_row_index(&self, r: usize) -> usize {
+    pub(crate) fn physical_row_index(&self, r: usize) -> usize {
         assert!(r < self.rows, "row index out of bounds");
         self.map[r]
     }
 
     /// The whole physical backing region, padding included: `rows * pitch`
     /// bytes, laid out as physical rows of `pitch` bytes.
-    #[must_use]
-    pub fn pitched_buffer(&self) -> &[u8] {
+    pub(crate) fn pitched_buffer(&self) -> &[u8] {
         self.region()
     }
 }
@@ -506,7 +503,7 @@ impl<'a, F: FieldKernels> View<'a, F> {
     pub fn get(&self, row: usize, col: usize) -> F::Elem {
         assert!(row < self.rows && col < self.cols, "index out of bounds");
         let start = self.map[row] * self.pitch + col * F::BYTES;
-        F::read(&self.data[start..start + F::BYTES])
+        F::decode(&self.data[start..start + F::BYTES])
     }
 
     /// Borrows logical row `r`'s live bytes.
@@ -593,7 +590,7 @@ impl<F: FieldKernels> ViewMut<'_, F> {
     pub fn get(&self, row: usize, col: usize) -> F::Elem {
         assert!(row < self.rows && col < self.cols, "index out of bounds");
         let start = self.map[row] * self.pitch + col * F::BYTES;
-        F::read(&self.data[start..start + F::BYTES])
+        F::decode(&self.data[start..start + F::BYTES])
     }
 
     /// Sets the element at `(row, col)`.
@@ -604,7 +601,7 @@ impl<F: FieldKernels> ViewMut<'_, F> {
     pub fn set(&mut self, row: usize, col: usize, value: F::Elem) {
         assert!(row < self.rows && col < self.cols, "index out of bounds");
         let start = self.map[row] * self.pitch + col * F::BYTES;
-        F::write(&mut self.data[start..start + F::BYTES], value);
+        F::encode(&mut self.data[start..start + F::BYTES], value);
     }
 
     /// Borrows logical row `r`'s live bytes.

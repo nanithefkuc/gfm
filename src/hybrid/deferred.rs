@@ -51,3 +51,17 @@ impl<F: FieldKernels> core::fmt::Debug for DeferredLog<F> {
             .finish()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use alloc::format;
+
+    use super::*;
+
+    #[test]
+    fn debug_names_the_log() {
+        let mut log = DeferredLog::<fgf::Gf8B>::new();
+        log.record(1, 0, <fgf::Gf8B as fgf::Field>::Elem::ONE);
+        assert!(format!("{log:?}").contains("DeferredLog"));
+    }
+}

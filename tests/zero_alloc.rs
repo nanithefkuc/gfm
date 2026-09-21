@@ -30,13 +30,38 @@ fn alloc_count() -> usize {
     ALLOCATIONS.with(Cell::get)
 }
 
+// SAFETY:
+// ALLOCATION CONTRACT
+// SINCE: allocation and deallocation forward unchanged layouts and pointers to
+//        `System`, and the default zeroed/reallocation methods use those hooks.
+// THUS: returned storage and its release obey the `GlobalAlloc` contract.
+// THREAD SAFETY
+// SINCE: the counter is thread-local and `System` supports concurrent calls.
+// THUS: allocator calls do not race on shared mutable state.
+// UNWINDING
+// SINCE: the const `Cell` has no destructor, `try_with` handles unavailable TLS,
+//        and the counter uses wrapping arithmetic.
+// THUS: bookkeeping cannot unwind from an allocator callback.
+#[allow(unsafe_code)]
 unsafe impl GlobalAlloc for CountingAllocator {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        ALLOCATIONS.with(|n| n.set(n.get() + 1));
+        let _ = ALLOCATIONS.try_with(|n| n.set(n.get().wrapping_add(1)));
+        // SAFETY:
+        // ALLOCATION CONTRACT
+        // SINCE: the `GlobalAlloc::alloc` caller supplies a nonzero valid layout.
+        // THUS: forwarding that layout satisfies `System.alloc`'s requirements.
         unsafe { System.alloc(layout) }
     }
 
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+        // SAFETY:
+        // MEMORY VALIDITY
+        // SINCE: the `GlobalAlloc::dealloc` caller supplies a live pointer returned
+        //        by this allocator, whose storage comes exclusively from `System`.
+        // THUS: `System.dealloc` receives a pointer it owns and may release.
+        // ALIGNMENT
+        // SINCE: the caller supplies the original allocation layout unchanged.
+        // THUS: the size and alignment match the allocation being released.
         unsafe { System.dealloc(ptr, layout) }
     }
 }
@@ -44,7 +69,7 @@ unsafe impl GlobalAlloc for CountingAllocator {
 #[global_allocator]
 static GLOBAL: CountingAllocator = CountingAllocator;
 
-/// One test, one process-wide counter: two parallel tests would race on it.
+/// Exercises warmed container and solver operations on the counted thread.
 #[test]
 fn steady_state_ops_do_not_allocate() {
     // Setup: allocation is expected and allowed here.

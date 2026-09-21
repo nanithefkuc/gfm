@@ -1,10 +1,12 @@
 //! The GF(2) domain against its contracts: `fgf::bits`-packed layout
-//! invariants, bit accessors, masking of out-of-range bits, and index-only
-//! row exchange.
+//! invariants, bit accessors, masking of out-of-range bits, index-only row
+//! exchange, row permutation with compaction, and the geometry errors that
+//! reject a mismatched shape.
 
 mod common;
 
 use common::{draw, noise, sample_dims};
+use gfm::internals::BitMatrixInternals;
 use gfm::{BitMatrix, GeometryError, Perm};
 
 /// `ceil(cols / 8)`, the live bytes of a row.
@@ -127,6 +129,18 @@ fn swap_rows_exchanges_logical_rows() {
 }
 
 #[test]
+fn self_swaps_and_the_compaction_after_them_change_nothing() {
+    let mut bits = BitMatrix::from_rows(4, 13, &row_bits(4, 13, 0xC304)).unwrap();
+    let snapshot = bits.clone();
+    // `swap_rows` with equal indices is an index no-op.
+    bits.swap_rows(1, 1);
+    assert_eq!(bits, snapshot);
+    // Compaction after only self-swaps still materializes the same content.
+    bits.compact_rows();
+    assert_eq!(bits, snapshot);
+}
+
+#[test]
 fn permute_and_compact_preserve_logical_content() {
     // Exhaustive over every permutation of up to 4 rows, then a spread of
     // larger ones: regression coverage for the compact path's cycle walking.
@@ -206,8 +220,29 @@ fn geometry_errors_are_exact_and_state_preserving() {
     assert_eq!(m, snapshot);
 }
 
+#[test]
+fn apply_row_perm_inv_rejects_mismatched_length() {
+    // Live bytes with clean padding: two bytes per row, low 5 bits live.
+    let mut m = BitMatrix::from_rows(4, 13, &row_bits(4, 13, 0xE200)).unwrap();
+    let snapshot = m.clone();
+    let err = m.apply_row_perm_inv(&Perm::identity(5)).unwrap_err();
+    assert_eq!(
+        err,
+        GeometryError::Shape {
+            lhs: (4, 13),
+            rhs: (5, 5),
+        }
+    );
+    assert_eq!(m, snapshot, "matrix changed on a rejected permutation");
+
+    let mut p = Perm::identity(4);
+    p.record_swap(0, 3);
+    m.apply_row_perm(&p).unwrap();
+    m.apply_row_perm_inv(&p).unwrap();
+    assert_eq!(m, snapshot);
+}
+
 /// The physical half of the contract, behind `internals`.
-#[cfg(feature = "internals")]
 mod physical {
     use super::*;
     use gfm::bits::ALIGN;

@@ -559,8 +559,8 @@ impl<F: FieldKernels> Hybrid<F> {
     /// # Panics
     ///
     /// Panics if the requested output geometry overflows `usize`.
-    #[cfg(feature = "internals")]
-    pub fn solve_with_stats(
+    #[allow(dead_code)] // Reached through the `internals` facade.
+    pub(crate) fn solve_reported(
         &mut self,
         defer: bool,
     ) -> Result<(Solution<F>, SolveStats), SolveError> {
@@ -578,7 +578,7 @@ impl<F: FieldKernels> Hybrid<F> {
         ))
     }
 
-    /// Allocation-free form of [`Self::solve_with_stats`].
+    /// Allocation-free form of [`Self::solve_reported`].
     ///
     /// # Errors
     ///
@@ -587,8 +587,8 @@ impl<F: FieldKernels> Hybrid<F> {
     /// # Panics
     ///
     /// Panics under the same conditions as [`Self::solve_into`].
-    #[cfg(feature = "internals")]
-    pub fn solve_into_with_stats(
+    #[allow(dead_code)] // Reached through the `internals` facade.
+    pub(crate) fn solve_into_reported(
         &mut self,
         defer: bool,
         values: &mut Matrix<F>,
@@ -622,8 +622,7 @@ impl<F: FieldKernels> Hybrid<F> {
         // The lane store is sized, not cleared: every read is guarded by
         // `release_mask` (which the release pass zeroes for itself) except
         // the inactive columns the emit loop walks, and the release pass
-        // zeroes exactly those. An `n`-wide lane memset per solve is the
-        // single largest fixed cost this phase used to carry.
+        // zeroes exactly those, so the lane store needs no per-solve memset.
         if self.release_lane.len() < n {
             self.release_lane.resize(n, [F::Elem::ZERO; RELEASE_LANES]);
         }
@@ -1158,9 +1157,10 @@ impl<F: FieldKernels> Hybrid<F> {
             self.needed[row] = true;
         }
         // Solve only the independent residual rows over the inactive columns.
-        // The compact path wins through its maximum supported order in three
-        // pinned runs; the general decomposition handles wider, deficient, or
-        // rectangular blocks.
+        // The compact path covers square, full-rank blocks up to its
+        // supported order, selected on the comparison recorded in
+        // `BENCHMARKS.md`; the general decomposition handles wider,
+        // deficient, or rectangular blocks.
         let use_small = F::BYTES == 1 && g <= 64 && self.basis_rows.len() == g;
         // A full-row-rank residual block *is* its own independent subset, so
         // the rank decomposition already factors exactly the rows the solve
@@ -1275,10 +1275,10 @@ impl<F: FieldKernels> Hybrid<F> {
                 .copy_from_slice(x_inactive.row(j));
         }
         // Frozen ordinal → u32 byte offset of that column's dense-block row.
-        // Back-substitution resolves millions of sources through this, so
-        // the row-map lookup and pitch multiply are paid once per column
-        // instead of once per entry, and the gather kernel reads the
-        // 4-byte table directly instead of staged fat pointers.
+        // Every back-substituted source resolves through this table, so the
+        // row-map lookup and pitch multiply are paid once per column instead
+        // of once per entry, and the gather kernel reads the offset table
+        // directly instead of staged fat pointers.
         let mut frozen_src = core::mem::take(&mut self.frozen_src);
         frozen_src.clear();
         frozen_src.reserve(self.frozen_slot.len());
@@ -1315,7 +1315,7 @@ impl<F: FieldKernels> Hybrid<F> {
                 work_row.for_each_frozen_ordinal(|ordinal| {
                     gather.push(offsets[ordinal]);
                 });
-                ops::add_gather::<F>(dense_region, dst, &gather);
+                ops::add_gather_offsets::<F>(dst, dense_region, &gather);
                 self.gather_scratch = gather;
                 for &column in &work_row.cols {
                     if column != pivot_col {
@@ -1454,8 +1454,8 @@ impl<F: FieldKernels> Hybrid<F> {
         // Pre-size the working rows for the next solve against the input
         // shapes. The frozen words are deliberately *not* pre-sized to the
         // ordinal space: a row carries a handful of frozen words, so one
-        // per inactivated column asked for `g` words in every row — 254 MiB
-        // at max `K`, allocated and never read.
+        // word per inactivated column would ask for `g` words in every row,
+        // allocated and never read.
         for (work, source) in self.work_rows.iter_mut().zip(&self.rows) {
             work.reserve_like(source);
         }

@@ -67,7 +67,7 @@ fn system(columns: usize, band: usize, symbol_bytes: usize, defer_band: bool) ->
         hybrid.push_binary_row(&row_support, &zero_rhs);
     }
     if band > 0 {
-        let alpha = <Gf8B as Field>::read(&[2]);
+        let alpha = <Gf8B as Field>::decode(&[2]);
         let mut coefficient = <Gf8B as Field>::Elem::ONE;
         let coeffs: Vec<_> = (0..columns)
             .map(|_| {

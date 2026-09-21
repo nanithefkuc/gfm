@@ -12,7 +12,9 @@
 //!   tested surface; the elimination structure is the independent part.
 //!   This layer exists so the big shape×rank sweep is fast enough to run.
 //!
-//! Nothing here is used by the crate; everything here is a ground truth.
+//! The reference layers are ground truth: nothing in them calls the crate.
+//! The conversions at the end of the module are the bridge between those
+//! rows and `gfm::Matrix`, shared so each suite does not restate them.
 #![allow(dead_code)]
 // The loops below index several rows of several matrices by position; the
 // index arithmetic is the algorithm, and iterator rewrites obscure it.
@@ -20,6 +22,7 @@
 
 use fgf::field::Elem;
 use fgf::{Field, FieldKernels, ops};
+use gfm::Matrix;
 
 use super::common::noise;
 
@@ -37,7 +40,7 @@ pub fn naive_noise<F: FieldKernels>(rows: usize, cols: usize, seed: u64) -> Naiv
             (0..cols)
                 .map(|c| {
                     let start = (r * cols + c) * F::BYTES;
-                    F::read(&bytes[start..start + F::BYTES])
+                    F::decode(&bytes[start..start + F::BYTES])
                 })
                 .collect()
         })
@@ -50,10 +53,29 @@ pub fn pack<F: FieldKernels>(a: &Naive<F>) -> Packed {
         .map(|row| {
             let mut out = vec![0u8; row.len() * F::BYTES];
             for (c, &v) in row.iter().enumerate() {
-                F::write(&mut out[c * F::BYTES..(c + 1) * F::BYTES], v);
+                F::encode(&mut out[c * F::BYTES..(c + 1) * F::BYTES], v);
             }
             out
         })
+        .collect()
+}
+
+/// Builds a crate matrix from packed rows.
+pub fn matrix_of<F: FieldKernels>(packed: &[Vec<u8>], cols: usize) -> Matrix<F> {
+    let flat: Vec<u8> = packed.iter().flatten().copied().collect();
+    Matrix::from_rows(packed.len(), cols, &flat).unwrap()
+}
+
+/// Packs a naive matrix and builds the crate matrix.
+pub fn crate_matrix<F: FieldKernels>(a: &Naive<F>) -> Matrix<F> {
+    let cols = a.first().map_or(0, Vec::len);
+    matrix_of::<F>(&pack::<F>(a), cols)
+}
+
+/// Reads a crate matrix back into naive rows.
+pub fn naive_of<F: FieldKernels>(m: &Matrix<F>) -> Naive<F> {
+    (0..m.rows())
+        .map(|r| (0..m.cols()).map(|c| m.get(r, c)).collect())
         .collect()
 }
 
@@ -237,7 +259,7 @@ impl PackedPle {
             .iter()
             .map(|row| {
                 (0..cols)
-                    .map(|c| F::read(&row[c * b..(c + 1) * b]))
+                    .map(|c| F::decode(&row[c * b..(c + 1) * b]))
                     .collect()
             })
             .collect()
@@ -263,11 +285,11 @@ pub fn packed_with_rank<F: FieldKernels>(
     for (i, row) in l.iter_mut().enumerate() {
         for t in 0..rank {
             let v = match t.cmp(&i) {
-                std::cmp::Ordering::Less => F::read(&row[t * b..(t + 1) * b]),
+                std::cmp::Ordering::Less => F::decode(&row[t * b..(t + 1) * b]),
                 std::cmp::Ordering::Equal => F::Elem::ONE,
                 std::cmp::Ordering::Greater => F::Elem::ZERO,
             };
-            F::write(&mut row[t * b..(t + 1) * b], v);
+            F::encode(&mut row[t * b..(t + 1) * b], v);
         }
     }
     let mut u: Packed = (0..rank)
@@ -276,13 +298,13 @@ pub fn packed_with_rank<F: FieldKernels>(
     for (t, row) in u.iter_mut().enumerate() {
         for c in 0..=t.min(cols - 1) {
             let v = if c == t { F::Elem::ONE } else { F::Elem::ZERO };
-            F::write(&mut row[c * b..(c + 1) * b], v);
+            F::encode(&mut row[c * b..(c + 1) * b], v);
         }
     }
     let mut out: Packed = vec![vec![0u8; cols * b]; rows];
     for i in 0..rows {
         for t in 0..rank {
-            let f = F::read(&l[i][t * b..(t + 1) * b]);
+            let f = F::decode(&l[i][t * b..(t + 1) * b]);
             if f.is_zero() {
                 continue;
             }
@@ -307,7 +329,7 @@ pub fn oracle_ple_packed<F: FieldKernels>(a: &Packed, cols: usize) -> PackedPle 
         let mut found = None;
         'outer: for j in r..n {
             for i in r..m {
-                if !F::read(&lu[i][j * b..(j + 1) * b]).is_zero() {
+                if !F::decode(&lu[i][j * b..(j + 1) * b]).is_zero() {
                     found = Some((i, j));
                     break 'outer;
                 }
@@ -326,14 +348,14 @@ pub fn oracle_ple_packed<F: FieldKernels>(a: &Packed, cols: usize) -> PackedPle 
             lu.swap(i, r);
             p[r] = i;
         }
-        let pivot_inv = F::read(&lu[r][r * b..(r + 1) * b]).inv();
+        let pivot_inv = F::decode(&lu[r][r * b..(r + 1) * b]).inv();
         for i2 in (r + 1)..m {
-            let entry = F::read(&lu[i2][r * b..(r + 1) * b]);
+            let entry = F::decode(&lu[i2][r * b..(r + 1) * b]);
             if entry.is_zero() {
                 continue;
             }
             let factor = entry.mul(pivot_inv);
-            F::write(&mut lu[i2][r * b..(r + 1) * b], factor);
+            F::encode(&mut lu[i2][r * b..(r + 1) * b], factor);
             let (head, tail) = lu.split_at_mut(i2);
             let (row_r, row_i) = (&head[r], &mut tail[0]);
             ops::mul_add::<F>(&mut row_i[(r + 1) * b..], factor, &row_r[(r + 1) * b..]);
@@ -358,7 +380,7 @@ pub fn reassemble_packed<F: FieldKernels>(o: &PackedPle, cols: usize) -> Packed 
     for i in 0..m {
         for t in 0..r {
             let l = if t < i {
-                F::read(&o.lu[i][t * b..(t + 1) * b])
+                F::decode(&o.lu[i][t * b..(t + 1) * b])
             } else if t == i {
                 F::Elem::ONE
             } else {

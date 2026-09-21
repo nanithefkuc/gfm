@@ -20,12 +20,11 @@ use fgf::bits;
 use crate::bits::BitMatrix;
 use crate::dense::Perm;
 
-/// Eight pivots form a 256-entry M4RI combination table. Once the plain
-/// trailing update reads its per-row selector in one masked byte-window load
-/// and `fgf::bits::RangeXor` prepares its backend, the plain path wins out to
-/// larger sizes and the table's crossover moves to 224 rows/columns: plain
-/// wins through 192 and the table wins from 224 up.
-/// See `BENCHMARKS.md` for the boundary measurements.
+/// A slab of pivots forms one M4RI combination table, amortizing the
+/// trailing update over the slab. The plain update reads its per-row
+/// selector in one masked byte-window load through `fgf::bits::XorRange`,
+/// which places the crossover at [`M4RI_CROSSOVER`]; the boundary
+/// measurements are recorded in `BENCHMARKS.md`.
 const SLAB_WIDTH: usize = 8;
 const M4RI_CROSSOVER: usize = 224;
 
@@ -103,9 +102,9 @@ impl Ple {
 
     /// Decomposes with an explicit panel width. The result is independent of
     /// the width, byte for byte.
-    #[cfg(feature = "internals")]
     #[must_use]
-    pub fn decompose_with_panel_width(
+    #[allow(dead_code)] // Reached through the `internals` facade.
+    pub(crate) fn decompose_with_panel_width(
         a: BitMatrix,
         scratch: &mut PleScratch,
         panel_width: usize,
@@ -114,16 +113,16 @@ impl Ple {
     }
 
     /// Forces the untabled AXPY-style trailing update.
-    #[cfg(feature = "internals")]
     #[must_use]
-    pub fn decompose_plain(a: BitMatrix, scratch: &mut PleScratch) -> Self {
+    #[allow(dead_code)] // Reached through the `internals` facade.
+    pub(crate) fn decompose_plain(a: BitMatrix, scratch: &mut PleScratch) -> Self {
         Self::decompose_impl(a, SLAB_WIDTH, BulkMode::Plain, scratch)
     }
 
     /// Forces the M4RI combination-table trailing update.
-    #[cfg(feature = "internals")]
     #[must_use]
-    pub fn decompose_m4ri(a: BitMatrix, scratch: &mut PleScratch) -> Self {
+    #[allow(dead_code)] // Reached through the `internals` facade.
+    pub(crate) fn decompose_m4ri(a: BitMatrix, scratch: &mut PleScratch) -> Self {
         Self::decompose_impl(a, SLAB_WIDTH, BulkMode::M4ri, scratch)
     }
 
@@ -228,29 +227,6 @@ impl Ple {
     }
 }
 
-/// Unstable inspection API, available only with feature `internals`.
-#[cfg(feature = "internals")]
-impl Ple {
-    /// The in-place `L`/`U` storage: factors below the diagonal, `U` on and
-    /// above it, in the eliminated row and column order.
-    #[must_use]
-    pub fn lu(&self) -> &BitMatrix {
-        self.lu_matrix()
-    }
-
-    /// The row permutation, as a LAPACK-style swap list.
-    #[must_use]
-    pub fn p(&self) -> &Perm {
-        self.p_perm()
-    }
-
-    /// The column permutation, as a LAPACK-style swap list.
-    #[must_use]
-    pub fn q(&self) -> &Perm {
-        self.q_perm()
-    }
-}
-
 /// Factors one panel: up to `wend - wstart` pivot steps starting at the
 /// frontier, with the pivot search restricted to column positions
 /// `[wstart, wend)`. Returns the number of pivots found; fewer than the
@@ -283,7 +259,7 @@ fn factor_panel(
         // The pivot bit at `(piv, piv)` is one; it stays set and becomes the
         // stored `L` factor, because the XOR clears only columns past `piv`.
         // The range is per-pivot but applied to many rows: prepare once.
-        let plan = bits::RangeXor::new(cols, piv + 1, wend);
+        let plan = bits::XorRange::new(cols, piv + 1, wend);
         for row in (piv + 1)..rows {
             if mat.get(row, piv) {
                 let (row_dst, row_src) = mat.two_live_rows(row, piv);
@@ -425,7 +401,7 @@ fn bulk_update(
         return;
     }
     // One trailing range per panel, applied to every row it touches.
-    let plan = bits::RangeXor::new(cols, wend, cols);
+    let plan = bits::XorRange::new(cols, wend, cols);
     // U12 = L11⁻¹ · A12, in place on the pivot rows.
     for row in frontier..(frontier + pivots) {
         for src in frontier..row {
@@ -445,7 +421,7 @@ fn update_trailing_plain(
     mat: &mut BitMatrix,
     frontier: usize,
     pivots: usize,
-    plan: &bits::RangeXor,
+    plan: &bits::XorRange,
 ) {
     let rows = mat.rows();
     for row in (frontier + pivots)..rows {
@@ -473,7 +449,7 @@ fn update_trailing_m4ri(
     mat: &mut BitMatrix,
     frontier: usize,
     pivots: usize,
-    plan: &bits::RangeXor,
+    plan: &bits::XorRange,
     scratch: &mut PleScratch,
 ) {
     let rows = mat.rows();

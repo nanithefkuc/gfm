@@ -6,8 +6,8 @@
 //!
 //! Note what is *not* an error: rank deficiency, a zero determinant, an
 //! empty kernel, and division by zero (`inv(0) == 0` is inherited from
-//! `fgf` and is total). Only invalid geometry, an inconsistent system, and
-//! a reduction that fails to terminate are errors.
+//! `fgf` and is total). Only invalid geometry and an inconsistent system
+//! are errors.
 
 use core::fmt;
 
@@ -40,21 +40,6 @@ pub enum GeometryError {
         /// `(rows, cols)` of the right operand.
         rhs: (usize, usize),
     },
-    /// A structured matrix asked for more distinct points than the field
-    /// holds: `requested` points over a field of `order` elements.
-    Capacity {
-        /// Number of distinct field points the construction needs.
-        requested: usize,
-        /// The field's element count.
-        order: u128,
-    },
-    /// Two structured-matrix points coincide — a repeated evaluation point,
-    /// or overlapping Cauchy index sets `X ∩ Y ≠ ∅` — which makes the
-    /// construction singular or undefined.
-    Collision {
-        /// The raw byte value of the point that recurred.
-        value: u64,
-    },
 }
 
 impl fmt::Display for GeometryError {
@@ -69,16 +54,6 @@ impl fmt::Display for GeometryError {
             ),
             Self::Shape { lhs, rhs } => {
                 write!(f, "operand shapes do not compose: {lhs:?} vs {rhs:?}")
-            }
-            Self::Capacity { requested, order } => write!(
-                f,
-                "structured matrix needs {requested} distinct points over a field of {order}"
-            ),
-            Self::Collision { value } => {
-                write!(
-                    f,
-                    "structured-matrix point {value:#x} is repeated or not disjoint"
-                )
             }
         }
     }
@@ -99,8 +74,7 @@ pub enum SolveError {
         /// Index of a genuinely inconsistent row.
         row: usize,
     },
-    /// An inverse was requested of a matrix that is not square or not full
-    /// rank.
+    /// An inverse was requested of a square matrix that is not full rank.
     Singular {
         /// The rank the factorization actually found.
         rank: usize,
@@ -124,66 +98,3 @@ impl fmt::Display for SolveError {
 
 #[cfg(feature = "std")]
 impl std::error::Error for SolveError {}
-
-/// A polynomial-matrix reduction failed to terminate within its ceiling.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum ReduceError {
-    /// The reduction exceeded its iteration ceiling.
-    Diverged {
-        /// Iterations actually performed.
-        iterations: usize,
-        /// The ceiling that was exceeded.
-        ceiling: usize,
-    },
-    /// A row exposes a different number of polynomial columns than the shift.
-    ShiftCount {
-        /// Polynomial columns in the row.
-        columns: usize,
-        /// Entries in the shift vector.
-        shifts: usize,
-    },
-    /// Adding a polynomial degree and its shift overflowed `usize`.
-    DegreeOverflow {
-        /// Unshifted polynomial degree.
-        degree: usize,
-        /// Shift assigned to that polynomial column.
-        shift: usize,
-    },
-    /// Storage for the leading-row schedule could not be reserved.
-    AllocationFailed {
-        /// Number of schedule entries requested.
-        entries: usize,
-    },
-}
-
-impl fmt::Display for ReduceError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match *self {
-            Self::Diverged {
-                iterations,
-                ceiling,
-            } => write!(
-                f,
-                "reduction diverged: {iterations} iterations exceeded the ceiling of {ceiling}"
-            ),
-            Self::ShiftCount { columns, shifts } => write!(
-                f,
-                "polynomial row has {columns} columns but the shift has {shifts} entries"
-            ),
-            Self::DegreeOverflow { degree, shift } => write!(
-                f,
-                "shifted polynomial degree overflows usize: {degree} + {shift}"
-            ),
-            Self::AllocationFailed { entries } => {
-                write!(
-                    f,
-                    "failed to reserve {entries} polynomial reduction entries"
-                )
-            }
-        }
-    }
-}
-
-#[cfg(feature = "std")]
-impl std::error::Error for ReduceError {}

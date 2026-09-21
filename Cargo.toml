@@ -1,16 +1,26 @@
 [package]
 name = "gfm"
-version = "0.0.0"
+version = "1.0.0"
 edition = "2024"
-rust-version = "1.89"
+rust-version = "1.93"
+autotests = false
 license = "MIT"
-publish = false
-description = "Dense, structured, and hybrid sparse/dense linear algebra over GF(2) and GF(2^m)."
+description = "Dense, bit-packed, and hybrid sparse/dense linear algebra over GF(2) and GF(2^m)."
 repository = "https://github.com/nanithefkuc/gfm"
 readme = "README.md"
 homepage = "https://github.com/nanithefkuc/gfm"
 categories = ["algorithms", "mathematics", "no-std"]
-exclude = ["/.github"]
+keywords = ["galois", "finite-field", "matrix", "linear-algebra", "simd"]
+# Package the library, tests, benchmarks, and user-facing release documents.
+# Cargo also includes the manifest, lockfile, and generated package metadata.
+include = [
+    "/src/**",
+    "/tests/**",
+    "/benches/**",
+    "/README.md",
+    "/LICENSE",
+    "/CHANGELOG.md",
+]
 
 [features]
 default = ["std", "simd"]
@@ -28,23 +38,44 @@ parallel = ["std", "dep:rayon"]
 internals = []
 
 [dependencies]
-# Field arithmetic and packed-buffer vector kernels, pinned by rev: a
-# floating dependency is a format-break risk when the dependency feeds wire
-# bytes. Swap this rev with the other ecosystem consumers in the same sitting.
-fgf = { git = "https://github.com/nanithefkuc/fgf", rev = "68cae1fa058e1900e24b9eb564efeb0189ad0f78" }
-# The poly-ring polynomial ring supplies the master/quotient algebra for the
-# Vandermonde inverse. Pinned by rev, the same revision syndrome-engine pins,
-# so one copy resolves across the ecosystem.
-poly-ring = { git = "https://github.com/nanithefkuc/poly-ring", rev = "4e11703375008dfdacdfe37e87f48b5ee5ed942e", default-features = false }
-rayon = { version = "1.11", optional = true }
+# Field arithmetic and packed-buffer vector kernels, taken from the registry
+# at an exact release: a floating dependency is a format-break risk when the
+# dependency feeds wire bytes, and the exact pin keeps one copy resolving
+# across the ecosystem consumers.
+fgf = { version = "=1.1.1", default-features = false }
+rayon = { version = "=1.12.0", optional = true }
 
 [dev-dependencies]
-# Default features pull in plotters + rayon, which this harness does not use.
-criterion = { version = "0.8", default-features = false, features = ["cargo_bench_support"] }
+criterion = { version = "=0.8.2", default-features = false, features = ["cargo_bench_support"] }
 
-[[bench]]
-name = "cauchy_inverse"
-harness = false
+[[test]]
+name = "backend"
+required-features = ["internals"]
+
+[[test]]
+name = "bits"
+required-features = ["internals"]
+
+[[test]]
+name = "bits_ple"
+required-features = ["internals"]
+
+[[test]]
+name = "dense"
+required-features = ["internals"]
+
+[[test]]
+name = "hybrid"
+required-features = ["internals"]
+
+[[test]]
+name = "incremental"
+
+[[test]]
+name = "format"
+
+[[test]]
+name = "zero_alloc"
 
 [[bench]]
 name = "hybrid"
@@ -52,10 +83,6 @@ harness = false
 
 [[bench]]
 name = "rfc_scale"
-harness = false
-
-[[bench]]
-name = "competitors"
 harness = false
 
 [[bench]]

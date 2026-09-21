@@ -9,6 +9,7 @@ use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use fgf::field::Field;
 use fgf::{FieldKernels, Gf8B, Gf16};
 use gfm::bits::{Ple as BitPle, PleScratch as BitPleScratch};
+use gfm::internals::{BitPleInternals, PleInternals};
 use gfm::{BitMatrix, Matrix, Ple, PleScratch, SmallMatrix, SolveScratch};
 
 fn next(state: &mut u64) -> u64 {
@@ -28,7 +29,7 @@ fn dense_rect<F: FieldKernels>(rows: usize, cols: usize, seed: u64) -> Matrix<F>
     for row in 0..rows {
         for col in 0..cols {
             let bytes = next(&mut state).to_le_bytes();
-            matrix.set(row, col, F::read(&bytes[..F::BYTES]));
+            matrix.set(row, col, F::decode(&bytes[..F::BYTES]));
         }
     }
     matrix
@@ -150,10 +151,10 @@ fn full_rank_gf8<const K: usize>() -> Matrix<Gf8B> {
         lower[row][row] = <Gf8B as Field>::Elem::ONE;
         upper[row][row] = <Gf8B as Field>::Elem::ONE;
         for col in 0..row {
-            lower[row][col] = Gf8B::read(&[(next(&mut state) >> 56) as u8]);
+            lower[row][col] = Gf8B::decode(&[(next(&mut state) >> 56) as u8]);
         }
         for col in (row + 1)..K {
-            upper[row][col] = Gf8B::read(&[(next(&mut state) >> 56) as u8]);
+            upper[row][col] = Gf8B::decode(&[(next(&mut state) >> 56) as u8]);
         }
     }
     let mut matrix = Matrix::<Gf8B>::zeros(K, K).unwrap();

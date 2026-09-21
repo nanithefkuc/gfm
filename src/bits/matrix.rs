@@ -438,13 +438,12 @@ impl fmt::Debug for BitMatrix {
     }
 }
 
-/// Unstable inspection API, available only with feature `internals`.
-#[cfg(feature = "internals")]
+/// Physical-layout inspection, reached through the `internals` facade.
+#[allow(dead_code)]
 impl BitMatrix {
     /// Address of the first byte of the physical backing region. A multiple
     /// of [`ALIGN`] by construction.
-    #[must_use]
-    pub fn base_addr(&self) -> usize {
+    pub(crate) fn base_addr(&self) -> usize {
         self.region().as_ptr() as usize
     }
 
@@ -453,16 +452,14 @@ impl BitMatrix {
     /// # Panics
     ///
     /// Panics if `r` is out of bounds.
-    #[must_use]
-    pub fn physical_row_index(&self, r: usize) -> usize {
+    pub(crate) fn physical_row_index(&self, r: usize) -> usize {
         assert!(r < self.rows, "row index out of bounds");
         self.map[r]
     }
 
     /// The whole physical backing region, padding included: `rows * pitch`
     /// bytes, laid out as physical rows.
-    #[must_use]
-    pub fn pitched_buffer(&self) -> &[u8] {
+    pub(crate) fn pitched_buffer(&self) -> &[u8] {
         self.region()
     }
 }

@@ -3,7 +3,7 @@
 # unique to gfm belong in this file and are documented in `AGENTS.md`.
 
 CRATE := 'gfm'
-MSRV := '1.89'
+MSRV := '1.93'
 
 # Backend tiers this crate dispatches over, strongest first. `just test-tiers`
 # and `just cover` re-run once per tier, because dispatch resolves one backend

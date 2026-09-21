@@ -1,93 +1,181 @@
-# gfm
+# AGENTS.md
 
-> `gfm` is a solver, not a codec. Field arithmetic and byte-buffer vector
-> primitives come from `fgf` — never re-implement them here. Sparse graph
-> topology, Tanner-graph generation, and peeling belong to `sgraph`. Wire
-> formats, shard ownership, rate adaptation, degree distributions, and codec
-> shells belong to consumers. This crate receives a matrix and returns facts
-> about it.
+Working rules for `gfm`. Rustdoc owns API contracts, `README.md` owns adoption
+and usage, `BENCHMARKS.md` owns public measurements, and `CHANGELOG.md` owns
+release changes and migration guidance.
 
-## Non-negotiables
+## Scope and ownership
 
-1. **One elimination per storage domain.** Every rank, determinant, inverse,
-   echelon form, kernel, and solve is a reader of `Ple`. Adding a second
-   pivoting loop is the defect this crate was created to remove.
-2. **No `unsafe`.** Forbidden at the crate root. Vector kernels come from
-   `fgf`.
-3. **One dependency.** `fgf`, pinned by rev. `rayon` optional and off. Adding
-   `sgraph`, `lattica`, `cafft`, `simdispatch`, or `archmage` inverts or
-   crosses the stack's layering; CI fails the build.
-4. **Never re-host field arithmetic.** Call `fgf::ops` directly. Do not wrap,
-   rename, or re-export it under a new name.
-5. **Layout is a type invariant.** 32-byte aligned base, pitch a multiple of
-   32, padding zero and staying zero. Breaking one silently costs a measured
-   1.4x.
-6. **Rank deficiency is not an error.** Only inconsistency is.
-7. **`inv(0) == 0` is inherited.** Test pivots with `is_zero()`; never infer
-   singularity from a division result.
-8. **Numbers live in `BENCHMARKS.md`.** Doc comments state the decision and
-   the mechanism and point there.
-9. **Do not land a performance change on reasoning alone.** A/B it, keep both
-   twins compiled, record the ratio.
-10. **Oracles stay independent.** An implementation is never its own test.
+`gfm` owns matrices over GF(2) and GF(2^m), rank-revealing decompositions,
+streaming echelon state, and hybrid sparse/dense solving. It receives equations
+and returns matrix facts or solutions; it is not a codec.
 
-## Tooling
+Field arithmetic and packed row operations belong to `fgf`. Structured
+Cauchy and Vandermonde matrices belong to `structmat`; polynomial-matrix
+reduction belongs to `polymat`. Wire formats, shards, graph generation,
+rate adaptation, and recovery protocols belong to consumers.
 
-`just validate` is the pull-request gate; the shared recipe surface is
-documented once in the umbrella's root `AGENTS.md`.
+## Required workflow
 
-- **`TIERS = v3_gfni_crypto v3 v2 v1 scalar`** — five, one more than the kernel
-  crates declare, because the `v1` x86-64 baseline is a distinct path for the
-  `fgf` row operations that elimination and scaling drive. `gfm` owns no
-  kernels of its own; it owns the aligned row layout they run over, which is
-  why the sweep is worth its runtime. `just test-tiers` and `just cover` re-run
-  pinned to each of the five.
-- **`MIRI` is empty** — non-negotiable 2, no `unsafe` at the crate root, so
-  `just unsafe-check` reports that and skips. `COV_IGNORE` is empty: every line
-  counts toward the 95% gate.
-- **Bench targets:** `cauchy_inverse`, `hybrid`, `rfc_scale`, `tuning`,
-  `parallel`, `competitors` — `just bench-save hybrid`, then `just bench
-  hybrid`. `tuning` needs `internals` and `parallel` needs `parallel` +
-  `internals`; the bench recipes pass `--all-features`, so both build.
-- `justfile` is a byte-identical vendored copy — editing it here fails the
-  umbrella's `just drift` check. Crate-specific values and recipes go in
-  `crate.just`.
+Run routine commands from the crate root through `just`:
 
-## Working here
+```sh
+just doctor
+just test [ARGS]
+just features
+just test-tiers
+just lint
+just doc
+just msrv
+just validate
+```
 
-- Edition 2024, MSRV 1.89. No toolchain pin; select `+1.89.0` explicitly for
-  the MSRV check.
-- Features: `default = ["std", "simd"]`; `simd` implies `std`; `parallel` is
-  an off-by-default no-op placeholder; `internals` exposes this crate's
-  unstable surface (never `fgf`'s — we do not enable it).
-- `src/lib.rs` and every `mod.rs` hold declarations only — no function
-  bodies, no `impl` blocks. Public items are re-exported at the crate root.
-- Errors are hand-rolled in `src/error.rs`: small enums per failure domain,
-  struct variants carrying the offending value and the limit, manual
-  `Display`, `std::error::Error` under `std`. Every fallible public function
-  documents `# Errors`.
-- Test placement follows visibility: in-module `#[cfg(test)]` for private
-  state, `tests/` for the public surface. Fixed-seed LCG only (`fgf`'s
-  `noise(len, seed)` shape); no `rand`, no nondeterminism. Exact values, not
-  predicates.
-- The full check set:
+`just validate` is the pull-request gate. It includes the dependency check,
+feature tests, backend sweep, unsafe check, and coverage gate. A focused
+regression runs before the complete gate. The MSRV is Rust 1.93, edition 2024,
+matching the field dependency's feature floor.
 
-  ```sh
-  cargo fmt --all -- --check
-  cargo clippy --all-targets --all-features -- -D warnings
-  cargo clippy --all-targets --no-default-features -- -D warnings
-  cargo test
-  cargo test --all-features
-  cargo test --no-default-features
-  RUSTDOCFLAGS="-D warnings" cargo doc --all-features --no-deps
-  cargo build --target aarch64-unknown-linux-gnu --no-default-features
-  cargo build --target wasm32-unknown-unknown --no-default-features
-  cargo +1.89.0 build --all-features
-  ```
+`justfile` is a byte-identical shared file; never edit the vendored copy.
+Crate-specific values and recipes belong in `crate.just`.
 
-- Benchmarks go through `criterion`; baselines are deliberately not
-  committed. Measurement hygiene: interleave base/new, take the maximum of at
-  least three runs, keep an unchanged 1.00x control, treat 16–128 byte rows
-  as noise.
-- Commit subjects are at most ~10 words, shaped `gfm: short verb phrase`.
-  What changed and why lives in the pull request and `CHANGELOG.md`.
+## Algebra and storage contracts
+
+- Batch rank, determinant, RREF, kernel, solve, and inverse derive from one
+  `Ple` factorization per storage domain. Do not add another batch pivoting
+  engine for a solved problem.
+- `SmallMatrix<F, K>` is the bounded compact-matrix exception. Its public
+  comparison against `Ple` belongs in `BENCHMARKS.md`; extending its order
+  bound or adding another elimination requires independent correctness and
+  paired measurements.
+- Rank deficiency is a normal factorization result. Inconsistent systems and
+  singular inverse requests use the documented `SolveError` variants.
+- `fgf` defines `inv(0) == 0`; test pivots explicitly rather than inferring
+  singularity from division.
+- Dense storage has a 32-byte-aligned base, pitch divisible by 32, and zero
+  padding. Bit storage follows `fgf::bits`'s LSB-first layout with pitch
+  divisible by 64. These are type invariants, not caller cleanup duties.
+- Logical row swaps update the row map. Physical compaction remains explicit.
+- Reusable factorization and mutable execution scratch remain distinct.
+  State which calls allocate, which warm workspace, and which reuse it.
+- Use the ecosystem mutation vocabulary: `_into` overwrites, `_assign` reads
+  and replaces its destination, `_add` accumulates, and `_with` uses prepared
+  state. Output-writing free functions take the destination first.
+
+## Modules and features
+
+The existing `dense`, `bits`, `incremental`, and `hybrid` subtrees use `mod.rs`.
+Keep that style. Parent modules hold documentation, declarations, re-exports,
+and genuinely shared items; concrete implementations belong to their owners.
+
+`src/internals.rs` is the sole feature-gated, re-export-only facade. It contains
+no implementation bodies. The extension traits and implementations in private
+`src/internal_api.rs` compile in every feature configuration and expose
+otherwise crate-private inspection and experiment methods without making them
+stable inherent methods. Combining these files under the facade's gate would
+make `internals` control compilation rather than reachability.
+
+`internals = []` activates no dependencies and carries no compatibility promise.
+Benchmarks and integration targets using it declare `required-features`;
+private unit tests need no facade. Never enable another crate's `internals` in
+a runtime dependency.
+
+The runtime dependency set is exact-pinned `fgf` and optional `rayon`.
+`simd` implies `std`; `parallel` implies `std` and is off by default.
+Without default features the crate uses `no_std` plus `alloc`; owning matrix
+storage still allocates. Do not introduce `std` outside its functional gate.
+
+## Backend selection
+
+`gfm` owns no SIMD kernels. `backend_for::<F>()` delegates to `fgf`'s per-field
+selection. `simdispatch`, reached through `fgf`, owns CPU detection, ordering,
+and the process-startup downgrade-only `SIMD_BACKEND` request. Do not add a
+second detector, override, or cache.
+
+`crate.just` declares `v3_gfni_crypto v3 v2 v1 scalar`. This is a requested x86
+sweep, not proof those tiers executed: unsupported requests can fall back.
+Record resolved field backends when collecting measurements. The fingerprint
+test writes the requested override and resolved field backends directly to stderr,
+including during captured tier-test runs. Other architecture runs must account
+for their actual field backend rather than treating x86 requests as coverage.
+
+## Safety and tests
+
+Library code uses `#![forbid(unsafe_code)]`; architecture intrinsics stay in
+`fgf`. The test-only `GlobalAlloc` adapter in `tests/zero_alloc.rs` is outside
+that crate attribute. Its unsafe forwarding operations require per-item
+allowances and SINCE–THUS proofs under the umbrella rules; do not treat the
+library's attribute as evidence that the entire repository contains no unsafe.
+
+| Item | Residue | Proof |
+| --- | --- | --- |
+| `tests/zero_alloc.rs`: `CountingAllocator`'s `GlobalAlloc` implementation | Test-only allocator callbacks | Unchanged pointers and layouts forward to `System`; fallible TLS access and wrapping counter arithmetic prevent bookkeeping unwinding. Each forwarding block states its caller-supplied obligations. |
+
+`MIRI` is empty, so `just unsafe-check` reports a skip. `COV_IGNORE` is empty:
+every library line counts toward the coverage gate.
+
+- Use the built-in Rust harness and deterministic helpers from `tests/common`.
+- Public contracts belong in integration tests; private state belongs in local
+  unit tests. Cross-domain comparisons use an independent algebraic oracle.
+- Tests assert values, failure variants, boundaries, and state preservation.
+  Do not pin source text, Debug formatting, error wording, field copies, or
+  forwarding. Panic tests match only a stable operation-specific fragment.
+- Allocation promises require counting-allocator coverage. Warmup and output
+  allocation occur before the counted execution interval.
+- A green forced-tier run is not execution evidence. Inspect the backend used
+  by the operation and report unsupported coverage explicitly.
+
+## Benchmarks
+
+Use CPU 3 on the Intel Core Ultra 7 258V and CPU 8 on the Core i7-12700K
+available as SSH alias `suisei-cachy`. Verify actual process affinity. Do not
+constrain a multiworker scaling experiment to one CPU; record worker placement
+separately from the serial campaign.
+
+```sh
+FEC_GOLDEN_CORE=3 RAYON_NUM_THREADS=1 just bench-save hybrid
+FEC_GOLDEN_CORE=3 RAYON_NUM_THREADS=1 just bench hybrid
+```
+
+`bench-save NAME` and `bench NAME` select a benchmark target, not a named
+baseline. Criterion's saved baseline is `before`. The public targets are
+`hybrid` and `rfc_scale`; `tuning` mixes public comparisons with internal
+variants, and `parallel` exposes the row dispatcher for threshold work.
+Do not publish an entire target's output without classifying its operations.
+
+Record public API and competitor timings only in `BENCHMARKS.md`. Each new run
+adds rows to the relevant table, with units in headers and `-` for unavailable
+values. Put factual reproduction details and caveats beneath tables, not
+result commentary. Internal timers, profiling shares, tuning twins, candidate
+journals, and rejected internal experiments belong in git-ignored storage.
+
+A new campaign reruns its baseline in the same session, interleaves variants,
+keeps an unchanged control, and records CPU, OS, toolchain, dependency versions,
+actual operation backend, affinity, flags, geometry, aggregation, and warmup.
+Check correctness before measuring. Never infer a speedup from cross-session
+numbers or change a threshold from reasoning alone.
+
+The native competitor harness is a separate ignored package under
+`external-bench/competitors/`. FLINT, M4RI, M4RIE, and FFLAS-FFPACK must not
+enter the published crate's build or dependency graph. Missing native libraries
+must be reported; a successful command is not proof every comparator ran.
+
+## Documentation and release
+
+Public items and modules need summary sentences and complete errors, panics,
+layout, and ownership contracts. Use third person, present tense, and plain
+words. Keep measurements out of comments and guides, linking the public record
+instead. Public files never cite private planning material.
+
+The package allowlist includes sources, tests, benchmarks, and user-facing
+release documents. `AGENTS.md`, `BENCHMARKS.md`, the command surface, CI, and
+external tools stay outside the package. The changelog keeps an `Unreleased`
+section above release entries; breaking entries include migration guidance.
+
+Umbrella patches are for local integration only. Release verification and
+lockfile regeneration run outside the umbrella against published dependencies;
+do not edit pins or the umbrella patch table to hide a resolution failure.
+Further Cargo commands beneath the umbrella can rewrite the registry lock.
+
+Commit subjects use `gfm: short verb phrase`. One crate per pull request,
+validation before opening it, dependencies landed and green before consumer
+pins, and no publication without explicit authorization.

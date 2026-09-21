@@ -32,9 +32,9 @@ fn mul_add_coefficients<F: FieldKernels>(dst: &mut [u8], factor: F::Elem, src: &
         for i in 0..dst.len() / F::BYTES {
             let d = &mut dst[i * F::BYTES..(i + 1) * F::BYTES];
             let value = factor
-                .mul(F::read(&src[i * F::BYTES..(i + 1) * F::BYTES]))
-                .add(F::read(d));
-            F::write(d, value);
+                .mul(F::decode(&src[i * F::BYTES..(i + 1) * F::BYTES]))
+                .add(F::decode(d));
+            F::encode(d, value);
         }
     } else {
         crate::row_ops::mul_add::<F>(dst, factor, src);
@@ -129,7 +129,7 @@ impl<'a, F: FieldKernels> RetainedRow<'a, F> {
     /// # Panics
     ///
     /// Panics unless `out` contains exactly `cols` field elements.
-    pub fn mul_add_coefficients_into(&self, out: &mut [u8], factor: F::Elem) {
+    pub fn mul_coefficients_add(&self, out: &mut [u8], factor: F::Elem) {
         assert_eq!(out.len(), self.cols * F::BYTES, "coefficient output length");
         let dst_start = self.pivot * F::BYTES;
         let src_start = self.physical;
@@ -221,9 +221,9 @@ impl<F: FieldKernels> Echelon<F> {
             })
     }
 
-    /// Whether `column` already owns a retained pivot.
+    /// Whether `column` owns a retained pivot.
     #[must_use]
-    pub fn has_pivot(&self, column: usize) -> bool {
+    pub fn is_pivot(&self, column: usize) -> bool {
         self.pivot_of_col[self.logical_to_physical(column)].is_some()
     }
 
@@ -350,7 +350,7 @@ impl<F: FieldKernels> Echelon<F> {
             .enumerate()
         {
             let start = physical * F::BYTES;
-            let factor = F::read(&self.scratch_coeffs[start..start + F::BYTES]);
+            let factor = F::decode(&self.scratch_coeffs[start..start + F::BYTES]);
             if factor.is_zero() {
                 continue;
             }
@@ -389,7 +389,7 @@ impl<F: FieldKernels> Echelon<F> {
                     continue;
                 }
                 let start = physical * F::BYTES;
-                let factor = F::read(&self.scratch_coeffs[start..start + F::BYTES]);
+                let factor = F::decode(&self.scratch_coeffs[start..start + F::BYTES]);
                 if factor.is_zero() {
                     continue;
                 }
@@ -445,7 +445,7 @@ impl<F: FieldKernels> Echelon<F> {
     fn retain_scratch_row(&mut self, pivot: usize) -> (usize, usize, usize) {
         let pivot_physical = self.logical_to_physical(pivot);
         let pivot_start = pivot_physical * F::BYTES;
-        let pivot_val = F::read(&self.scratch_coeffs[pivot_start..pivot_start + F::BYTES]);
+        let pivot_val = F::decode(&self.scratch_coeffs[pivot_start..pivot_start + F::BYTES]);
         if !pivot_val.is_one() {
             let inv = pivot_val.inv();
             ops::mul_assign::<F>(&mut self.scratch_coeffs, inv);
@@ -457,7 +457,7 @@ impl<F: FieldKernels> Echelon<F> {
             .enumerate()
             .find(|&(_, physical)| {
                 let start = physical * F::BYTES;
-                !F::read(&self.scratch_coeffs[start..start + F::BYTES]).is_zero()
+                !F::decode(&self.scratch_coeffs[start..start + F::BYTES]).is_zero()
             })
             .map(|(from_end, _)| self.cols - 1 - from_end)
             .expect("the pivot is nonzero");

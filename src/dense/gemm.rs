@@ -22,7 +22,7 @@ pub fn mul_into<F: FieldKernels>(out: &mut Matrix<F>, a: &Matrix<F>, b: &Matrix<
     for r in 0..out.rows() {
         out.row_mut(r).fill(0);
     }
-    mul_add_into(out, a, b);
+    mul_add(out, a, b);
 }
 
 /// `C ^= A · B`, accumulating into `C`.
@@ -30,7 +30,7 @@ pub fn mul_into<F: FieldKernels>(out: &mut Matrix<F>, a: &Matrix<F>, b: &Matrix<
 /// # Panics
 ///
 /// Panics unless `c` is `a.rows × b.cols` and `a.cols == b.rows`.
-pub fn mul_add_into<F: FieldKernels>(c: &mut Matrix<F>, a: &Matrix<F>, b: &Matrix<F>) {
+pub fn mul_add<F: FieldKernels>(c: &mut Matrix<F>, a: &Matrix<F>, b: &Matrix<F>) {
     check_shapes(c, a, b);
     for i in 0..c.rows() {
         for t in 0..a.cols() {

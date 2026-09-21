@@ -102,7 +102,7 @@ impl Ple {
             for row in 0..piv {
                 if out.get(row, pivot_col) {
                     let (row_dst, row_src) = out.two_live_rows(row, piv);
-                    bits::xor(row_dst, row_src);
+                    bits::xor_assign(row_dst, row_src);
                 }
             }
         }
@@ -188,7 +188,7 @@ impl Ple {
             for src in 0..top {
                 if lu.get(row, src) {
                     let (row_dst, row_src) = ws.two_live_rows(row, src);
-                    bits::xor(row_dst, row_src);
+                    bits::xor_assign(row_dst, row_src);
                 }
             }
         }
@@ -207,7 +207,7 @@ impl Ple {
             for term in (piv + 1)..rank {
                 if lu.get(piv, term) {
                     let (row_dst, row_src) = out.two_live_rows(piv, term);
-                    bits::xor(row_dst, row_src);
+                    bits::xor_assign(row_dst, row_src);
                 }
             }
             // Pivot is one; no scaling.
@@ -251,7 +251,7 @@ impl Ple {
             for src in 0..row {
                 if lu.get(row, src) {
                     let (row_dst, row_src) = out.two_live_rows(row, src);
-                    bits::xor(row_dst, row_src);
+                    bits::xor_assign(row_dst, row_src);
                 }
             }
         }
@@ -259,7 +259,7 @@ impl Ple {
             for term in (piv + 1)..order {
                 if lu.get(piv, term) {
                     let (row_dst, row_src) = out.two_live_rows(piv, term);
-                    bits::xor(row_dst, row_src);
+                    bits::xor_assign(row_dst, row_src);
                 }
             }
             // Pivot is one; no scaling.

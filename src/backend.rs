@@ -28,11 +28,11 @@ use fgf::FieldKernels;
 pub fn backend_for<F: FieldKernels>() -> Backend {
     fgf::backend_for::<F>()
 }
-/// Measured dense-elimination panel width for the active shape and backend.
+/// Dense-elimination panel width for the active shape and backend.
 ///
-/// The A/B twin is panel width one. Only this host's `V3GfniCrypto` kernels
-/// have measured blocking decisions; every unmeasured backend keeps the plain
-/// A/B measurements and retained thresholds are recorded in `BENCHMARKS.md`.
+/// Blocking is applied only where a measurement selected it; every other
+/// backend and shape uses the unblocked sweep. The comparison and the
+/// retained thresholds are recorded in `BENCHMARKS.md`.
 pub(crate) fn panel_width<F: FieldKernels>(rows: usize, cols: usize) -> usize {
     if backend_for::<F>() != Backend::V3GfniCrypto {
         return 1;
