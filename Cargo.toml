@@ -42,7 +42,7 @@ internals = []
 # at an exact release: a floating dependency is a format-break risk when the
 # dependency feeds wire bytes, and the exact pin keeps one copy resolving
 # across the ecosystem consumers.
-fgf = { version = "=1.1.1", default-features = false }
+fgf = { version = "=1.2.1", default-features = false }
 rayon = { version = "=1.12.0", optional = true }
 
 [dev-dependencies]

@@ -6,6 +6,11 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- The `fgf` pin moves to `=1.2.1`, matching the rest of the published
+  closure so one field copy resolves. No API change; results are unchanged.
+
 ## [1.0.0] - 2026-09-21
 
 ### Added

@@ -39,7 +39,7 @@ same `fgf` release as the library so field types match:
 ```toml
 [dependencies]
 gfm = "=1.0.0"
-fgf = "=1.1.1"
+fgf = "=1.2.1"
 ```
 
 For portable `no_std` execution, matrix storage still requires `alloc`:
@@ -47,7 +47,7 @@ For portable `no_std` execution, matrix storage still requires `alloc`:
 ```toml
 [dependencies]
 gfm = { version = "=1.0.0", default-features = false }
-fgf = { version = "=1.1.1", default-features = false }
+fgf = { version = "=1.2.1", default-features = false }
 ```
 
 ## Quick start
