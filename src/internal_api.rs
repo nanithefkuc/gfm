@@ -7,7 +7,7 @@ use crate::bits::{BitMatrix, Ple as BitPle, PleScratch as BitPleScratch};
 use crate::dense::{Matrix, Perm, Ple, PleScratch};
 use crate::hybrid::{Hybrid, Solution, SolveStats};
 
-/// Physical-layout inspection of a GF(2^m) matrix.
+/// Physical-layout inspection of a packed-element matrix.
 pub trait MatrixInternals {
     /// Address of the first byte of the physical backing region. A multiple
     /// of [`crate::dense::layout::ALIGN`] by construction.
@@ -71,7 +71,7 @@ impl BitMatrixInternals for BitMatrix {
     }
 }
 
-/// Decomposition storage and the trailing-update candidates of the GF(2^m)
+/// Decomposition storage and the trailing-update candidates of the packed
 /// elimination.
 pub trait PleInternals<F: FieldKernels> {
     /// The in-place `L`/`U` storage: factors below the diagonal, `U` on and

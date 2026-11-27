@@ -1,6 +1,6 @@
 //! Matrix multiply, built on `fgf::ops` row kernels.
 //!
-//! `C ^= A·B` one destination row at a time: each term is one
+//! `C = A·B` one destination row at a time: each term is one
 //! [`fgf::ops::mul_add`] with the coefficient read from `A`. Zero coefficients are
 //! skipped before the kernel call, so the per-row cost scales with the
 //! nonzero weight of `A`'s row, not its width. Every multiplication goes
@@ -25,7 +25,7 @@ pub fn mul_into<F: FieldKernels>(out: &mut Matrix<F>, a: &Matrix<F>, b: &Matrix<
     mul_add(out, a, b);
 }
 
-/// `C ^= A · B`, accumulating into `C`.
+/// `C += A · B`, accumulating into `C`.
 ///
 /// # Panics
 ///

@@ -375,13 +375,24 @@ impl<F: FieldKernels> Hybrid<F> {
     /// Adds a binary (all-ones) equation on the sorted, distinct `support`,
     /// with `rhs` its `sym_len`-byte payload.
     ///
+    /// In characteristic two the row keeps the packed unit-coefficient form;
+    /// elsewhere it widens immediately, because packed rows cancel entries
+    /// pairwise and `1 + 1` does not vanish outside characteristic two.
+    ///
     /// # Panics
     ///
     /// Panics if `support` is not sorted/in range, or `rhs` is the wrong size.
     pub fn push_binary_row(&mut self, support: &[u32], rhs: &[u8]) {
         self.check_support(support);
         assert_eq!(rhs.len(), self.sym_len, "payload length");
-        self.rows.push(Row::binary(support.to_vec()));
+        if F::CHARACTERISTIC == 2 {
+            self.rows.push(Row::binary(support.to_vec()));
+        } else {
+            self.rows.push(Row::field(
+                support.to_vec(),
+                vec![F::Elem::ONE; support.len()],
+            ));
+        }
         self.rhs.extend_from_slice(rhs);
         self.deferred.push(false);
         self.index_layout_dirty = true;
@@ -801,7 +812,10 @@ impl<F: FieldKernels> Hybrid<F> {
         }
     }
 
-    /// `rhs[dst] ^= factor · rhs[src]`.
+    /// `rhs[dst] += factor · rhs[src]` over the payload rows, one field AXPY.
+    ///
+    /// Callers eliminating against a pivot pass the negated elimination
+    /// factor, so the accumulation subtracts.
     fn rhs_axpy(&mut self, dst: usize, src: usize, factor: F::Elem) {
         debug_assert_ne!(dst, src);
         let sym = self.sym_len;
@@ -1028,7 +1042,9 @@ impl<F: FieldKernels> Hybrid<F> {
                     if entry.is_zero() {
                         continue; // stale listing (cancelled entry)
                     }
-                    factor = entry.mul(pivot_inv);
+                    // The update subtracts `factor · pivot_row`; the AXPY
+                    // primitives accumulate, so the factor carries the sign.
+                    factor = entry.mul(pivot_inv).neg();
                     merged_weight = if self.work_rows[r].binary && pivot_binary && factor.is_one() {
                         // The hot GF(2) combination: active lists XOR, frozen
                         // words XOR wholesale.
@@ -1319,6 +1335,8 @@ impl<F: FieldKernels> Hybrid<F> {
                 self.gather_scratch = gather;
                 for &column in &work_row.cols {
                     if column != pivot_col {
+                        // Packed rows exist only in characteristic two, where
+                        // subtraction is the addition this kernel performs.
                         let (dst, src) = values.two_live_rows(pivot_col as usize, column as usize);
                         ops::add_assign::<F>(dst, src);
                     }
@@ -1330,7 +1348,7 @@ impl<F: FieldKernels> Hybrid<F> {
                         return;
                     }
                     let (dst, src) = values.two_live_rows(pivot_col as usize, column as usize);
-                    crate::row_ops::mul_add::<F>(dst, coefficient, src);
+                    crate::row_ops::mul_add::<F>(dst, coefficient.neg(), src);
                 });
             }
             if !pivot_inv.is_one() {
@@ -1373,7 +1391,7 @@ impl<F: FieldKernels> Hybrid<F> {
                             }
                             let (dst, src) =
                                 dependencies.two_live_rows(pivot_col as usize, column as usize);
-                            crate::row_ops::mul_add::<F>(dst, coefficient, src);
+                            crate::row_ops::mul_add::<F>(dst, coefficient.neg(), src);
                         });
                     }
                     if !pivot_inv.is_one() {
@@ -1670,7 +1688,12 @@ impl<F: FieldKernels> Hybrid<F> {
             let mut lane = 0;
             while lane < deferred_count {
                 if mask & (1u64 << lane) != 0 {
-                    let factor = self.release_lane[pivot_col as usize][lane].mul(pivot_inv);
+                    // The substitution subtracts `factor · pivot_row`; the
+                    // accumulators and the replayed payload operation both
+                    // add, so the factor carries the sign.
+                    let factor = self.release_lane[pivot_col as usize][lane]
+                        .mul(pivot_inv)
+                        .neg();
                     if !factor.is_zero() {
                         self.deferred_rhs_ops
                             .push((lanes[lane] as u32, pivot_row as u32, factor));
