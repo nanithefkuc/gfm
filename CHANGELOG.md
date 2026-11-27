@@ -22,6 +22,8 @@ to 1.0.2. No API change. [#28](https://github.com/nanithefkuc/gfm/issues/28).
   mis-solved or make the solve loop forever in any field.
   [#13](https://github.com/nanithefkuc/gfm/issues/13).
 
+Release PR: [#30](https://github.com/nanithefkuc/gfm/pull/30).
+
 ## [1.0.1] - 2026-09-25
 
 ### Changed
