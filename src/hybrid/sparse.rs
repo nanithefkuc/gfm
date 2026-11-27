@@ -228,12 +228,11 @@ impl<F: FieldBuffer> Row<F> {
 
     /// Widens a packed row into the flat list form: all columns (active plus
     /// frozen, re-sorted) with unit coefficients. Never reverses.
-    #[allow(clippy::assert_is_empty)]
     pub(crate) fn materialize(&mut self, frozen_cols: &[u32]) -> bool {
         if !self.binary {
             return false;
         }
-        debug_assert!(self.coeffs.is_empty());
+        debug_assert_eq!(self.coeffs.len(), 0, "packed rows carry no coefficients");
         for word in 0..self.frozen.len() {
             let mut bits = self.frozen[word];
             while bits != 0 {
