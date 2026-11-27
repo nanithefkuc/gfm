@@ -17,7 +17,7 @@ use common::{draw, noise};
 
 use gfm::bits::{Ple, PleScratch, SolveScratch};
 use gfm::internals::{BitPleInternals, PleInternals};
-use gfm::{BitMatrix, Matrix, Ple as DensePle, PleScratch as DensePleScratch, SolveError};
+use gfm::{BitMatrix, Matrix, Ple as DensePle, SolveError};
 
 /// A GF(2) matrix as plain rows of bits.
 type Naive = Vec<Vec<bool>>;
@@ -150,7 +150,7 @@ fn rank_samples(m: usize, n: usize) -> Vec<usize> {
 fn check_case(rows: usize, cols: usize, rank: usize, seed: u64) {
     let a = naive_with_rank(rows, cols, rank, seed);
     let bits = Ple::decompose(bit_matrix(&a, cols), &mut PleScratch::new());
-    let dense = DensePle::decompose(dense_matrix(&a, cols), &mut DensePleScratch::new());
+    let dense = DensePle::decompose(dense_matrix(&a, cols));
 
     assert_eq!(bits.rank(), rank, "constructed rank");
     assert_eq!(bits.rank(), dense.rank(), "rank vs dense");
@@ -283,7 +283,7 @@ fn rref_skips_dead_leading_columns() {
                 }
             }
             // And it agrees with the dense twin bit for bit.
-            let dense = DensePle::decompose(dense_matrix(&a, cols), &mut DensePleScratch::new());
+            let dense = DensePle::decompose(dense_matrix(&a, cols));
             let mut r_dense = Matrix::<Gf8B>::zeros(rows, cols).unwrap();
             dense.rref_into(&mut r_dense);
             for r in 0..rows {
@@ -380,7 +380,7 @@ fn det_matches_full_rank() {
         for rank in rank_samples(n, n) {
             let a = naive_with_rank(n, n, rank, 0xDE00 ^ ((n | rank << 16) as u64));
             let bits = Ple::decompose(bit_matrix(&a, n), &mut PleScratch::new());
-            let dense = DensePle::decompose(dense_matrix(&a, n), &mut DensePleScratch::new());
+            let dense = DensePle::decompose(dense_matrix(&a, n));
             assert_eq!(bits.det(), rank == n, "det value at n={n} rank={rank}");
             assert_eq!(
                 bits.det(),
@@ -686,7 +686,7 @@ mod byte_for_byte {
             (130, 128, 70),
         ] {
             let a = naive_with_rank(m, n, rank, 0x9A00 ^ ((m << 8 | n | rank << 16) as u64));
-            let dense = DensePle::decompose(dense_matrix(&a, n), &mut DensePleScratch::new());
+            let dense = DensePle::decompose(dense_matrix(&a, n));
             for width in [1, 2, 3, 7, 64, 256] {
                 let bits = Ple::decompose_with_panel_width(
                     bit_matrix(&a, n),

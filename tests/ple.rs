@@ -17,8 +17,7 @@ use common::{draw, noise};
 use fgf::{Elem, FieldBuffer, FieldElem};
 use gfm::internals::PleInternals;
 use gfm::{
-    Matrix, Ple, PleScratch, SolveScratch, mul_add, mul_into, solve_lower_unit_assign,
-    solve_upper_assign,
+    Matrix, Ple, SolveScratch, mul_add, mul_into, solve_lower_unit_assign, solve_upper_assign,
 };
 use oracles::{
     Naive, crate_matrix, matrix_of, naive_det, naive_identity, naive_mul, naive_noise, naive_of,
@@ -38,7 +37,7 @@ fn naive_zero<F: FieldBuffer>(rows: usize, cols: usize) -> Naive<F> {
 /// reassembles to the input — the independent certificate.
 fn check_case<F: FieldBuffer>(rows: usize, cols: usize, rank: usize, seed: u64) {
     let a = packed_with_rank::<F>(rows, cols, rank, seed);
-    let ple = Ple::decompose(matrix_of::<F>(&a, cols), &mut PleScratch::new());
+    let ple = Ple::decompose(matrix_of::<F>(&a, cols));
     let o = oracle_ple_packed::<F>(&a, cols);
     assert_eq!(ple.rank(), o.rank, "rank at ({rows}, {cols}, r{rank})");
     assert_eq!(
@@ -94,7 +93,7 @@ fn with_dead_leading<F: FieldBuffer>(
 
 fn check_dense_rref<F: FieldBuffer>(rows: usize, cols: usize, dead: usize, rank: usize, seed: u64) {
     let a = with_dead_leading::<F>(rows, cols, dead, rank, seed);
-    let ple = Ple::decompose(crate_matrix::<F>(&a), &mut PleScratch::new());
+    let ple = Ple::decompose(crate_matrix::<F>(&a));
     assert_eq!(ple.rank(), rank, "rank at ({rows}, {cols}, dead {dead})");
     // The dead columns cannot be independent: the profile skips them.
     assert!(
@@ -138,7 +137,7 @@ fn scalar_oracle_deep_check() {
                     0xA800 + ((rows << 8 | cols | rank << 16) as u64),
                 );
                 let o = oracle_ple::<Gf8B>(&a);
-                let ple = Ple::decompose(crate_matrix::<Gf8B>(&a), &mut PleScratch::new());
+                let ple = Ple::decompose(crate_matrix::<Gf8B>(&a));
                 assert_eq!(ple.rank(), o.rank, "rank at ({rows}, {cols}, r{rank})");
                 assert_eq!(
                     reassemble(&o),
@@ -235,7 +234,7 @@ fn narrow_trailing_window_reports_last_column_rank() {
         data[r * cols + (cols - 1)] = 1 + r as u8;
     }
     let matrix = Matrix::<Gf8B>::from_rows(rows, cols, &data).unwrap();
-    let ple = Ple::decompose_with_panel_width(matrix, &mut PleScratch::new(), 3);
+    let ple = Ple::decompose_with_panel_width(matrix, 3);
     assert_eq!(ple.rank(), 1);
     assert_eq!(ple.col_rank_profile(), &[cols - 1]);
     assert_eq!(ple.pivot_rows(), &[0]);
@@ -266,7 +265,7 @@ fn pivot_row_coupling_below_the_diagonal_still_solves() {
             m.set(i, j, Gf8B::decode(&[next().max(1)]));
         }
     }
-    let ple = Ple::decompose_with_panel_width(m, &mut PleScratch::new(), 2);
+    let ple = Ple::decompose_with_panel_width(m, 2);
     assert_eq!(ple.rank(), n);
     // Reassembly: P·L·U·Q reproduces the input.
     let lu = ple.lu().clone();
@@ -297,12 +296,12 @@ fn empty_window_reports_no_pivot() {
     // return through the smallest possible panel width.
     let (rows, cols) = (6usize, 8usize);
     let zero = Matrix::<Gf8B>::zeros(rows, cols).unwrap();
-    let ple = Ple::decompose_with_panel_width(zero, &mut PleScratch::new(), 4);
+    let ple = Ple::decompose_with_panel_width(zero, 4);
     assert_eq!(ple.rank(), 0);
     assert!(ple.pivot_rows().is_empty());
     assert!(ple.col_rank_profile().is_empty());
     let zero = Matrix::<Gf8B>::zeros(rows, cols).unwrap();
-    let ple = Ple::decompose_with_panel_width(zero, &mut PleScratch::new(), 1);
+    let ple = Ple::decompose_with_panel_width(zero, 1);
     assert_eq!(ple.rank(), 0);
 }
 
@@ -317,7 +316,7 @@ fn exhausted_window_skips_past_dead_columns() {
         data[r * cols] = 1 + r as u8;
     }
     let matrix = Matrix::<Gf8B>::from_rows(rows, cols, &data).unwrap();
-    let ple = Ple::decompose_with_panel_width(matrix, &mut PleScratch::new(), 1);
+    let ple = Ple::decompose_with_panel_width(matrix, 1);
     assert_eq!(ple.rank(), 1);
     assert_eq!(ple.col_rank_profile(), &[0]);
 }
@@ -337,9 +336,7 @@ fn rank_is_invariant() {
             rank,
             "construction is exact-rank"
         );
-        let crate_rank = |m: &Naive<Gf16>| {
-            Ple::decompose(crate_matrix::<Gf16>(m), &mut PleScratch::new()).rank()
-        };
+        let crate_rank = |m: &Naive<Gf16>| Ple::decompose(crate_matrix::<Gf16>(m)).rank();
 
         // Row permutation.
         let mut idx: Vec<usize> = (0..rows).collect();
@@ -393,7 +390,7 @@ fn det_matches_cofactor() {
     for n in 1..=6usize {
         for rank in 0..=n {
             let a = naive_with_rank::<Gf16>(n, n, rank, 0xDE00 + ((n << 4 | rank) as u64));
-            let ple = Ple::decompose(crate_matrix::<Gf16>(&a), &mut PleScratch::new());
+            let ple = Ple::decompose(crate_matrix::<Gf16>(&a));
             let expected = naive_det::<Gf16>(&a);
             assert_eq!(ple.det(), expected, "det at n={n}, rank {rank}");
             assert_eq!(ple.det().is_zero(), rank < n, "det zero iff rank < n");
@@ -409,7 +406,7 @@ fn kernel_basis_is_a_kernel() {
         let cols = rows + draw(&mut state, 16);
         let rank = draw(&mut state, rows.min(cols) + 1);
         let a = naive_with_rank::<Gf8B>(rows, cols, rank, 0xBE00 + case);
-        let ple = Ple::decompose(crate_matrix::<Gf8B>(&a), &mut PleScratch::new());
+        let ple = Ple::decompose(crate_matrix::<Gf8B>(&a));
         let mut kernel = Matrix::<Gf8B>::zeros(cols, cols - rank).unwrap();
         ple.kernel_into(&mut kernel);
         // A·K == 0, by naive multiply.
@@ -424,7 +421,7 @@ fn kernel_basis_is_a_kernel() {
             "rank + kernel_dim == cols"
         );
         // The basis itself has full column rank.
-        let kple = Ple::decompose(kernel, &mut PleScratch::new());
+        let kple = Ple::decompose(kernel);
         assert_eq!(kple.rank(), cols - rank, "kernel basis full rank");
     }
 }
@@ -434,7 +431,7 @@ fn inverse_round_trips() {
     for n in 1..=24usize {
         for rank in [n, n / 2, n.saturating_sub(1)] {
             let a = naive_with_rank::<Gf16>(n, n, rank, 0x1B00 + ((n << 6 | rank) as u64));
-            let ple = Ple::decompose(crate_matrix::<Gf16>(&a), &mut PleScratch::new());
+            let ple = Ple::decompose(crate_matrix::<Gf16>(&a));
             let mut inv = Matrix::<Gf16>::zeros(n, n).unwrap();
             let result = ple.inverse_into(&mut inv);
             if rank < n {
@@ -482,7 +479,7 @@ fn diagonal_inverse_is_the_elementwise_inverse() {
         for (i, &d) in diag.iter().enumerate() {
             a.set(i, i, d);
         }
-        let ple = Ple::decompose(a.clone(), &mut PleScratch::new());
+        let ple = Ple::decompose(a.clone());
         assert_eq!(ple.rank(), n);
         let mut inv = Matrix::<F>::zeros(n, n).unwrap();
         ple.inverse_into(&mut inv).unwrap();
@@ -507,7 +504,7 @@ fn diagonal_inverse_is_the_elementwise_inverse() {
     for i in 1..n {
         a.set(i, i, Gf16::decode(&[3, 7]));
     }
-    let ple = Ple::decompose(a, &mut PleScratch::new());
+    let ple = Ple::decompose(a);
     assert_eq!(ple.rank(), n - 1);
     let mut inv = Matrix::<Gf16>::zeros(n, n).unwrap();
     assert_eq!(
@@ -522,7 +519,7 @@ fn diagonal_inverse_is_the_elementwise_inverse() {
 #[test]
 fn inverse_leaves_output_untouched_on_error() {
     let a = naive_with_rank::<Gf8B>(6, 6, 3, 0x5151);
-    let ple = Ple::decompose(crate_matrix::<Gf8B>(&a), &mut PleScratch::new());
+    let ple = Ple::decompose(crate_matrix::<Gf8B>(&a));
     let mut out = crate_matrix::<Gf8B>(&naive_noise::<Gf8B>(6, 6, 0x5EA7));
     let before = out.clone();
     assert!(ple.inverse_into(&mut out).is_err());
@@ -538,7 +535,7 @@ fn ple_moves_columns_when_the_pivot_is_not_leading() {
     for i in 0..n {
         m.set(i, n - 1 - i, Elem::<Gf8B>::ONE);
     }
-    let ple = Ple::decompose(m, &mut PleScratch::new());
+    let ple = Ple::decompose(m);
     assert_eq!(ple.rank(), n);
     assert_eq!(ple.det(), Elem::<Gf8B>::ONE);
     let mut inv = Matrix::<Gf8B>::zeros(n, n).unwrap();
@@ -568,7 +565,7 @@ fn solve_consistent_systems() {
         let a = naive_with_rank::<Gf8B>(n, n, rank, 0x50A0 + case);
         let x0 = naive_noise::<Gf8B>(n, 2, 0x50B0 + case);
         let b = naive_mul::<Gf8B>(&a, &x0);
-        let ple = Ple::decompose(crate_matrix::<Gf8B>(&a), &mut PleScratch::new());
+        let ple = Ple::decompose(crate_matrix::<Gf8B>(&a));
         let mut x = Matrix::<Gf8B>::zeros(n, 2).unwrap();
         ple.solve_into(&crate_matrix::<Gf8B>(&b), &mut x, &mut SolveScratch::new())
             .unwrap();
@@ -590,7 +587,7 @@ fn solve_undoes_multiple_column_swaps_in_reverse() {
     ];
     let x0 = naive_noise::<Gf8B>(4, 2, 0xC01A);
     let b = naive_mul::<Gf8B>(&a, &x0);
-    let ple = Ple::decompose(crate_matrix::<Gf8B>(&a), &mut PleScratch::new());
+    let ple = Ple::decompose(crate_matrix::<Gf8B>(&a));
     assert_eq!(ple.rank(), 2);
     let mut x = Matrix::<Gf8B>::zeros(4, 2).unwrap();
     ple.solve_into(&crate_matrix::<Gf8B>(&b), &mut x, &mut SolveScratch::new())
@@ -618,7 +615,7 @@ fn solve_reports_genuine_inconsistency() {
     }
     let mut b = naive_noise::<Gf8B>(8, 1, 0x1C01);
     b[7][0] = b[0][0].add(b[1][0]).add(Elem::<Gf8B>::ONE);
-    let ple = Ple::decompose(crate_matrix::<Gf8B>(&a), &mut PleScratch::new());
+    let ple = Ple::decompose(crate_matrix::<Gf8B>(&a));
     let mut x = crate_matrix::<Gf8B>(&naive_noise::<Gf8B>(6, 1, 0x1C02));
     let before = x.clone();
     let err = ple
@@ -651,7 +648,7 @@ fn rref_matches_oracle() {
             for rank in [0, rows.min(cols) / 2, rows.min(cols)] {
                 let seed = (rows << 8 | cols | rank << 16) as u64;
                 let a = naive_with_rank::<Gf32>(rows, cols, rank, 0x2200 + seed);
-                let ple = Ple::decompose(crate_matrix::<Gf32>(&a), &mut PleScratch::new());
+                let ple = Ple::decompose(crate_matrix::<Gf32>(&a));
                 let mut out = Matrix::<Gf32>::zeros(rows, cols).unwrap();
                 ple.rref_into(&mut out);
                 assert_eq!(
@@ -852,33 +849,9 @@ mod byte_for_byte {
             );
             let o = oracle_ple_packed::<Gf8B>(&a, cols);
             for width in [1, 2, 3, 5, 7, 64] {
-                let ple = Ple::decompose_with_panel_width(
-                    matrix_of::<Gf8B>(&a, cols),
-                    &mut PleScratch::new(),
-                    width,
-                );
+                let ple = Ple::decompose_with_panel_width(matrix_of::<Gf8B>(&a, cols), width);
                 assert_matches_oracle_packed(&ple, &o, rows, cols);
             }
-        }
-    }
-    #[test]
-    fn newton_john_agrees_byte_for_byte() {
-        for (rows, cols, rank) in [
-            (32, 32, 32),
-            (128, 128, 91),
-            (200, 130, 113),
-            (130, 200, 79),
-        ] {
-            let a = packed_with_rank::<Gf8B>(
-                rows,
-                cols,
-                rank,
-                0x6A00 ^ ((rows << 8 | cols | rank << 20) as u64),
-            );
-            let oracle = oracle_ple_packed::<Gf8B>(&a, cols);
-            let ple =
-                Ple::decompose_newton_john(matrix_of::<Gf8B>(&a, cols), &mut PleScratch::new());
-            assert_matches_oracle_packed(&ple, &oracle, rows, cols);
         }
     }
 }
@@ -888,7 +861,7 @@ fn default_scratches_drive_a_dense_decomposition_and_solve() {
     // Dense domain over the wider field.
     let mut a = Matrix::<Gf16>::identity(3).unwrap();
     a.set(0, 1, Gf16::decode(&[9, 0]));
-    let ple = Ple::decompose(a, &mut PleScratch::<Gf16>::default());
+    let ple = Ple::decompose(a);
     assert_eq!(ple.rank(), 3);
     let mut out = Matrix::<Gf16>::zeros(3, 1).unwrap();
     let mut rhs = Matrix::<Gf16>::zeros(3, 1).unwrap();
@@ -899,7 +872,7 @@ fn default_scratches_drive_a_dense_decomposition_and_solve() {
 
     // The dense one-byte solve scratch spells its own name too.
     let mut scratch = SolveScratch::<Gf8B>::default();
-    let ple = Ple::decompose(Matrix::<Gf8B>::identity(2).unwrap(), &mut PleScratch::new());
+    let ple = Ple::decompose(Matrix::<Gf8B>::identity(2).unwrap());
     let mut out = Matrix::<Gf8B>::zeros(2, 1).unwrap();
     let rhs_col = Matrix::<Gf8B>::from_rows(2, 1, &[8, 9]).unwrap();
     ple.solve_into(&rhs_col, &mut out, &mut scratch).unwrap();
@@ -919,7 +892,7 @@ fn into_matrix_reclaims_usable_storage() {
             &common::noise(rows * cols, 0xC0E ^ ((rows << 8 | cols) as u64)),
         )
         .unwrap();
-        let ple = Ple::decompose(a, &mut PleScratch::new());
+        let ple = Ple::decompose(a);
         let mut reclaimed = ple.into_matrix();
         assert_eq!((reclaimed.rows(), reclaimed.cols()), (rows, cols));
         let congestion = common::noise(rows * cols, 0xC0F ^ ((rows << 8 | cols) as u64));
@@ -929,17 +902,16 @@ fn into_matrix_reclaims_usable_storage() {
                 .copy_from_slice(&congestion[r * cols..(r + 1) * cols]);
         }
         let fresh = Matrix::<Gf8B>::from_rows(rows, cols, &congestion).unwrap();
-        let rank_reclaimed = Ple::decompose(reclaimed, &mut PleScratch::new()).rank();
-        let rank_fresh = Ple::decompose(fresh, &mut PleScratch::new()).rank();
+        let rank_reclaimed = Ple::decompose(reclaimed).rank();
+        let rank_fresh = Ple::decompose(fresh).rank();
         assert_eq!(rank_reclaimed, rank_fresh, "rank at ({rows}, {cols})");
     }
 }
 
 #[test]
-fn redecompose_scratch_matches_a_fresh_decomposition() {
-    let mut scratch = PleScratch::<Gf8B>::new();
-    let mut reused = Ple::decompose(Matrix::<Gf8B>::identity(3).unwrap(), &mut scratch);
-    reused.redecompose_scratch(&mut scratch, |matrix| {
+fn redecompose_matches_a_fresh_decomposition() {
+    let mut reused = Ple::decompose(Matrix::<Gf8B>::identity(3).unwrap());
+    reused.redecompose(|matrix| {
         for (row, col, value) in [
             (0, 0, 1),
             (0, 1, 2),
@@ -963,7 +935,7 @@ fn redecompose_scratch_matches_a_fresh_decomposition() {
     ] {
         input.set(row, col, Gf8B::decode(&[value]));
     }
-    let fresh = Ple::decompose(input, &mut PleScratch::new());
+    let fresh = Ple::decompose(input);
     assert_eq!(reused.rank(), fresh.rank());
     assert_eq!(reused.det(), fresh.det());
 
@@ -998,7 +970,7 @@ fn greedy_column_profile<F: FieldBuffer>(a: &Naive<F>) -> Vec<usize> {
 fn pivot_rows_and_column_profile_match_independent_oracles() {
     fn check<F: FieldBuffer>(rows: usize, cols: usize, rank: usize, seed: u64) {
         let a = naive_with_rank::<F>(rows, cols, rank, seed);
-        let ple = Ple::decompose(crate_matrix(&a), &mut PleScratch::new());
+        let ple = Ple::decompose(crate_matrix(&a));
         assert_eq!(ple.col_rank_profile(), &greedy_column_profile(&a)[..]);
         let pivots = ple.pivot_rows();
         assert_eq!(pivots.len(), rank);
@@ -1020,7 +992,7 @@ fn pivot_rows_and_column_profile_match_independent_oracles() {
     let one = Elem::<Gf8B>::ONE;
     let zero = Elem::<Gf8B>::ZERO;
     let a: Naive<Gf8B> = vec![vec![zero, one], vec![zero, one], vec![one, zero]];
-    let ple = Ple::decompose(crate_matrix(&a), &mut PleScratch::new());
+    let ple = Ple::decompose(crate_matrix(&a));
     assert_eq!(ple.col_rank_profile(), &[0, 1]);
     let selected: Naive<Gf8B> = ple.pivot_rows().iter().map(|&row| a[row].clone()).collect();
     assert_eq!(oracle_ple::<Gf8B>(&selected).rank, 2);

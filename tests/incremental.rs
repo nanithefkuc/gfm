@@ -12,7 +12,7 @@ mod common;
 use common::{Gf8B, Gf16};
 use common::{draw, noise};
 use fgf::{Elem, FieldBuffer, FieldElem};
-use gfm::{Echelon, Innovation, Matrix, Ple, PleScratch, SolveScratch};
+use gfm::{Echelon, Innovation, Matrix, Ple, SolveScratch};
 
 type E = Elem<Gf8B>;
 
@@ -147,7 +147,7 @@ fn rank_and_pivots_agree_with_ple() {
         for row in &rows {
             ech.absorb(&pack::<Gf8B>(row), &zero);
         }
-        let ple = Ple::decompose(matrix_of(&rows, cols), &mut PleScratch::new());
+        let ple = Ple::decompose(matrix_of(&rows, cols));
         assert_eq!(ech.rank(), ple.rank(), "rank ({num_rows}x{cols})");
         let pivots: Vec<_> = ech.pivot_columns().collect();
         assert_eq!(
@@ -261,7 +261,7 @@ fn forward_echelon_matches_reduced_rank() {
             recoder.absorb(&pack::<Gf8B>(row), &zero);
         }
         assert_eq!(decoder.rank(), recoder.rank(), "{num_rows}x{cols}");
-        let ple = Ple::decompose(matrix_of(&rows, cols), &mut PleScratch::new());
+        let ple = Ple::decompose(matrix_of(&rows, cols));
         assert_eq!(decoder.rank(), ple.rank());
     }
 }
@@ -295,7 +295,7 @@ fn solution_matches_ple_solve_when_complete() {
 
     let a = matrix_of(&coeffs, n);
     let b = matrix_of(&rhs, s);
-    let ple = Ple::decompose(a, &mut PleScratch::new());
+    let ple = Ple::decompose(a);
     let mut out = Matrix::<Gf8B>::zeros(n, s).unwrap();
     ple.solve_into(&b, &mut out, &mut SolveScratch::new())
         .unwrap();
@@ -381,7 +381,7 @@ fn absorb_unit_matches_a_dense_unit_row() {
             matrix_of(&absolute, absolute[0].len()),
             matrix_of(&absolute_rhs, 1),
         );
-        let ple = Ple::decompose(a, &mut PleScratch::new());
+        let ple = Ple::decompose(a);
         let mut out = Matrix::<Gf8B>::zeros(4, 1).unwrap();
         ple.solve_into(&b, &mut out, &mut SolveScratch::new())
             .unwrap();
@@ -492,7 +492,7 @@ fn wider_field_matches_ple_solution() {
         }
     }
     assert!(echelon.is_complete());
-    let ple = Ple::decompose(a, &mut PleScratch::new());
+    let ple = Ple::decompose(a);
     let mut out = Matrix::<F>::zeros(n, sym).unwrap();
     ple.solve_into(&b, &mut out, &mut SolveScratch::new())
         .unwrap();
@@ -649,7 +649,7 @@ fn advance_then_dense_absorb_matches_ple() {
         }
         b.set(i, 0, rhs);
     }
-    let ple = Ple::decompose(a, &mut PleScratch::new());
+    let ple = Ple::decompose(a);
     let mut out = Matrix::<Gf8B>::zeros(n, 1).unwrap();
     ple.solve_into(&b, &mut out, &mut SolveScratch::new())
         .unwrap();
@@ -777,7 +777,7 @@ fn wide_rows_match_ple() {
                 m.set(i, j, e);
             }
         }
-        let ple = Ple::decompose(m, &mut PleScratch::new());
+        let ple = Ple::decompose(m);
         assert_eq!(echelon.rank(), ple.rank(), "wide rank");
         assert_eq!(
             echelon.pivot_columns().collect::<Vec<_>>(),
@@ -832,7 +832,7 @@ fn wide_forward_absorb_matches_ple_rank() {
             m.set(i, j, e);
         }
     }
-    let ple = Ple::decompose(m, &mut PleScratch::new());
+    let ple = Ple::decompose(m);
     assert_eq!(echelon.rank(), ple.rank());
     assert_eq!(
         echelon.pivot_columns().collect::<Vec<_>>(),
@@ -871,7 +871,7 @@ fn wide_reduced_absorb_matches_ple() {
     }
     assert!(echelon.is_complete());
     assert_eq!(echelon.rank(), n);
-    let ple = Ple::decompose(a, &mut PleScratch::new());
+    let ple = Ple::decompose(a);
     assert_eq!(ple.rank(), n);
     assert_eq!(
         echelon.pivot_columns().collect::<Vec<_>>(),

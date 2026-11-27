@@ -38,7 +38,7 @@ mod row_ops;
 pub use backend::{Backend, backend_for};
 pub use bits::BitMatrix;
 pub use dense::{
-    Matrix, Perm, Ple, PleScratch, SmallMatrix, SolveScratch, View, ViewMut, mul_add, mul_into,
+    Matrix, Perm, Ple, SmallMatrix, SolveScratch, ViewMut, mul_add, mul_into,
     solve_lower_unit_assign, solve_upper_assign,
 };
 pub use error::{GeometryError, SolveError};

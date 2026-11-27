@@ -16,8 +16,8 @@ use fgf::{Elem, FieldElem};
 use fgf::{Field, FieldBuffer};
 use gfm::dense::layout::ALIGN;
 use gfm::{
-    Echelon, Hybrid, Innovation, Matrix, Ple, PleScratch, SmallMatrix, SolveError, SolveScratch,
-    mul_add, mul_into, solve_lower_unit_assign, solve_upper_assign,
+    Echelon, Hybrid, Innovation, Matrix, Ple, SmallMatrix, SolveError, SolveScratch, mul_add,
+    mul_into, solve_lower_unit_assign, solve_upper_assign,
 };
 use oracles::{
     Naive, matrix_of, naive_det, naive_identity, naive_mul, naive_of, oracle_ple, oracle_rref,
@@ -206,7 +206,7 @@ fn hybrid_reference<F: PrimeField>(
     sym_cols: usize,
 ) -> (usize, bool, Option<Matrix<F>>, Vec<bool>) {
     let dense = dense_of_system::<F>(rows, n);
-    let ple = Ple::decompose(to_matrix::<F>(&dense, n), &mut PleScratch::new());
+    let ple = Ple::decompose(to_matrix::<F>(&dense, n));
     let rank = ple.rank();
     let mut kernel = Matrix::<F>::zeros(n, n - rank).unwrap();
     ple.kernel_into(&mut kernel);
@@ -311,7 +311,7 @@ fn check_ple<F: PrimeField>() {
             let seed = 0x1000 ^ ((rows as u64) << 16) ^ ((cols as u64) << 8) ^ (rank as u64);
             let a = naive_rank_of::<F>(rows, cols, rank, seed);
             let o = oracle_ple::<F>(&a);
-            let ple = Ple::decompose(to_matrix::<F>(&a, cols), &mut PleScratch::new());
+            let ple = Ple::decompose(to_matrix::<F>(&a, cols));
             assert_eq!(ple.rank(), o.rank, "rank at ({rows}, {cols}, r{rank})");
             assert_eq!(reassemble(&o), a, "oracle certificate");
 
@@ -350,7 +350,7 @@ fn check_ple<F: PrimeField>() {
         vec![Elem::<F>::ZERO, Elem::<F>::ONE],
         vec![Elem::<F>::ONE, Elem::<F>::ZERO],
     ];
-    let ple = Ple::decompose(to_matrix::<F>(&a, 2), &mut PleScratch::new());
+    let ple = Ple::decompose(to_matrix::<F>(&a, 2));
     assert_eq!(naive_det::<F>(&a), Elem::<F>::ONE.neg());
     assert_eq!(ple.det(), Elem::<F>::ONE.neg());
 }
@@ -363,7 +363,7 @@ fn check_solve<F: PrimeField>() {
         let a = naive_invertible::<F>(n, 0x5101 ^ n as u64);
         let x = naive_field::<F>(n, s, 0x5E01 ^ n as u64);
         let b = naive_mul::<F>(&a, &x);
-        let ple = Ple::decompose(to_matrix::<F>(&a, n), &mut PleScratch::new());
+        let ple = Ple::decompose(to_matrix::<F>(&a, n));
         let mut out = Matrix::<F>::zeros(n, s).unwrap();
         ple.solve_into(&to_matrix::<F>(&b, s), &mut out, &mut SolveScratch::new())
             .unwrap();
@@ -376,7 +376,7 @@ fn check_solve<F: PrimeField>() {
     let a = naive_rank_of::<F>(5, 7, 3, 0x51D1);
     let x = naive_field::<F>(7, 2, 0x51D2);
     let b = naive_mul::<F>(&a, &x);
-    let ple = Ple::decompose(to_matrix::<F>(&a, 7), &mut PleScratch::new());
+    let ple = Ple::decompose(to_matrix::<F>(&a, 7));
     let mut out = Matrix::<F>::zeros(7, 2).unwrap();
     ple.solve_into(&to_matrix::<F>(&b, 2), &mut out, &mut SolveScratch::new())
         .unwrap();
@@ -384,7 +384,7 @@ fn check_solve<F: PrimeField>() {
     assert_eq!(naive_mul::<F>(&a, &solved), b);
 
     // Zero-row edge: a 0 × 0 system solves trivially.
-    let ple = Ple::decompose(Matrix::<F>::zeros(0, 0).unwrap(), &mut PleScratch::new());
+    let ple = Ple::decompose(Matrix::<F>::zeros(0, 0).unwrap());
     ple.solve_into(
         &Matrix::<F>::zeros(0, 0).unwrap(),
         &mut Matrix::<F>::zeros(0, 0).unwrap(),
@@ -414,7 +414,7 @@ fn check_solve<F: PrimeField>() {
         oracle_ple::<F>(&aug).rank - 1,
         "the oracle must agree the augmented system is inconsistent"
     );
-    let ple = Ple::decompose(to_matrix::<F>(&tall_a, 4), &mut PleScratch::new());
+    let ple = Ple::decompose(to_matrix::<F>(&tall_a, 4));
     let err = ple
         .solve_into(
             &to_matrix::<F>(&tall_b, 2),
@@ -429,7 +429,7 @@ fn check_solve<F: PrimeField>() {
 fn check_inverse<F: PrimeField>() {
     for n in 1..=6 {
         let a = naive_invertible::<F>(n, 0x1A50 + n as u64);
-        let ple = Ple::decompose(to_matrix::<F>(&a, n), &mut PleScratch::new());
+        let ple = Ple::decompose(to_matrix::<F>(&a, n));
         let mut inv = Matrix::<F>::zeros(n, n).unwrap();
         ple.inverse_into(&mut inv).unwrap();
         let inv_naive = naive_of::<F>(&inv);
@@ -448,7 +448,7 @@ fn check_inverse<F: PrimeField>() {
     // Rank deficiency is the Singular error.
     let mut a = naive_invertible::<F>(3, 0x1A00);
     a[2] = vec![Elem::<F>::ZERO; 3];
-    let ple = Ple::decompose(to_matrix::<F>(&a, 3), &mut PleScratch::new());
+    let ple = Ple::decompose(to_matrix::<F>(&a, 3));
     let err = ple
         .inverse_into(&mut Matrix::<F>::zeros(3, 3).unwrap())
         .unwrap_err();
@@ -459,14 +459,14 @@ fn check_inverse<F: PrimeField>() {
 fn check_det<F: PrimeField>() {
     for n in 0..=5 {
         let a = naive_field::<F>(n, n, 0xDE17 ^ n as u64);
-        let ple = Ple::decompose(to_matrix::<F>(&a, n), &mut PleScratch::new());
+        let ple = Ple::decompose(to_matrix::<F>(&a, n));
         assert_eq!(ple.det(), naive_det::<F>(&a), "det at n={n}");
     }
 
     // A singular matrix has determinant zero on both sides.
     let mut a = naive_field::<F>(3, 3, 0xDE00);
     a[2] = a[0].clone();
-    let ple = Ple::decompose(to_matrix::<F>(&a, 3), &mut PleScratch::new());
+    let ple = Ple::decompose(to_matrix::<F>(&a, 3));
     assert!(ple.det().is_zero());
     assert!(naive_det::<F>(&a).is_zero());
 
@@ -475,7 +475,7 @@ fn check_det<F: PrimeField>() {
         vec![Elem::<F>::ZERO, Elem::<F>::ONE],
         vec![Elem::<F>::ONE, Elem::<F>::ZERO],
     ];
-    let ple = Ple::decompose(to_matrix::<F>(&a, 2), &mut PleScratch::new());
+    let ple = Ple::decompose(to_matrix::<F>(&a, 2));
     assert_eq!(ple.det(), Elem::<F>::ONE.neg());
     assert_eq!(naive_det::<F>(&a), Elem::<F>::ONE.neg());
 }

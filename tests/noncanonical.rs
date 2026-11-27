@@ -6,7 +6,7 @@
 
 use fgf::prime::{Goldilocks, Mersenne31};
 use fgf::{Elem, FieldBuffer, FiniteField};
-use gfm::{Echelon, Hybrid, Innovation, Matrix, Ple, PleScratch, SolveScratch};
+use gfm::{Echelon, Hybrid, Innovation, Matrix, Ple, SolveScratch};
 
 /// A one-byte residue row: lanes `251..=255` are aliases of `0..=4`.
 type Small = FiniteField<251, 1>;
@@ -29,7 +29,7 @@ fn dense_zero_alias_is_consistent<F: FieldBuffer>(modulus: u64) {
     // 0 · x = alias(0) is consistent, with x = 0.
     let a = Matrix::<F>::from_rows(1, 1, &lane(Elem::<F>::ZERO)).unwrap();
     let rhs = Matrix::<F>::from_rows(1, 1, &zero).unwrap();
-    let ple = Ple::decompose(a, &mut PleScratch::new());
+    let ple = Ple::decompose(a);
     let mut x = Matrix::<F>::zeros(1, 1).unwrap();
     ple.solve_into(&rhs, &mut x, &mut SolveScratch::new())
         .expect("an alias of zero on the right is consistent");

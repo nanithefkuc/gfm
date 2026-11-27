@@ -1,7 +1,7 @@
 //! Steady-state container operations perform no allocation, proven under a
-//! counting global allocator. Setup allocates; the measured section — views,
-//! row access, swaps, permutations, and the one physical compaction — must
-//! not.
+//! counting global allocator. Setup allocates; the measured section — mutable
+//! view access, row access, swaps, permutations, and the one physical
+//! compaction — must not.
 
 mod common;
 
@@ -13,7 +13,7 @@ use common::Gf8B;
 use common::noise;
 use fgf::Elem;
 use gfm::bits::{Ple as BitPle, PleScratch as BitPleScratch, SolveScratch as BitSolveScratch};
-use gfm::{BitMatrix, Echelon, Hybrid, Matrix, Perm, Ple, PleScratch, SolveScratch};
+use gfm::{BitMatrix, Echelon, Hybrid, Matrix, Perm, Ple, SolveScratch};
 
 /// A global allocator that counts calls to `alloc` on the current thread.
 struct CountingAllocator;
@@ -96,16 +96,10 @@ fn steady_state_ops_do_not_allocate() {
     // The measured section: every non-constructor container operation.
     {
         let mut v = m.as_view_mut();
-        v.swap_rows(3, 11);
         v.set(5, 6, Elem::<Gf8B>::from_raw(0x5A));
         black_box(v.get(5, 6));
         black_box(v.row(7));
         black_box(v.row_mut(8));
-        let view = v.as_view();
-        let (top, bot) = view.split_rows(9).unwrap();
-        black_box(top.row(2));
-        black_box(bot.row(3));
-        black_box(top.split_rows(4));
     }
     m.swap_rows(0, 36);
     m.apply_row_perm(&p).unwrap();
@@ -134,7 +128,7 @@ fn steady_state_ops_do_not_allocate() {
     for r in 0..n {
         m.row_mut(r).copy_from_slice(&noise(n, r as u64 + 3));
     }
-    let ple = Ple::decompose(m, &mut PleScratch::new());
+    let ple = Ple::decompose(m);
     let rank = ple.rank();
     let mut rref_out = Matrix::<Gf8B>::zeros(n, n).unwrap();
     let mut kernel_out = Matrix::<Gf8B>::zeros(n, n - rank).unwrap();

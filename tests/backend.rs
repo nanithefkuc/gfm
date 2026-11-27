@@ -36,7 +36,7 @@ fn scalar_override_forces_scalar() {
 
 #[test]
 fn backend_fingerprint_is_stable() {
-    use gfm::{Matrix, Ple, PleScratch};
+    use gfm::{Matrix, Ple};
     use std::io::Write;
 
     writeln!(
@@ -67,7 +67,7 @@ fn backend_fingerprint_is_stable() {
             matrix.set(row, col, Gf8B::decode(&[(state >> 56) as u8]));
         }
     }
-    let ple = Ple::decompose(matrix, &mut PleScratch::new());
+    let ple = Ple::decompose(matrix);
     let mut hash = 0xCBF2_9CE4_8422_2325_u64;
     hash_bytes(&mut hash, &(ple.rank() as u64).to_le_bytes());
     for row in 0..ple.rows() {
@@ -113,30 +113,17 @@ fn noise_matrix(rows: usize, cols: usize, seed: u64) -> Matrix<Gf8B> {
 
 #[test]
 fn panel_width_does_not_change_the_decomposition() {
-    use gfm::{Ple, PleScratch};
+    use gfm::Ple;
 
     let a = noise_matrix(37, 41, 0x11);
-    let reference = Ple::decompose(a.clone(), &mut PleScratch::new());
+    let reference = Ple::decompose(a.clone());
     for width in [1, 2, 7, 16, 64] {
-        let ple = Ple::decompose_with_panel_width(a.clone(), &mut PleScratch::new(), width);
+        let ple = Ple::decompose_with_panel_width(a.clone(), width);
         assert_eq!(ple.rank(), reference.rank(), "rank at width {width}");
         assert_eq!(ple.lu(), reference.lu(), "LU at width {width}");
         assert_eq!(ple.p(), reference.p(), "row perm at width {width}");
         assert_eq!(ple.q(), reference.q(), "col perm at width {width}");
     }
-}
-
-#[test]
-fn newton_john_trailing_update_matches_the_dispatched_one() {
-    use gfm::{Ple, PleScratch};
-
-    let a = noise_matrix(33, 33, 0x22);
-    let reference = Ple::decompose(a.clone(), &mut PleScratch::new());
-    let nj = Ple::decompose_newton_john(a, &mut PleScratch::new());
-    assert_eq!(nj.rank(), reference.rank());
-    assert_eq!(nj.lu(), reference.lu());
-    assert_eq!(nj.p(), reference.p());
-    assert_eq!(nj.q(), reference.q());
 }
 
 #[test]

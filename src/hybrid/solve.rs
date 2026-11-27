@@ -23,7 +23,7 @@ use alloc::vec::Vec;
 
 use super::{DenseRow, DenseRows};
 use crate::SolveError;
-use crate::dense::{Matrix, Ple, PleScratch, SmallMatrix, SolveScratch};
+use crate::dense::{Matrix, Ple, SmallMatrix, SolveScratch};
 use crate::hybrid::colindex::ColumnIndex;
 use crate::hybrid::deferred::DeferredLog;
 use crate::hybrid::schedule::Components;
@@ -253,7 +253,6 @@ pub struct Hybrid<F: FieldBuffer> {
     x_inactive: Option<Matrix<F>>,
     dense_kernel: Option<Matrix<F>>,
     dependencies: Option<Matrix<F>>,
-    ple_scratch: PleScratch<F>,
     solve_scratch: SolveScratch<F>,
 }
 
@@ -356,7 +355,6 @@ impl<F: FieldBuffer> Hybrid<F> {
             x_inactive: None,
             dense_kernel: None,
             dependencies: None,
-            ple_scratch: PleScratch::new(),
             solve_scratch: SolveScratch::new(),
         }
     }
@@ -829,24 +827,15 @@ impl<F: FieldBuffer> Hybrid<F> {
         crate::row_ops::mul_add::<F>(dst_s, factor, src_s);
     }
 
-    fn prepare_ple<'a>(
-        slot: &'a mut Option<Ple<F>>,
-        rows: usize,
-        cols: usize,
-        scratch: &mut PleScratch<F>,
-    ) -> &'a mut Ple<F> {
+    fn prepare_ple(slot: &mut Option<Ple<F>>, rows: usize, cols: usize) -> &mut Ple<F> {
         let wrong_geometry = slot
             .as_ref()
             .is_none_or(|ple| ple.rows() != rows || ple.cols() != cols);
         if wrong_geometry {
             let matrix = Matrix::<F>::zeros(rows, cols).expect("validated hybrid dense geometry");
-            *slot = Some(Ple::decompose(matrix, scratch));
+            *slot = Some(Ple::decompose(matrix));
         }
-        let ple = slot.as_mut().expect("initialized above");
-        for row in 0..rows {
-            ple.matrix_for_redecomposition().row_mut(row).fill(0);
-        }
-        ple
+        slot.as_mut().expect("initialized above")
     }
 
     fn prepare_matrix(slot: &mut Option<Matrix<F>>, rows: usize, cols: usize) -> &mut Matrix<F> {
@@ -1138,23 +1127,18 @@ impl<F: FieldBuffer> Hybrid<F> {
         // exact independent subset whose payloads the dense solve needs.
         let g = self.inactive.len();
         {
-            let rank_ple = Self::prepare_ple(
-                &mut self.rank_ple,
-                self.residual.len(),
-                g,
-                &mut self.ple_scratch,
-            );
-            let matrix = rank_ple.matrix_for_redecomposition();
-            for (i, &row) in self.residual.iter().enumerate() {
-                for (j, &column) in self.inactive.iter().enumerate() {
-                    let ordinal = self.frozen_ord[column as usize];
-                    let coefficient = self.work_rows[row].get(column, ordinal);
-                    if !coefficient.is_zero() {
-                        matrix.set(i, j, coefficient);
+            let rank_ple = Self::prepare_ple(&mut self.rank_ple, self.residual.len(), g);
+            rank_ple.redecompose(|matrix| {
+                for (i, &row) in self.residual.iter().enumerate() {
+                    for (j, &column) in self.inactive.iter().enumerate() {
+                        let ordinal = self.frozen_ord[column as usize];
+                        let coefficient = self.work_rows[row].get(column, ordinal);
+                        if !coefficient.is_zero() {
+                            matrix.set(i, j, coefficient);
+                        }
                     }
                 }
-            }
-            rank_ple.redecompose(&mut self.ple_scratch);
+            });
         }
         let dense_rank = self.rank_ple.as_ref().expect("prepared").rank();
         self.basis_rows.extend(
@@ -1185,23 +1169,18 @@ impl<F: FieldBuffer> Hybrid<F> {
         // narrower matrix.
         let reuse_rank = dense_rank == self.residual.len();
         if !use_small && !reuse_rank {
-            let solve_ple = Self::prepare_ple(
-                &mut self.solve_ple,
-                self.basis_rows.len(),
-                g,
-                &mut self.ple_scratch,
-            );
-            let matrix = solve_ple.matrix_for_redecomposition();
-            for (i, &row) in self.basis_rows.iter().enumerate() {
-                for (j, &column) in self.inactive.iter().enumerate() {
-                    let ordinal = self.frozen_ord[column as usize];
-                    let coefficient = self.work_rows[row].get(column, ordinal);
-                    if !coefficient.is_zero() {
-                        matrix.set(i, j, coefficient);
+            let solve_ple = Self::prepare_ple(&mut self.solve_ple, self.basis_rows.len(), g);
+            solve_ple.redecompose(|matrix| {
+                for (i, &row) in self.basis_rows.iter().enumerate() {
+                    for (j, &column) in self.inactive.iter().enumerate() {
+                        let ordinal = self.frozen_ord[column as usize];
+                        let coefficient = self.work_rows[row].get(column, ordinal);
+                        if !coefficient.is_zero() {
+                            matrix.set(i, j, coefficient);
+                        }
                     }
                 }
-            }
-            solve_ple.redecompose(&mut self.ple_scratch);
+            });
             debug_assert_eq!(solve_ple.rank(), dense_rank);
         }
         self.analysis.dense_rank = dense_rank;

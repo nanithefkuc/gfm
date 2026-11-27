@@ -60,15 +60,14 @@ GF(256) with the AES reduction polynomial; addition is XOR:
 ```rust
 use fgf::FiniteField;
 use fgf::binary::{AES, Polynomial};
-use gfm::{Matrix, Ple, PleScratch, SolveScratch};
+use gfm::{Matrix, Ple, SolveScratch};
 
 type Gf8 = FiniteField<2, 8, Polynomial<AES>>;
 
 // x + y = 3, y = 2, so x = 1.
 let a = Matrix::<Gf8>::from_rows(2, 2, &[1, 1, 0, 1]).unwrap();
 let rhs = Matrix::<Gf8>::from_rows(2, 1, &[3, 2]).unwrap();
-let mut factor_scratch = PleScratch::new();
-let factor = Ple::decompose(a, &mut factor_scratch);
+let factor = Ple::decompose(a);
 assert_eq!(factor.rank(), 2);
 
 let mut solution = Matrix::<Gf8>::zeros(2, 1).unwrap();
@@ -79,16 +78,15 @@ assert_eq!(solution.row(1), &[2]);
 ```
 
 `Ple::decompose` consumes the input matrix. The factorization can solve further
-right-hand sides without changing the coefficients. `Ple::redecompose_scratch`
-reuses its storage for a new matrix of the same shape; its closure receives a
-zeroed matrix to fill. Scratch and output storage are separate from the
-reusable factorization.
+right-hand sides without changing the coefficients. `Ple::redecompose` reuses
+its storage for a new matrix of the same shape; its closure receives a zeroed
+`ViewMut` to fill. Output storage is separate from the reusable factorization.
 
 ## Matrices and decompositions
 
 | Surface | Contract |
 | --- | --- |
-| `Matrix<F>` | Owning dense matrix of packed field elements, with borrowed `View` and `ViewMut` access. |
+| `Matrix<F>` | Owning dense matrix of packed field elements, with borrowed `ViewMut` access. |
 | `BitMatrix` | Owning GF(2) matrix with one element per bit. |
 | `Perm` | Index-vector permutations with application, inverse application, composition, and parity. |
 | `Ple<F>` / `bits::Ple` | Rank-revealing factorization in the dense or bit-packed storage domain. |

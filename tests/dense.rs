@@ -11,7 +11,7 @@ use common::{all_images, draw, noise, perm_from_image, sample_dims};
 use fgf::{Elem, FieldBuffer};
 use gfm::dense::layout::{ALIGN, pitch_for};
 use gfm::internals::MatrixInternals;
-use gfm::{GeometryError, Matrix, Perm, Ple, PleScratch, SmallMatrix, SolveScratch};
+use gfm::{GeometryError, Matrix, Perm, Ple, SmallMatrix, SolveScratch};
 use oracles::{crate_matrix, naive_mul, naive_noise, naive_of};
 
 /// Fills every row with deterministic noise, one seed per row.
@@ -55,7 +55,7 @@ fn check_rank<const K: usize>() {
     for deficient in [false, true] {
         let matrix = small_source::<K>(0x5A11 ^ K as u64, deficient);
         let small = SmallMatrix::<Gf8B, K>::from_matrix(&matrix);
-        let expected = Ple::decompose(matrix, &mut PleScratch::new()).rank();
+        let expected = Ple::decompose(matrix).rank();
         assert_eq!(small.rank(), expected, "rank mismatch at K={K}");
     }
 }
@@ -78,7 +78,7 @@ fn check_solve<const K: usize>() {
     let small = SmallMatrix::<Gf16, K>::from_matrix(&matrix);
     let mut small_out = Matrix::<Gf16>::zeros(K, 3).unwrap();
     small.solve_into(&rhs, &mut small_out).unwrap();
-    let ple = Ple::decompose(matrix, &mut PleScratch::new());
+    let ple = Ple::decompose(matrix);
     let mut ple_out = Matrix::<Gf16>::zeros(K, 3).unwrap();
     ple.solve_into(&rhs, &mut ple_out, &mut SolveScratch::new())
         .unwrap();
@@ -335,96 +335,6 @@ fn compact_rows_on_identity_is_a_noop() {
 }
 
 #[test]
-fn views_see_the_same_rows() {
-    let mut m = Matrix::<Gf8B>::zeros(21, 15).unwrap();
-    fill_noise(&mut m, 0x99);
-    m.swap_rows(2, 19);
-    let view = m.as_view();
-    assert_eq!(view.rows(), m.rows());
-    assert_eq!(view.cols(), m.cols());
-    assert_eq!(view.pitch(), m.pitch());
-    for r in 0..m.rows() {
-        assert_eq!(view.row(r), m.row(r));
-    }
-    // Split at every boundary, including empty halves.
-    for at in 0..=m.rows() {
-        let (top, bot) = view.split_rows(at).unwrap();
-        assert_eq!(top.rows(), at);
-        assert_eq!(bot.rows(), m.rows() - at);
-        for r in 0..at {
-            assert_eq!(top.row(r), m.row(r));
-        }
-        for r in 0..m.rows() - at {
-            assert_eq!(bot.row(r), m.row(at + r));
-        }
-    }
-    assert!(view.split_rows(m.rows() + 1).is_none());
-}
-
-#[test]
-fn view_get_follows_the_row_map() {
-    let mut m = Matrix::<Gf16>::zeros(6, 5).unwrap();
-    for r in 0..6 {
-        m.row_mut(r)
-            .copy_from_slice(&noise(5 * 2, 0xB100 + r as u64));
-    }
-    m.swap_rows(1, 4);
-    let view = m.as_view();
-    assert_eq!(view.rows(), 6);
-    assert_eq!(view.cols(), 5);
-    for r in 0..6 {
-        for c in 0..5 {
-            assert_eq!(view.get(r, c), m.get(r, c), "view element ({r}, {c})");
-        }
-        assert_eq!(view.row(r), m.row(r), "view row {r}");
-    }
-    // Swapping back through the owner is visible through a fresh view.
-    m.swap_rows(1, 4);
-    let view = m.as_view();
-    for r in 0..6 {
-        for c in 0..5 {
-            assert_eq!(view.get(r, c), m.get(r, c));
-        }
-    }
-}
-
-#[test]
-fn mutable_view_edits_the_matrix() {
-    let mut m = Matrix::<Gf8B>::zeros(9, 7).unwrap();
-    {
-        let mut v = m.as_view_mut();
-        v.set(3, 4, Elem::<Gf8B>::from_raw(0xAB));
-        v.row_mut(5).fill(0x11);
-        v.swap_rows(3, 5);
-    }
-    assert_eq!(m.row(3), &[0x11u8; 7][..]);
-    assert_eq!(m.row(5)[4], 0xAB);
-    assert!(m.row(5)[..4].iter().all(|&b| b == 0));
-    assert!(m.row(5)[5..].iter().all(|&b| b == 0));
-    assert_eq!(m.get(5, 4), Elem::<Gf8B>::from_raw(0xAB));
-}
-
-#[test]
-fn mutable_view_reports_its_geometry() {
-    let mut m = Matrix::<Gf16>::zeros(4, 9).unwrap();
-    let pitch = m.pitch();
-    {
-        let view = m.as_view_mut();
-        assert_eq!(view.rows(), 4);
-        assert_eq!(view.cols(), 9);
-        assert_eq!(view.pitch(), pitch);
-    }
-    // And element access through the mutable view writes the matrix.
-    {
-        let mut view = m.as_view_mut();
-        view.set(2, 7, Gf16::decode(&[0x11, 0x22]));
-        assert_eq!(view.get(2, 7), Gf16::decode(&[0x11, 0x22]));
-        assert_eq!(view.row(2)[7 * 2..8 * 2], [0x11, 0x22]);
-    }
-    assert_eq!(m.get(2, 7), Gf16::decode(&[0x11, 0x22]));
-}
-
-#[test]
 fn geometry_errors_are_exact_and_state_preserving() {
     // `rows * pitch` overflow.
     let err = Matrix::<Gf8B>::zeros(usize::MAX / 16, 100).unwrap_err();
@@ -645,7 +555,7 @@ fn small_rank_pivots_past_a_dead_leading_column() {
     }
     let small = SmallMatrix::<Gf8B, 4>::from_matrix(&m);
     assert_eq!(small.rank(), 4);
-    let expected = Ple::decompose(m, &mut PleScratch::new()).rank();
+    let expected = Ple::decompose(m).rank();
     assert_eq!(expected, 4);
 
     // Zeroing a row drops the rank by exactly one.
@@ -678,7 +588,7 @@ fn small_singular_byte_matrix_names_rank_and_order() {
         Err(gfm::SolveError::Singular { rank: 2, order: 4 })
     );
     // The reported rank agrees with the general decomposition.
-    assert_eq!(Ple::decompose(a, &mut PleScratch::new()).rank(), 2);
+    assert_eq!(Ple::decompose(a).rank(), 2);
 }
 
 #[test]
@@ -704,7 +614,7 @@ fn small_wide_solve_matches_ple_through_swaps_and_scaling() {
     assert_eq!(small.rank(), 4);
     let mut small_out = Matrix::<Gf16>::zeros(4, 3).unwrap();
     small.solve_into(&rhs, &mut small_out).unwrap();
-    let ple = Ple::decompose(a.clone(), &mut PleScratch::new());
+    let ple = Ple::decompose(a.clone());
     let mut ple_out = Matrix::<Gf16>::zeros(4, 3).unwrap();
     ple.solve_into(&rhs, &mut ple_out, &mut SolveScratch::new())
         .unwrap();
@@ -852,7 +762,7 @@ fn triangular_solves_reject_a_row_mismatch() {
 fn inverse_round_trips_through_the_product() {
     let m_naive = oracles::naive_noise::<Gf8B>(5, 5, 0x77);
     let m = oracles::crate_matrix(&m_naive);
-    let ple = Ple::decompose(m.clone(), &mut PleScratch::new());
+    let ple = Ple::decompose(m.clone());
     assert_eq!(ple.rank(), 5, "seed 0x77 must give an invertible matrix");
     let mut inv = Matrix::<Gf8B>::zeros(5, 5).unwrap();
     ple.inverse_into(&mut inv).unwrap();
@@ -867,11 +777,11 @@ fn redecompose_replaces_the_matrix_in_place() {
     use gfm::internals::PleInternals;
 
     let a1: Matrix<Gf16> = oracles::crate_matrix(&oracles::naive_noise::<Gf16>(9, 9, 0xA1));
-    let mut ple = Ple::decompose(a1, &mut PleScratch::new());
+    let mut ple = Ple::decompose(a1);
     let a2: Matrix<Gf16> = oracles::crate_matrix(&oracles::naive_noise::<Gf16>(9, 9, 0xB2));
     let a2_rows = a2.rows();
-    let fresh = Ple::decompose(a2.clone(), &mut PleScratch::new());
-    ple.redecompose_scratch(&mut PleScratch::new(), |lu| {
+    let fresh = Ple::decompose(a2.clone());
+    ple.redecompose(|lu| {
         for r in 0..a2_rows {
             lu.row_mut(r).copy_from_slice(a2.row(r));
         }

@@ -15,7 +15,7 @@ use common::draw;
 use common::{Gf8B, Gf16};
 use fgf::{Elem, FieldBuffer, FieldElem};
 use gfm::internals::HybridInternals;
-use gfm::{DenseRow, DenseRows, Hybrid, Matrix, Ple, PleScratch, SolveError, SolveScratch};
+use gfm::{DenseRow, DenseRows, Hybrid, Matrix, Ple, SolveError, SolveScratch};
 
 type Equation<F> = (Vec<u32>, Vec<Elem<F>>, Vec<u8>);
 type E = Elem<Gf8B>;
@@ -200,7 +200,7 @@ fn read_row<F: FieldBuffer>(bytes: &[u8], sym: usize) -> Vec<Elem<F>> {
 /// values are invariant across every solution.
 fn ple_reference<F: FieldBuffer>(sys: &System<F>) -> (usize, bool, Option<Matrix<F>>, Vec<bool>) {
     let (a, b) = sys.dense();
-    let ple = Ple::decompose(a, &mut PleScratch::new());
+    let ple = Ple::decompose(a);
     let rank = ple.rank();
     let mut kernel = Matrix::<F>::zeros(sys.n, sys.n - rank).unwrap();
     ple.kernel_into(&mut kernel);

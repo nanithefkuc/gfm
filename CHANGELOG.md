@@ -32,6 +32,18 @@ All notable changes to this project are documented here. The format follows
   determinedness, and determined values match a dense solve, while
   undetermined columns depend on the schedule. On `Err`, outputs hold no
   valid solution. [#19](https://github.com/nanithefkuc/gfm/issues/19).
+- **Breaking:** `Ple::decompose` takes the matrix without a scratch argument
+  and owns its workspace; the `gfm::dense::PleScratch` type is removed. Drop
+  the scratch argument and type. [#20](https://github.com/nanithefkuc/gfm/issues/20).
+- **Breaking:** `Ple::redecompose_scratch` is renamed `Ple::redecompose`; its
+  closure receives a zeroed `ViewMut` instead of a `Matrix`. Rename call sites
+  and adapt the closure. [#20](https://github.com/nanithefkuc/gfm/issues/20).
+- **Breaking:** the `View` type and its operations (`Matrix::as_view`,
+  `ViewMut::as_view`, `View::split_rows`) are removed; use `ViewMut` for view
+  access. [#20](https://github.com/nanithefkuc/gfm/issues/20).
+- **Breaking:** the Newton–John trailing-update candidate is removed from
+  `Ple`'s internals. Delete calls to `decompose_newton_john` and the
+  `TrailingMode` enum. [#20](https://github.com/nanithefkuc/gfm/issues/20).
 
 ### Fixed
 

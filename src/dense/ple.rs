@@ -21,13 +21,11 @@
 
 use alloc::vec::Vec;
 use core::fmt;
-use core::marker::PhantomData;
 
-use fgf::ops;
 use fgf::{FieldBuffer, FieldElem};
 
 use crate::backend::panel_width;
-use crate::dense::{Matrix, Perm};
+use crate::dense::{Matrix, Perm, ViewMut};
 
 /// A rank-revealing `A = P·L·U·Q` decomposition.
 ///
@@ -44,40 +42,6 @@ pub struct Ple<F: FieldBuffer> {
     col_profile: Vec<usize>,
 }
 
-/// Reusable workspace for [`Ple::decompose`].
-///
-/// The Newton–John candidate table is grow-only. The normal blocked/AXPY path
-/// leaves it untouched.
-pub struct PleScratch<F: FieldBuffer> {
-    table: Vec<u8>,
-    field: PhantomData<F>,
-}
-
-impl<F: FieldBuffer> PleScratch<F> {
-    /// An empty scratch.
-    #[must_use]
-    pub const fn new() -> Self {
-        Self {
-            table: Vec::new(),
-            field: PhantomData,
-        }
-    }
-}
-
-impl<F: FieldBuffer> Default for PleScratch<F> {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl<F: FieldBuffer> fmt::Debug for PleScratch<F> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("PleScratch")
-            .field("table_bytes", &self.table.len())
-            .finish_non_exhaustive()
-    }
-}
-
 impl<F: FieldBuffer> fmt::Debug for Ple<F> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Ple")
@@ -89,76 +53,43 @@ impl<F: FieldBuffer> fmt::Debug for Ple<F> {
     }
 }
 
-#[derive(Clone, Copy)]
-enum TrailingMode {
-    Axpy,
-    /// Reachable through the `internals` facade only.
-    #[allow(dead_code)]
-    NewtonJohn,
-}
-
 impl<F: FieldBuffer> Ple<F> {
     /// Decomposes `a`, consuming its storage.
     #[must_use]
-    pub fn decompose(a: Matrix<F>, scratch: &mut PleScratch<F>) -> Self {
+    pub fn decompose(a: Matrix<F>) -> Self {
         let (rows, cols) = (a.rows(), a.cols());
-        Self::decompose_impl(a, panel_width::<F>(rows, cols), TrailingMode::Axpy, scratch)
+        Self::decompose_impl(a, panel_width::<F>(rows, cols))
     }
 
     /// Reuses this decomposition's storage for another matrix of the same
     /// shape.
     ///
-    /// `fill` receives a zeroed matrix and must write the next input. The
-    /// decomposition, permutation vectors, and rank-profile allocations are
-    /// then recomputed in place. This is the allocation-free counterpart of
-    /// repeated [`Ple::decompose`] calls for fixed-geometry workloads.
-    pub fn redecompose_scratch(
-        &mut self,
-        scratch: &mut PleScratch<F>,
-        fill: impl FnOnce(&mut Matrix<F>),
-    ) {
-        for row in 0..self.rows() {
-            self.lu.row_mut(row).fill(0);
+    /// `fill` receives a zeroed view of the decomposition's storage and must
+    /// write the next input. The decomposition, permutation vectors, and
+    /// rank-profile allocations are then recomputed in place. This is the
+    /// allocation-free counterpart of repeated [`Ple::decompose`] calls for
+    /// fixed-geometry workloads.
+    pub fn redecompose(&mut self, fill: impl FnOnce(&mut ViewMut<'_, F>)) {
+        let (rows, cols) = (self.rows(), self.cols());
+        {
+            let mut view = self.lu.as_view_mut();
+            for row in 0..rows {
+                view.row_mut(row).fill(0);
+            }
+            fill(&mut view);
         }
-        fill(&mut self.lu);
-        self.redecompose(scratch);
+        self.redecompose_impl(panel_width::<F>(rows, cols));
     }
 
     /// Decomposes with an explicit panel width. The result is independent of
     /// the width, byte for byte.
     #[must_use]
     #[allow(dead_code)] // Reached through the `internals` facade.
-    pub(crate) fn decompose_with_panel_width(
-        a: Matrix<F>,
-        scratch: &mut PleScratch<F>,
-        panel_width: usize,
-    ) -> Self {
-        Self::decompose_impl(a, panel_width.max(1), TrailingMode::Axpy, scratch)
-    }
-    /// Forces the Newton–John trailing-update candidate.
-    ///
-    /// # Panics
-    ///
-    /// Panics unless field elements occupy one byte.
-    #[must_use]
-    #[allow(dead_code)] // Reached through the `internals` facade.
-    pub(crate) fn decompose_newton_john(a: Matrix<F>, scratch: &mut PleScratch<F>) -> Self {
-        assert_eq!(F::BYTES, 1, "Newton-John table requires one-byte elements");
-        let (rows, cols) = (a.rows(), a.cols());
-        Self::decompose_impl(
-            a,
-            panel_width::<F>(rows, cols),
-            TrailingMode::NewtonJohn,
-            scratch,
-        )
+    pub(crate) fn decompose_with_panel_width(a: Matrix<F>, panel_width: usize) -> Self {
+        Self::decompose_impl(a, panel_width.max(1))
     }
 
-    fn decompose_impl(
-        mat: Matrix<F>,
-        panel: usize,
-        mode: TrailingMode,
-        scratch: &mut PleScratch<F>,
-    ) -> Self {
+    fn decompose_impl(mat: Matrix<F>, panel: usize) -> Self {
         let (rows, cols) = (mat.rows(), mat.cols());
         let mut decomposition = Self {
             lu: mat,
@@ -168,19 +99,11 @@ impl<F: FieldBuffer> Ple<F> {
             row_profile: Vec::with_capacity(rows),
             col_profile: Vec::with_capacity(cols),
         };
-        decomposition.redecompose_impl(panel, mode, scratch);
+        decomposition.redecompose_impl(panel);
         decomposition
     }
-    pub(crate) fn matrix_for_redecomposition(&mut self) -> &mut Matrix<F> {
-        &mut self.lu
-    }
 
-    pub(crate) fn redecompose(&mut self, scratch: &mut PleScratch<F>) {
-        let (rows, cols) = (self.rows(), self.cols());
-        self.redecompose_impl(panel_width::<F>(rows, cols), TrailingMode::Axpy, scratch);
-    }
-
-    fn redecompose_impl(&mut self, panel: usize, mode: TrailingMode, scratch: &mut PleScratch<F>) {
+    fn redecompose_impl(&mut self, panel: usize) {
         let (rows, cols) = (self.lu.rows(), self.lu.cols());
         self.p.reset_identity();
         self.q.reset_identity();
@@ -200,7 +123,7 @@ impl<F: FieldBuffer> Ple<F> {
             if pivots == 0 {
                 wstart = wend;
             } else {
-                bulk_update(&mut self.lu, frontier, pivots, wend, mode, scratch);
+                bulk_update(&mut self.lu, frontier, pivots, wend);
                 frontier += pivots;
                 wstart = frontier;
             }
@@ -351,14 +274,7 @@ fn find_pivot<F: FieldBuffer>(
 /// rows' right parts, then the rank-`s` update of the trailing submatrix.
 /// Both cover only columns at and past `wend` — the window's columns were
 /// already updated during the panel phase.
-fn bulk_update<F: FieldBuffer>(
-    mat: &mut Matrix<F>,
-    frontier: usize,
-    pivots: usize,
-    wend: usize,
-    mode: TrailingMode,
-    scratch: &mut PleScratch<F>,
-) {
+fn bulk_update<F: FieldBuffer>(mat: &mut Matrix<F>, frontier: usize, pivots: usize, wend: usize) {
     let cols = mat.cols();
     if wend >= cols {
         return;
@@ -379,12 +295,7 @@ fn bulk_update<F: FieldBuffer>(
             );
         }
     }
-    match mode {
-        TrailingMode::Axpy => update_trailing_axpy(mat, frontier, pivots, wend),
-        TrailingMode::NewtonJohn => {
-            update_trailing_newton_john(mat, frontier, pivots, wend, scratch);
-        }
-    }
+    update_trailing_axpy(mat, frontier, pivots, wend);
 }
 
 fn update_trailing_axpy<F: FieldBuffer>(
@@ -406,48 +317,6 @@ fn update_trailing_axpy<F: FieldBuffer>(
                 &mut row_dst[wend * bytes..cols * bytes],
                 factor.neg(),
                 &row_src[wend * bytes..cols * bytes],
-            );
-        }
-    }
-}
-
-/// One 256-entry multiplication table per pivot row. Table construction uses
-/// `fgf::ops`; applying a selected multiple is the field's addition kernel,
-/// with the negated factor selecting the entry, so the update subtracts.
-///
-/// Reached through [`Ple::decompose_newton_john`], the `internals` facade's
-/// trailing-update candidate.
-fn update_trailing_newton_john<F: FieldBuffer>(
-    mat: &mut Matrix<F>,
-    frontier: usize,
-    pivots: usize,
-    wend: usize,
-    scratch: &mut PleScratch<F>,
-) {
-    debug_assert_eq!(F::BYTES, 1);
-    let (rows, cols) = (mat.rows(), mat.cols());
-    let tail = cols - wend;
-    scratch.table.resize(256 * tail, 0);
-    for src in frontier..(frontier + pivots) {
-        scratch.table.fill(0);
-        let pivot_tail = &mat.row(src)[wend..cols];
-        for coefficient in 1..=u8::MAX {
-            let start = usize::from(coefficient) * tail;
-            let multiple = &mut scratch.table[start..start + tail];
-            multiple.copy_from_slice(pivot_tail);
-            ops::mul_assign::<F>(multiple, F::decode(&[coefficient]));
-        }
-        for row in (frontier + pivots)..rows {
-            let factor = mat.get(row, src).neg();
-            if factor.is_zero() {
-                continue;
-            }
-            let mut key = [0u8; 1];
-            F::encode(&mut key, factor);
-            let start = usize::from(key[0]) * tail;
-            ops::add_assign::<F>(
-                &mut mat.row_mut(row)[wend..cols],
-                &scratch.table[start..start + tail],
             );
         }
     }

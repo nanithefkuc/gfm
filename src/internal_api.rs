@@ -4,7 +4,7 @@ use fgf::FieldBuffer;
 
 use crate::SolveError;
 use crate::bits::{BitMatrix, Ple as BitPle, PleScratch as BitPleScratch};
-use crate::dense::{Matrix, Perm, Ple, PleScratch};
+use crate::dense::{Matrix, Perm, Ple};
 use crate::hybrid::{Hybrid, Solution, SolveStats};
 
 /// Physical-layout inspection of a packed-element matrix.
@@ -71,8 +71,7 @@ impl BitMatrixInternals for BitMatrix {
     }
 }
 
-/// Decomposition storage and the trailing-update candidates of the packed
-/// elimination.
+/// Decomposition storage of the packed elimination.
 pub trait PleInternals<F: FieldBuffer> {
     /// The in-place `L`/`U` storage: factors below the diagonal, `U` on and
     /// above it, in the eliminated row and column order.
@@ -86,19 +85,7 @@ pub trait PleInternals<F: FieldBuffer> {
 
     /// Decomposes with an explicit panel width. The result is independent of
     /// the width, byte for byte.
-    fn decompose_with_panel_width(
-        a: Matrix<F>,
-        scratch: &mut PleScratch<F>,
-        panel_width: usize,
-    ) -> Self;
-
-    /// Decomposes with the Newton–John trailing-update candidate instead of
-    /// the dispatched one.
-    ///
-    /// # Panics
-    ///
-    /// Panics unless field elements occupy one byte.
-    fn decompose_newton_john(a: Matrix<F>, scratch: &mut PleScratch<F>) -> Self;
+    fn decompose_with_panel_width(a: Matrix<F>, panel_width: usize) -> Self;
 }
 
 impl<F: FieldBuffer> PleInternals<F> for Ple<F> {
@@ -114,16 +101,8 @@ impl<F: FieldBuffer> PleInternals<F> for Ple<F> {
         self.q_perm()
     }
 
-    fn decompose_with_panel_width(
-        a: Matrix<F>,
-        scratch: &mut PleScratch<F>,
-        panel_width: usize,
-    ) -> Self {
-        Ple::decompose_with_panel_width(a, scratch, panel_width)
-    }
-
-    fn decompose_newton_john(a: Matrix<F>, scratch: &mut PleScratch<F>) -> Self {
-        Ple::decompose_newton_john(a, scratch)
+    fn decompose_with_panel_width(a: Matrix<F>, panel_width: usize) -> Self {
+        Ple::decompose_with_panel_width(a, panel_width)
     }
 }
 
