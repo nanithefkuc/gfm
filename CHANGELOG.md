@@ -6,6 +6,22 @@ All notable changes to this project are documented here. The format follows
 
 ## Unreleased
 
+## [1.0.2] - 2026-11-27
+
+Advisory: 1.0.0 and 1.0.1 return wrong results for the inputs below; upgrade
+to 1.0.2. No API change. [#28](https://github.com/nanithefkuc/gfm/issues/28).
+
+### Fixed
+
+- Dense, hybrid, and incremental elimination subtract elimination products
+  and determinants include permutation signs, so results hold over
+  odd-characteristic fields (`Mersenne31`, `Goldilocks`, `QuadMersenne31`).
+  Binary-field results are unchanged.
+  [#12](https://github.com/nanithefkuc/gfm/issues/12).
+- `Hybrid` drops explicit zero coefficients on entry; such equations could be
+  mis-solved or make the solve loop forever in any field.
+  [#13](https://github.com/nanithefkuc/gfm/issues/13).
+
 ## [1.0.1] - 2026-09-25
 
 ### Changed
