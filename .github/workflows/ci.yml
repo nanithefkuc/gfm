@@ -86,7 +86,7 @@ jobs:
           components: llvm-tools-preview
       - uses: taiki-e/install-action@v2
         with:
-          tool: just,cargo-llvm-cov
+          tool: just,cargo-llvm-cov,cargo-nextest
       - uses: Swatinem/rust-cache@v2
       # One instrumented run per tier plus the no-default-features closure,
       # merged, then the line gate from `COV_MIN`. `COV_IGNORE` is empty, so
