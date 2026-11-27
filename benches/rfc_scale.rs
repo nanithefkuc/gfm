@@ -8,8 +8,8 @@ use std::cell::RefCell;
 use std::time::{Duration, Instant};
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
-use fgf::Gf8B;
-use fgf::field::Field;
+use fgf::{Elem, FieldBuffer};
+type Gf8B = fgf::FiniteField<2, 8, fgf::binary::Polynomial<{ fgf::binary::AES }>>;
 use gfm::Hybrid;
 
 const DEGREE_THRESHOLDS: [u32; 31] = [
@@ -67,8 +67,8 @@ fn system(columns: usize, band: usize, symbol_bytes: usize, defer_band: bool) ->
         hybrid.push_binary_row(&row_support, &zero_rhs);
     }
     if band > 0 {
-        let alpha = <Gf8B as Field>::decode(&[2]);
-        let mut coefficient = <Gf8B as Field>::Elem::ONE;
+        let alpha = <Gf8B as FieldBuffer>::decode(&[2]);
+        let mut coefficient = Elem::<Gf8B>::ONE;
         let coeffs: Vec<_> = (0..columns)
             .map(|_| {
                 let c = coefficient;

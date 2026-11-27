@@ -9,15 +9,15 @@
 
 mod common;
 
+use common::{Gf8B, Gf16};
 use common::{draw, noise};
-use fgf::field::{Elem, Field};
-use fgf::{FieldKernels, Gf8B, Gf16};
+use fgf::{Elem, FieldBuffer, FieldElem};
 use gfm::{Echelon, Innovation, Matrix, Ple, PleScratch, SolveScratch};
 
-type E = <Gf8B as Field>::Elem;
+type E = Elem<Gf8B>;
 
 /// Draws `n` arbitrary field elements deterministically.
-fn elems<F: FieldKernels>(n: usize, seed: u64) -> Vec<F::Elem> {
+fn elems<F: FieldBuffer>(n: usize, seed: u64) -> Vec<Elem<F>> {
     let bytes = noise(n * F::BYTES, seed);
     (0..n)
         .map(|i| F::decode(&bytes[i * F::BYTES..(i + 1) * F::BYTES]))
@@ -25,7 +25,7 @@ fn elems<F: FieldKernels>(n: usize, seed: u64) -> Vec<F::Elem> {
 }
 
 /// Packs a row of elements into little-endian bytes.
-fn pack<F: FieldKernels>(row: &[F::Elem]) -> Vec<u8> {
+fn pack<F: FieldBuffer>(row: &[Elem<F>]) -> Vec<u8> {
     let mut out = vec![0u8; row.len() * F::BYTES];
     for (i, &e) in row.iter().enumerate() {
         F::encode(&mut out[i * F::BYTES..(i + 1) * F::BYTES], e);
@@ -47,26 +47,26 @@ fn matrix_of(rows: &[Vec<E>], cols: usize) -> Matrix<Gf8B> {
 /// A guaranteed-invertible dense coefficient matrix: the product `L·U` of a
 /// unit-diagonal lower triangle and a unit-diagonal upper triangle filled
 /// from deterministic noise, so it is nonsingular and generically dense.
-fn invertible_coeffs<F: FieldKernels>(n: usize, seed: u64) -> Vec<Vec<F::Elem>> {
+fn invertible_coeffs<F: FieldBuffer>(n: usize, seed: u64) -> Vec<Vec<Elem<F>>> {
     let entry = |i: usize, j: usize| elems::<F>(1, seed + ((i * n + j) as u64) * 0x9E37)[0];
-    let mut a = vec![vec![F::Elem::ZERO; n]; n];
+    let mut a = vec![vec![Elem::<F>::ZERO; n]; n];
     for (i, row) in a.iter_mut().enumerate() {
         for (j, cell) in row.iter_mut().enumerate() {
-            let mut acc = F::Elem::ZERO;
+            let mut acc = Elem::<F>::ZERO;
             for t in 0..n {
                 let l = if t < i {
                     entry(i, t)
                 } else if t == i {
-                    F::Elem::ONE
+                    Elem::<F>::ONE
                 } else {
-                    F::Elem::ZERO
+                    Elem::<F>::ZERO
                 };
                 let u = if t > j {
                     entry(t, j)
                 } else if t == j {
-                    F::Elem::ONE
+                    Elem::<F>::ONE
                 } else {
-                    F::Elem::ZERO
+                    Elem::<F>::ZERO
                 };
                 acc = acc.add(l.mul(u));
             }
@@ -461,7 +461,7 @@ fn unit_propagation_shrinks_spans_and_recovers() {
 fn wider_field_matches_ple_solution() {
     // The two-byte field through the same streaming interface.
     type F = Gf16;
-    type FElem = <F as Field>::Elem;
+    type FElem = Elem<F>;
     let n = 5;
     let sym = 2;
     let x: Vec<Vec<FElem>> = (0..n).map(|v| elems::<F>(sym, 0xF1E0 + v as u64)).collect();

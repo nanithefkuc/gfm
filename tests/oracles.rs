@@ -20,20 +20,20 @@
 // index arithmetic is the algorithm, and iterator rewrites obscure it.
 #![allow(clippy::needless_range_loop)]
 
-use fgf::field::Elem;
-use fgf::{Field, FieldKernels, ops};
+use fgf::{Elem, FieldElem};
+use fgf::{FieldBuffer, ops};
 use gfm::Matrix;
 
 use super::common::noise;
 
 /// A matrix as plain rows of elements.
-pub type Naive<F> = Vec<Vec<<F as Field>::Elem>>;
+pub type Naive<F> = Vec<Vec<Elem<F>>>;
 
 /// A matrix as packed byte rows, `cols * F::BYTES` each.
 pub type Packed = Vec<Vec<u8>>;
 
 /// Builds a matrix from noise bytes.
-pub fn naive_noise<F: FieldKernels>(rows: usize, cols: usize, seed: u64) -> Naive<F> {
+pub fn naive_noise<F: FieldBuffer>(rows: usize, cols: usize, seed: u64) -> Naive<F> {
     let bytes = noise(rows * cols * F::BYTES, seed);
     (0..rows)
         .map(|r| {
@@ -48,7 +48,7 @@ pub fn naive_noise<F: FieldKernels>(rows: usize, cols: usize, seed: u64) -> Naiv
 }
 
 /// Packs a naive matrix.
-pub fn pack<F: FieldKernels>(a: &Naive<F>) -> Packed {
+pub fn pack<F: FieldBuffer>(a: &Naive<F>) -> Packed {
     a.iter()
         .map(|row| {
             let mut out = vec![0u8; row.len() * F::BYTES];
@@ -61,19 +61,19 @@ pub fn pack<F: FieldKernels>(a: &Naive<F>) -> Packed {
 }
 
 /// Builds a crate matrix from packed rows.
-pub fn matrix_of<F: FieldKernels>(packed: &[Vec<u8>], cols: usize) -> Matrix<F> {
+pub fn matrix_of<F: FieldBuffer>(packed: &[Vec<u8>], cols: usize) -> Matrix<F> {
     let flat: Vec<u8> = packed.iter().flatten().copied().collect();
     Matrix::from_rows(packed.len(), cols, &flat).unwrap()
 }
 
 /// Packs a naive matrix and builds the crate matrix.
-pub fn crate_matrix<F: FieldKernels>(a: &Naive<F>) -> Matrix<F> {
+pub fn crate_matrix<F: FieldBuffer>(a: &Naive<F>) -> Matrix<F> {
     let cols = a.first().map_or(0, Vec::len);
     matrix_of::<F>(&pack::<F>(a), cols)
 }
 
 /// Reads a crate matrix back into naive rows.
-pub fn naive_of<F: FieldKernels>(m: &Matrix<F>) -> Naive<F> {
+pub fn naive_of<F: FieldBuffer>(m: &Matrix<F>) -> Naive<F> {
     (0..m.rows())
         .map(|r| (0..m.cols()).map(|c| m.get(r, c)).collect())
         .collect()
@@ -82,7 +82,7 @@ pub fn naive_of<F: FieldKernels>(m: &Matrix<F>) -> Naive<F> {
 /// Builds a matrix of exactly the given rank: `L·U` with `L` unit lower
 /// `m × r` and `U` unit upper `r × n`. The leading `r × r` minor of the
 /// product has determinant one, so the rank is exactly `r`.
-pub fn naive_with_rank<F: FieldKernels>(
+pub fn naive_with_rank<F: FieldBuffer>(
     rows: usize,
     cols: usize,
     rank: usize,
@@ -92,7 +92,7 @@ pub fn naive_with_rank<F: FieldKernels>(
     if rank == 0 {
         // The product of an m×0 and a 0×n matrix is the m×n zero matrix.
         return (0..rows)
-            .map(|_| (0..cols).map(|_| F::Elem::ZERO).collect())
+            .map(|_| (0..cols).map(|_| Elem::<F>::ZERO).collect())
             .collect();
     }
     let mut l = naive_noise::<F>(rows, rank, seed);
@@ -100,8 +100,8 @@ pub fn naive_with_rank<F: FieldKernels>(
         for (t, cell) in row.iter_mut().enumerate() {
             *cell = match t.cmp(&i) {
                 std::cmp::Ordering::Less => *cell,
-                std::cmp::Ordering::Equal => F::Elem::ONE,
-                std::cmp::Ordering::Greater => F::Elem::ZERO,
+                std::cmp::Ordering::Equal => Elem::<F>::ONE,
+                std::cmp::Ordering::Greater => Elem::<F>::ZERO,
             };
         }
     }
@@ -109,9 +109,9 @@ pub fn naive_with_rank<F: FieldKernels>(
     for (t, row) in u.iter_mut().enumerate() {
         for (c, cell) in row.iter_mut().enumerate() {
             if c < t {
-                *cell = F::Elem::ZERO;
+                *cell = Elem::<F>::ZERO;
             } else if c == t {
-                *cell = F::Elem::ONE;
+                *cell = Elem::<F>::ONE;
             }
         }
     }
@@ -119,7 +119,7 @@ pub fn naive_with_rank<F: FieldKernels>(
 }
 
 /// Naive matrix product.
-pub fn naive_mul<F: FieldKernels>(a: &Naive<F>, b: &Naive<F>) -> Naive<F> {
+pub fn naive_mul<F: FieldBuffer>(a: &Naive<F>, b: &Naive<F>) -> Naive<F> {
     let (m, k) = (a.len(), a.first().map_or(0, Vec::len));
     let n = b.first().map_or(0, Vec::len);
     assert_eq!(k, b.len(), "naive_mul shape mismatch");
@@ -127,7 +127,7 @@ pub fn naive_mul<F: FieldKernels>(a: &Naive<F>, b: &Naive<F>) -> Naive<F> {
         .map(|i| {
             (0..n)
                 .map(|c| {
-                    let mut acc = F::Elem::ZERO;
+                    let mut acc = Elem::<F>::ZERO;
                     for t in 0..k {
                         acc = acc.add(a[i][t].mul(b[t][c]));
                     }
@@ -139,27 +139,33 @@ pub fn naive_mul<F: FieldKernels>(a: &Naive<F>, b: &Naive<F>) -> Naive<F> {
 }
 
 /// The `n × n` identity.
-pub fn naive_identity<F: FieldKernels>(n: usize) -> Naive<F> {
+pub fn naive_identity<F: FieldBuffer>(n: usize) -> Naive<F> {
     (0..n)
         .map(|i| {
             (0..n)
-                .map(|c| if i == c { F::Elem::ONE } else { F::Elem::ZERO })
+                .map(|c| {
+                    if i == c {
+                        Elem::<F>::ONE
+                    } else {
+                        Elem::<F>::ZERO
+                    }
+                })
                 .collect()
         })
         .collect()
 }
 
 /// Cofactor-expansion determinant. Exponential; call it at `n <= 6` only.
-pub fn naive_det<F: FieldKernels>(a: &Naive<F>) -> F::Elem {
+pub fn naive_det<F: FieldBuffer>(a: &Naive<F>) -> Elem<F> {
     let n = a.len();
     assert!(a.iter().all(|row| row.len() == n), "det needs square");
     if n == 0 {
-        return F::Elem::ONE;
+        return Elem::<F>::ONE;
     }
     if n == 1 {
         return a[0][0];
     }
-    let mut d = F::Elem::ZERO;
+    let mut d = Elem::<F>::ZERO;
     for c in 0..n {
         let minor: Naive<F> = a[1..]
             .iter()
@@ -173,9 +179,9 @@ pub fn naive_det<F: FieldKernels>(a: &Naive<F>) -> F::Elem {
             .collect();
         // The cofactor sign of column c is (-1)^c.
         let sign = if c % 2 == 1 {
-            F::Elem::ONE.neg()
+            Elem::<F>::ONE.neg()
         } else {
-            F::Elem::ONE
+            Elem::<F>::ONE
         };
         d = d.add(sign.mul(a[0][c]).mul(naive_det::<F>(&minor)));
     }
@@ -186,7 +192,7 @@ pub fn naive_det<F: FieldKernels>(a: &Naive<F>) -> F::Elem {
 /// conventions: `lu` holds the factors below the diagonal and the echelon
 /// form on and above it; `p`/`q` are LAPACK-style swap lists (`list[k] = j`
 /// means step `k` swapped positions `k` and `j`).
-pub struct OraclePle<F: FieldKernels> {
+pub struct OraclePle<F: FieldBuffer> {
     /// In-place factor storage, `m × n`.
     pub lu: Naive<F>,
     /// Row swap list.
@@ -199,7 +205,7 @@ pub struct OraclePle<F: FieldKernels> {
 
 /// The scalar reference elimination. Never optimized; used at small shapes
 /// where per-element arithmetic is affordable.
-pub fn oracle_ple<F: FieldKernels>(a: &Naive<F>) -> OraclePle<F> {
+pub fn oracle_ple<F: FieldBuffer>(a: &Naive<F>) -> OraclePle<F> {
     let (m, n) = (a.len(), a.first().map_or(0, Vec::len));
     let mut lu = a.to_vec();
     let mut p: Vec<usize> = (0..m).collect();
@@ -258,7 +264,7 @@ pub struct PackedPle {
 
 impl PackedPle {
     /// Unpacks into naive rows.
-    pub fn to_naive<F: FieldKernels>(&self, cols: usize) -> Naive<F> {
+    pub fn to_naive<F: FieldBuffer>(&self, cols: usize) -> Naive<F> {
         let b = F::BYTES;
         self.lu
             .iter()
@@ -273,7 +279,7 @@ impl PackedPle {
 
 /// Builds an exact-rank matrix in packed form: `L·U` with `L` unit lower
 /// `m × r` and `U` unit upper `r × n`, multiplied out with row kernels.
-pub fn packed_with_rank<F: FieldKernels>(
+pub fn packed_with_rank<F: FieldBuffer>(
     rows: usize,
     cols: usize,
     rank: usize,
@@ -291,8 +297,8 @@ pub fn packed_with_rank<F: FieldKernels>(
         for t in 0..rank {
             let v = match t.cmp(&i) {
                 std::cmp::Ordering::Less => F::decode(&row[t * b..(t + 1) * b]),
-                std::cmp::Ordering::Equal => F::Elem::ONE,
-                std::cmp::Ordering::Greater => F::Elem::ZERO,
+                std::cmp::Ordering::Equal => Elem::<F>::ONE,
+                std::cmp::Ordering::Greater => Elem::<F>::ZERO,
             };
             F::encode(&mut row[t * b..(t + 1) * b], v);
         }
@@ -302,7 +308,11 @@ pub fn packed_with_rank<F: FieldKernels>(
         .collect();
     for (t, row) in u.iter_mut().enumerate() {
         for c in 0..=t.min(cols - 1) {
-            let v = if c == t { F::Elem::ONE } else { F::Elem::ZERO };
+            let v = if c == t {
+                Elem::<F>::ONE
+            } else {
+                Elem::<F>::ZERO
+            };
             F::encode(&mut row[c * b..(c + 1) * b], v);
         }
     }
@@ -321,7 +331,7 @@ pub fn packed_with_rank<F: FieldKernels>(
 
 /// The packed reference elimination: identical pivot structure to
 /// [`oracle_ple`], with the row update run through `fgf::ops::mul_add`.
-pub fn oracle_ple_packed<F: FieldKernels>(a: &Packed, cols: usize) -> PackedPle {
+pub fn oracle_ple_packed<F: FieldBuffer>(a: &Packed, cols: usize) -> PackedPle {
     let m = a.len();
     let n = cols;
     let b = F::BYTES;
@@ -375,7 +385,7 @@ pub fn oracle_ple_packed<F: FieldKernels>(a: &Packed, cols: usize) -> PackedPle 
 }
 
 /// Reassembles `P⁻¹·L·U·Q⁻¹` from a packed factorization, with row kernels.
-pub fn reassemble_packed<F: FieldKernels>(o: &PackedPle, cols: usize) -> Packed {
+pub fn reassemble_packed<F: FieldBuffer>(o: &PackedPle, cols: usize) -> Packed {
     let b = F::BYTES;
     let (m, n, r) = (o.lu.len(), cols, o.rank);
     // U rows: the echelon rows with the below-diagonal factor entries masked.
@@ -391,9 +401,9 @@ pub fn reassemble_packed<F: FieldKernels>(o: &PackedPle, cols: usize) -> Packed 
             let l = if t < i {
                 F::decode(&o.lu[i][t * b..(t + 1) * b])
             } else if t == i {
-                F::Elem::ONE
+                Elem::<F>::ONE
             } else {
-                F::Elem::ZERO
+                Elem::<F>::ZERO
             };
             if l.is_zero() {
                 continue;
@@ -423,7 +433,7 @@ pub fn reassemble_packed<F: FieldKernels>(o: &PackedPle, cols: usize) -> Packed 
 
 /// Reassembles `P⁻¹·L·U·Q⁻¹` from an oracle factorization: the independent
 /// certificate that the decomposition multiplies back to the input.
-pub fn reassemble<F: FieldKernels>(oracle: &OraclePle<F>) -> Naive<F> {
+pub fn reassemble<F: FieldBuffer>(oracle: &OraclePle<F>) -> Naive<F> {
     let m = oracle.lu.len();
     let n = oracle.lu.first().map_or(0, Vec::len);
     let r = oracle.rank;
@@ -431,19 +441,19 @@ pub fn reassemble<F: FieldKernels>(oracle: &OraclePle<F>) -> Naive<F> {
         .map(|i| {
             (0..n)
                 .map(|c| {
-                    let mut acc = F::Elem::ZERO;
+                    let mut acc = Elem::<F>::ZERO;
                     for t in 0..r {
                         let l = if t < i {
                             oracle.lu[i][t]
                         } else if t == i {
-                            F::Elem::ONE
+                            Elem::<F>::ONE
                         } else {
-                            F::Elem::ZERO
+                            Elem::<F>::ZERO
                         };
                         let u = if t <= c {
                             oracle.lu[t][c]
                         } else {
-                            F::Elem::ZERO
+                            Elem::<F>::ZERO
                         };
                         acc = acc.add(l.mul(u));
                     }
@@ -474,7 +484,7 @@ pub fn reassemble<F: FieldKernels>(oracle: &OraclePle<F>) -> Naive<F> {
 /// The RREF of `a`, computed from the scalar oracle's echelon form: undo the
 /// column permutation, then normalize each pivot row and clear its pivot
 /// column upward.
-pub fn oracle_rref<F: FieldKernels>(a: &Naive<F>) -> Naive<F> {
+pub fn oracle_rref<F: FieldBuffer>(a: &Naive<F>) -> Naive<F> {
     let o = oracle_ple::<F>(a);
     let (m, n, r) = (o.lu.len(), o.lu.first().map_or(0, Vec::len), o.rank);
     let mut out: Naive<F> = (0..m)
@@ -484,11 +494,11 @@ pub fn oracle_rref<F: FieldKernels>(a: &Naive<F>) -> Naive<F> {
                 // diagonal (permuted columns `0..i`) are not part of it.
                 let mut row = o.lu[i].clone();
                 for cell in row.iter_mut().take(i) {
-                    *cell = F::Elem::ZERO;
+                    *cell = Elem::<F>::ZERO;
                 }
                 row
             } else {
-                vec![F::Elem::ZERO; n]
+                vec![Elem::<F>::ZERO; n]
             }
         })
         .collect();
@@ -557,22 +567,22 @@ mod tests {
         // The oracles must agree with each other and with trivial cases:
         // identity decomposes as identity, and the packed and scalar
         // eliminations match on a small random matrix.
-        let id = naive_identity::<fgf::Gf8B>(5);
-        let o = oracle_ple::<fgf::Gf8B>(&id);
+        let id = naive_identity::<crate::common::Gf8B>(5);
+        let o = oracle_ple::<crate::common::Gf8B>(&id);
         assert_eq!(o.rank, 5);
         assert_eq!(reassemble(&o), id);
 
-        let a = naive_noise::<fgf::Gf16>(7, 9, 0x0ACE);
-        let scalar = oracle_ple::<fgf::Gf16>(&a);
-        let packed = oracle_ple_packed::<fgf::Gf16>(&pack::<fgf::Gf16>(&a), 9);
+        let a = naive_noise::<crate::common::Gf16>(7, 9, 0x0ACE);
+        let scalar = oracle_ple::<crate::common::Gf16>(&a);
+        let packed = oracle_ple_packed::<crate::common::Gf16>(&pack::<crate::common::Gf16>(&a), 9);
         assert_eq!(scalar.rank, packed.rank);
-        assert_eq!(scalar.lu, packed.to_naive::<fgf::Gf16>(9));
+        assert_eq!(scalar.lu, packed.to_naive::<crate::common::Gf16>(9));
         assert_eq!(scalar.p, packed.p);
         assert_eq!(scalar.q, packed.q);
         assert_eq!(reassemble(&scalar), a);
         assert_eq!(
-            reassemble_packed::<fgf::Gf16>(&packed, 9),
-            pack::<fgf::Gf16>(&a),
+            reassemble_packed::<crate::common::Gf16>(&packed, 9),
+            pack::<crate::common::Gf16>(&a),
             "packed reassembly certificate"
         );
     }

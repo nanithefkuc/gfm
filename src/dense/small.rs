@@ -13,19 +13,19 @@
 
 use core::fmt;
 
-use fgf::{FieldKernels, field::Elem, ops};
+use fgf::{Elem, FieldBuffer, FieldElem, ops};
 
 use crate::SolveError;
 use crate::dense::Matrix;
 
 /// A compact, stack-owned `K × K` matrix, intended for `K <= 64`.
 #[derive(Clone)]
-pub struct SmallMatrix<F: FieldKernels, const K: usize> {
-    data: [[F::Elem; K]; K],
+pub struct SmallMatrix<F: FieldBuffer, const K: usize> {
+    data: [[Elem<F>; K]; K],
     one_byte: [[u8; K]; K],
 }
 
-impl<F: FieldKernels, const K: usize> SmallMatrix<F, K> {
+impl<F: FieldBuffer, const K: usize> SmallMatrix<F, K> {
     /// A zero matrix.
     ///
     /// # Panics
@@ -35,7 +35,7 @@ impl<F: FieldKernels, const K: usize> SmallMatrix<F, K> {
     pub fn zeros() -> Self {
         assert!(K <= 64, "SmallMatrix order exceeds 64");
         Self {
-            data: [[F::Elem::ZERO; K]; K],
+            data: [[Elem::<F>::ZERO; K]; K],
             one_byte: [[0; K]; K],
         }
     }
@@ -64,7 +64,7 @@ impl<F: FieldKernels, const K: usize> SmallMatrix<F, K> {
     ///
     /// Panics if `row` or `col` is outside `0..K`.
     #[must_use]
-    pub fn get(&self, row: usize, col: usize) -> F::Elem {
+    pub fn get(&self, row: usize, col: usize) -> Elem<F> {
         self.data[row][col]
     }
 
@@ -73,7 +73,7 @@ impl<F: FieldKernels, const K: usize> SmallMatrix<F, K> {
     /// # Panics
     ///
     /// Panics if `row` or `col` is outside `0..K`.
-    pub fn set(&mut self, row: usize, col: usize, value: F::Elem) {
+    pub fn set(&mut self, row: usize, col: usize, value: Elem<F>) {
         self.data[row][col] = value;
         if F::BYTES == 1 {
             F::encode(&mut self.one_byte[row][col..=col], value);
@@ -219,7 +219,7 @@ impl<F: FieldKernels, const K: usize> SmallMatrix<F, K> {
                 if factor.is_zero() {
                     continue;
                 }
-                a[row][pivot] = F::Elem::ZERO;
+                a[row][pivot] = Elem::<F>::ZERO;
                 for col in (pivot + 1)..K {
                     a[row][col] = a[row][col].sub(factor.mul(a[pivot][col]));
                 }
@@ -248,7 +248,7 @@ fn two_array_rows<T, const K: usize>(
     }
 }
 
-impl<F: FieldKernels, const K: usize> fmt::Debug for SmallMatrix<F, K> {
+impl<F: FieldBuffer, const K: usize> fmt::Debug for SmallMatrix<F, K> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("SmallMatrix")
             .field("field", &F::NAME)
@@ -257,7 +257,7 @@ impl<F: FieldKernels, const K: usize> fmt::Debug for SmallMatrix<F, K> {
     }
 }
 
-impl<F: FieldKernels, const K: usize> Default for SmallMatrix<F, K> {
+impl<F: FieldBuffer, const K: usize> Default for SmallMatrix<F, K> {
     fn default() -> Self {
         Self::zeros()
     }

@@ -4,8 +4,8 @@ use core::hint::black_box;
 use std::time::Duration;
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
-use fgf::Gf8B;
-use fgf::field::Field;
+use fgf::FieldBuffer;
+type Gf8B = fgf::FiniteField<2, 8, fgf::binary::Polynomial<{ fgf::binary::AES }>>;
 use gfm::internals::row_ops::mul_add as row_mul_add;
 use rayon::ThreadPoolBuilder;
 

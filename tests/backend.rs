@@ -5,7 +5,8 @@
 //! kernels will run on, and that the stack-wide `SIMD_BACKEND` override
 //! reaches it. There is no second resolver to drift.
 
-use fgf::{Gf8B, Gf16, Gf32, Gf64};
+use common::{Gf8B, Gf16, Gf32, Gf64};
+use fgf::FieldBuffer;
 mod common;
 use gfm::internals::PleInternals;
 use gfm::{Backend, Matrix, backend_for};
@@ -35,7 +36,6 @@ fn scalar_override_forces_scalar() {
 
 #[test]
 fn backend_fingerprint_is_stable() {
-    use fgf::Field;
     use gfm::{Matrix, Ple, PleScratch};
     use std::io::Write;
 
@@ -91,7 +91,6 @@ fn backend_fingerprint_is_stable() {
 #[cfg(feature = "parallel")]
 #[test]
 fn parallel_row_dispatch_matches_field_kernel() {
-    use fgf::Field;
     use gfm::internals::row_ops::mul_add as row_mul_add;
 
     for bytes in [2 * 1024 * 1024 - 1, 2 * 1024 * 1024, 4 * 1024 * 1024] {

@@ -4,7 +4,7 @@
 //! arithmetic throughout — additions are XORs, every pivot is one, and no
 //! normalization is ever needed.
 
-use fgf::bits;
+use fgf::ops::bits;
 
 use crate::SolveError;
 use crate::bits::BitMatrix;

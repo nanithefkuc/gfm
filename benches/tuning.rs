@@ -6,8 +6,9 @@ use core::hint::black_box;
 use std::time::Duration;
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
-use fgf::field::Field;
-use fgf::{FieldKernels, Gf8B, Gf16};
+use fgf::{Elem, FieldBuffer};
+type Gf8B = fgf::FiniteField<2, 8, fgf::binary::Polynomial<{ fgf::binary::AES }>>;
+type Gf16 = fgf::FiniteField<2, 16, fgf::extension::Extension<fgf::binary::Rijndael16, 2>>;
 use gfm::bits::{Ple as BitPle, PleScratch as BitPleScratch};
 use gfm::internals::{BitPleInternals, PleInternals};
 use gfm::{BitMatrix, Matrix, Ple, PleScratch, SmallMatrix, SolveScratch};
@@ -19,11 +20,11 @@ fn next(state: &mut u64) -> u64 {
     *state
 }
 
-fn dense_matrix<F: FieldKernels>(n: usize, seed: u64) -> Matrix<F> {
+fn dense_matrix<F: FieldBuffer>(n: usize, seed: u64) -> Matrix<F> {
     dense_rect::<F>(n, n, seed)
 }
 
-fn dense_rect<F: FieldKernels>(rows: usize, cols: usize, seed: u64) -> Matrix<F> {
+fn dense_rect<F: FieldBuffer>(rows: usize, cols: usize, seed: u64) -> Matrix<F> {
     let mut state = seed;
     let mut matrix = Matrix::<F>::zeros(rows, cols).unwrap();
     for row in 0..rows {
@@ -46,7 +47,7 @@ fn bit_matrix(n: usize, seed: u64) -> BitMatrix {
     matrix
 }
 
-fn bench_dense<F: FieldKernels>(c: &mut Criterion) {
+fn bench_dense<F: FieldBuffer>(c: &mut Criterion) {
     let mut group = c.benchmark_group(format!("dense_dispatch_{}", F::NAME));
     group.sample_size(10);
     group.measurement_time(Duration::from_secs(3));
@@ -145,11 +146,11 @@ fn bench_newton_john(c: &mut Criterion) {
 
 fn full_rank_gf8<const K: usize>() -> Matrix<Gf8B> {
     let mut state = 0x5A11 ^ K as u64;
-    let mut lower = [[<Gf8B as Field>::Elem::ZERO; K]; K];
+    let mut lower = [[Elem::<Gf8B>::ZERO; K]; K];
     let mut upper = lower;
     for row in 0..K {
-        lower[row][row] = <Gf8B as Field>::Elem::ONE;
-        upper[row][row] = <Gf8B as Field>::Elem::ONE;
+        lower[row][row] = Elem::<Gf8B>::ONE;
+        upper[row][row] = Elem::<Gf8B>::ONE;
         for col in 0..row {
             lower[row][col] = Gf8B::decode(&[(next(&mut state) >> 56) as u8]);
         }
@@ -160,7 +161,7 @@ fn full_rank_gf8<const K: usize>() -> Matrix<Gf8B> {
     let mut matrix = Matrix::<Gf8B>::zeros(K, K).unwrap();
     for row in 0..K {
         for col in 0..K {
-            let mut value = <Gf8B as Field>::Elem::ZERO;
+            let mut value = Elem::<Gf8B>::ZERO;
             for term in 0..K {
                 value = value.add(lower[row][term].mul(upper[term][col]));
             }

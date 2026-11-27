@@ -12,9 +12,9 @@
 
 mod common;
 
+use common::Gf8B;
 use common::{draw, noise};
-use fgf::Gf8B;
-use fgf::field::Elem;
+
 use gfm::bits::{Ple, PleScratch, SolveScratch};
 use gfm::internals::{BitPleInternals, PleInternals};
 use gfm::{BitMatrix, Matrix, Ple as DensePle, PleScratch as DensePleScratch, SolveError};
@@ -71,7 +71,7 @@ fn with_dead_leading(rows: usize, cols: usize, dead: usize, rank: usize, seed: u
         .collect()
 }
 
-/// Packs a naive matrix into `fgf::bits` row bytes.
+/// Packs a naive matrix into `fgf::ops::bits` row bytes.
 fn pack(a: &Naive, cols: usize) -> Vec<u8> {
     let live = cols.div_ceil(8);
     let mut out = vec![0u8; a.len() * live];

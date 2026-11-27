@@ -1,4 +1,4 @@
-//! The GF(2) domain against its contracts: `fgf::bits`-packed layout
+//! The GF(2) domain against its contracts: `fgf::ops::bits`-packed layout
 //! invariants, bit accessors, masking of out-of-range bits, index-only row
 //! exchange, row permutation with compaction, and the geometry errors that
 //! reject a mismatched shape.
@@ -11,7 +11,7 @@ use gfm::{BitMatrix, GeometryError, Perm};
 
 /// `ceil(cols / 8)`, the live bytes of a row.
 fn row_bytes(cols: usize) -> usize {
-    fgf::bits::bytes_for(cols)
+    fgf::ops::bits::bytes_for(cols)
 }
 
 /// Mask of live bits in the last byte of a row (mirrors the crate's own).

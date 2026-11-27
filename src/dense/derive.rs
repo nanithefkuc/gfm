@@ -16,7 +16,7 @@
 //! holds over any `fgf` field; in characteristic two negation is the
 //! identity and the arithmetic is the XOR the binary fields share.
 
-use fgf::{FieldKernels, field::Elem, ops};
+use fgf::{Elem, FieldBuffer, FieldElem, ops};
 
 use crate::SolveError;
 use crate::dense::{Matrix, Ple};
@@ -25,11 +25,11 @@ use crate::dense::{Matrix, Ple};
 ///
 /// Holds the eliminated right-hand side (`m × s`). Grow-only: solving
 /// repeatedly with the same shape allocates nothing.
-pub struct SolveScratch<F: FieldKernels> {
+pub struct SolveScratch<F: FieldBuffer> {
     ws: Option<Matrix<F>>,
 }
 
-impl<F: FieldKernels> SolveScratch<F> {
+impl<F: FieldBuffer> SolveScratch<F> {
     /// An empty scratch.
     #[must_use]
     pub const fn new() -> Self {
@@ -51,19 +51,19 @@ impl<F: FieldKernels> SolveScratch<F> {
     }
 }
 
-impl<F: FieldKernels> Default for SolveScratch<F> {
+impl<F: FieldBuffer> Default for SolveScratch<F> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<F: FieldKernels> core::fmt::Debug for SolveScratch<F> {
+impl<F: FieldBuffer> core::fmt::Debug for SolveScratch<F> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("SolveScratch").finish_non_exhaustive()
     }
 }
 
-impl<F: FieldKernels> Ple<F> {
+impl<F: FieldBuffer> Ple<F> {
     /// The determinant: the permutation signs times the product of `U`'s
     /// diagonal for a full-rank square matrix, zero otherwise. In
     /// characteristic two the signs are one and drop out.
@@ -72,12 +72,12 @@ impl<F: FieldKernels> Ple<F> {
     ///
     /// Panics if the decomposed matrix is not square.
     #[must_use]
-    pub fn det(&self) -> F::Elem {
+    pub fn det(&self) -> Elem<F> {
         assert_eq!(self.rows(), self.cols(), "det requires a square matrix");
         if self.rank() < self.rows() {
-            return F::Elem::ZERO;
+            return Elem::<F>::ZERO;
         }
-        let mut d = F::Elem::ONE;
+        let mut d = Elem::<F>::ONE;
         let lu = self.lu_matrix();
         for k in 0..self.rank() {
             d = d.mul(lu.get(k, k));
@@ -174,7 +174,7 @@ impl<F: FieldKernels> Ple<F> {
                 let pivot = lu.get(piv, piv);
                 out.set(piv, col, acc.neg().mul(pivot.inv()));
             }
-            out.set(free, col, F::Elem::ONE);
+            out.set(free, col, Elem::<F>::ONE);
         }
         // x = Q·z: un-permute the solution entries, one row permutation for
         // the whole basis matrix.
@@ -282,7 +282,7 @@ impl<F: FieldKernels> Ple<F> {
         // out := I, then X = Q·U⁻¹·L⁻¹·P applied in place.
         for row in 0..order {
             out.row_mut(row).fill(0);
-            out.set(row, row, F::Elem::ONE);
+            out.set(row, row, Elem::<F>::ONE);
         }
         out.apply_row_perm(self.p_perm())
             .expect("row count matches by construction");

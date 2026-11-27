@@ -9,10 +9,12 @@
 
 # gfm — Galois Field Math
 
-`gfm` provides dense, bit-packed, and hybrid sparse/dense linear algebra over
-GF(2) and GF(2^m). It supports batch factorization, streaming equations, and
-sparse systems with dense residual blocks for the matrix layer underneath
-erasure coding.
+`gfm` provides matrices and linear systems over the finite fields of
+[`fgf`](https://github.com/nanithefkuc/fgf): dense matrices over every field
+`fgf` packs into byte lanes (`fgf::FieldBuffer`, covering prime residues, the
+binary towers, and custom extensions) and bit-packed GF(2) matrices. It
+supports batch factorization, streaming equations, and sparse systems with
+dense residual blocks for the matrix layer underneath erasure coding.
 
 | Main property | What it provides |
 | --- | --- |
@@ -38,16 +40,16 @@ same `fgf` release as the library so field types match:
 
 ```toml
 [dependencies]
-gfm = "=1.0.1"
-fgf = "=1.2.1"
+gfm = "=2.0.0"
+fgf = "=4.0.1"
 ```
 
 For portable `no_std` execution, matrix storage still requires `alloc`:
 
 ```toml
 [dependencies]
-gfm = { version = "=1.0.1", default-features = false }
-fgf = { version = "=1.2.1", default-features = false }
+gfm = { version = "=2.0.0", default-features = false }
+fgf = { version = "=4.0.1", default-features = false }
 ```
 
 ## Quick start
@@ -56,17 +58,20 @@ Factor a matrix once, then solve using reusable workspace. This system is over
 GF(256) with the AES reduction polynomial; addition is XOR:
 
 ```rust
-use fgf::Gf8B;
+use fgf::FiniteField;
+use fgf::binary::{AES, Polynomial};
 use gfm::{Matrix, Ple, PleScratch, SolveScratch};
 
+type Gf8 = FiniteField<2, 8, Polynomial<AES>>;
+
 // x + y = 3, y = 2, so x = 1.
-let a = Matrix::<Gf8B>::from_rows(2, 2, &[1, 1, 0, 1]).unwrap();
-let rhs = Matrix::<Gf8B>::from_rows(2, 1, &[3, 2]).unwrap();
+let a = Matrix::<Gf8>::from_rows(2, 2, &[1, 1, 0, 1]).unwrap();
+let rhs = Matrix::<Gf8>::from_rows(2, 1, &[3, 2]).unwrap();
 let mut factor_scratch = PleScratch::new();
 let factor = Ple::decompose(a, &mut factor_scratch);
 assert_eq!(factor.rank(), 2);
 
-let mut solution = Matrix::<Gf8B>::zeros(2, 1).unwrap();
+let mut solution = Matrix::<Gf8>::zeros(2, 1).unwrap();
 let mut solve_scratch = SolveScratch::new();
 factor.solve_into(&rhs, &mut solution, &mut solve_scratch).unwrap();
 assert_eq!(solution.row(0), &[1]);
@@ -99,9 +104,9 @@ solution with free variables zero; an inconsistent system returns
 its required output shape and whether invalid geometry returns an error or
 panics.
 
-The [dense module](https://docs.rs/gfm/1.0.0/gfm/dense/index.html) defines the
+The [dense module](https://docs.rs/gfm/2.0.0/gfm/dense/index.html) defines the
 field-element matrix API; the
-[bits module](https://docs.rs/gfm/1.0.0/gfm/bits/index.html) provides the GF(2)
+[bits module](https://docs.rs/gfm/2.0.0/gfm/bits/index.html) provides the GF(2)
 counterpart.
 
 ## Streaming and sparse systems
@@ -117,8 +122,8 @@ dense rows describe which equations participate in sparse scheduling.
 `solve_into` re-analyzes the system; `replace_rhs` and `resolve_into` explicitly
 reuse coefficient analysis for changed payloads.
 
-The [incremental module](https://docs.rs/gfm/1.0.0/gfm/incremental/index.html)
-and [hybrid module](https://docs.rs/gfm/1.0.0/gfm/hybrid/index.html) define input
+The [incremental module](https://docs.rs/gfm/2.0.0/gfm/incremental/index.html)
+and [hybrid module](https://docs.rs/gfm/2.0.0/gfm/hybrid/index.html) define input
 validation, storage reuse, and solution access.
 
 ## Features
@@ -128,6 +133,7 @@ validation, storage reuse, and solution access.
 | default | enables `std` and runtime-dispatched `simd` |
 | `std` | enables `fgf` runtime support |
 | `simd` | enables `fgf` architecture kernels; implies `std` |
+| `simd512` | enables `fgf`'s AVX-512 kernels on capable x86-64 hosts; implies `simd` |
 | `parallel` | optional Rayon symbol-axis row updates; implies `std` and is off by default |
 | `internals` | re-export-only facade of implementation types and tuning APIs |
 
@@ -138,10 +144,11 @@ or disappear in any release.
 
 ## Platforms and backends
 
-`backend_for::<F>()` reports the backend used by `fgf` for a particular field.
-Available field kernels include x86, `AArch64`, WebAssembly SIMD, and portable
-fallbacks; not every field supports every backend. `gfm` owns no SIMD kernels
-and adds no separate CPU detector.
+`backend_for::<F>()` reports `fgf`'s strategy summary for a particular field,
+not the tier serving every individual operation. `fgf` ships SIMD kernels for
+x86-64 only; every other target runs its portable scalar bodies, and not every
+field has a vector strategy. `gfm` owns no SIMD kernels and adds no separate
+CPU detector.
 
 [`simdispatch`](https://github.com/nanithefkuc/simdispatch) owns detection and
 the downgrade-only `SIMD_BACKEND` override. It may request a weaker backend
@@ -151,7 +158,7 @@ at process startup; unsupported upgrades are ignored.
 
 Dense rows use `fgf`'s little-endian field encodings. `Matrix<F>` owns a
 32-byte-aligned base, a pitch that is a multiple of 32 bytes, and zero padding.
-`BitMatrix` uses `fgf::bits`'s LSB-first bit encoding with a pitch that is a
+`BitMatrix` uses `fgf::ops::bits`'s LSB-first bit encoding with a pitch that is a
 multiple of 64 bytes. Logical row exchanges use a row map; `compact_rows`
 restores contiguous physical row order.
 

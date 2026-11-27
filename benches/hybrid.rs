@@ -5,8 +5,8 @@ use core::hint::black_box;
 use std::time::Duration;
 
 use criterion::{Criterion, criterion_group, criterion_main};
-use fgf::Gf8B;
-use fgf::field::Field;
+use fgf::Elem;
+type Gf8B = fgf::FiniteField<2, 8, fgf::binary::Polynomial<{ fgf::binary::AES }>>;
 use gfm::{Hybrid, Matrix, Ple, PleScratch, SolveScratch};
 
 const DEGREE_THRESHOLDS: [u32; 31] = [
@@ -61,7 +61,7 @@ fn system(columns: usize, symbol_bytes: usize) -> (Hybrid<Gf8B>, Matrix<Gf8B>, M
         );
         hybrid.push_binary_row(&row_support, &zero_rhs);
         for &column in &row_support {
-            dense.set(row, column as usize, <Gf8B as Field>::Elem::ONE);
+            dense.set(row, column as usize, Elem::<Gf8B>::ONE);
         }
     }
     (hybrid, dense, rhs)

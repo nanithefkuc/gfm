@@ -5,10 +5,12 @@
 CRATE := 'gfm'
 MSRV := '1.93'
 
-# Backend tiers this crate dispatches over, strongest first. `just test-tiers`
+# Backend tiers fgf 4.0.1 routes on x86-64, strongest first. `just test-tiers`
 # and `just cover` re-run once per tier, because dispatch resolves one backend
-# per process. Empty means the crate owns no dispatch surface.
-TIERS := 'v3_gfni_crypto v3 v2 v1 scalar'
+# per process; the runs use all features, so `simd512` makes `v4x` reachable.
+# These are requests: unsupported tiers fall back, and a run proves only the
+# backend it reports.
+TIERS := 'v4x v3_gfni_crypto v3 v2 scalar'
 
 # `cargo miri test` argument sets, one per line. Empty when the crate declares
 # no unsafe surface, in which case `just unsafe-check` reports and skips.

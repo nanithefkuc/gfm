@@ -1,6 +1,6 @@
 //! Consumer-owned row sources for [`Hybrid`](super::Hybrid).
 
-use fgf::FieldKernels;
+use fgf::{Elem, FieldBuffer};
 
 /// One borrowed equation supplied through [`DenseRows`].
 ///
@@ -9,7 +9,7 @@ use fgf::FieldKernels;
 /// coefficients. The right-hand side uses the same packed field-element
 /// representation as [`crate::Matrix`].
 #[derive(Clone, Copy, Debug)]
-pub enum DenseRow<'a, F: FieldKernels> {
+pub enum DenseRow<'a, F: FieldBuffer> {
     /// A binary equation whose support coefficients are all one.
     Binary {
         /// Sorted, distinct column indices.
@@ -22,7 +22,7 @@ pub enum DenseRow<'a, F: FieldKernels> {
         /// Sorted, distinct column indices.
         support: &'a [u32],
         /// Coefficients parallel to `support`.
-        coeffs: &'a [F::Elem],
+        coeffs: &'a [Elem<F>],
         /// Packed right-hand side.
         rhs: &'a [u8],
     },
@@ -34,7 +34,7 @@ pub enum DenseRow<'a, F: FieldKernels> {
 /// crate or codec implements the trait for its local residual-row container;
 /// neither `gfm` nor the trait implementation needs an inverse dependency.
 /// Implementations must preserve row order when calling `visit`.
-pub trait DenseRows<F: FieldKernels> {
+pub trait DenseRows<F: FieldBuffer> {
     /// Visits every admitted equation exactly once, in source order.
     fn for_each_row(&self, visit: &mut impl FnMut(DenseRow<'_, F>));
 }

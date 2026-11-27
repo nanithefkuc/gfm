@@ -24,7 +24,7 @@ use core::fmt;
 use core::marker::PhantomData;
 
 use fgf::ops;
-use fgf::{FieldKernels, field::Elem};
+use fgf::{FieldBuffer, FieldElem};
 
 use crate::backend::panel_width;
 use crate::dense::{Matrix, Perm};
@@ -35,7 +35,7 @@ use crate::dense::{Matrix, Perm};
 /// deficiency is normal: a rank-deficient input produces a rank-deficient
 /// decomposition, not an error.
 #[derive(Clone)]
-pub struct Ple<F: FieldKernels> {
+pub struct Ple<F: FieldBuffer> {
     lu: Matrix<F>,
     p: Perm,
     q: Perm,
@@ -48,12 +48,12 @@ pub struct Ple<F: FieldKernels> {
 ///
 /// The Newton–John candidate table is grow-only. The normal blocked/AXPY path
 /// leaves it untouched.
-pub struct PleScratch<F: FieldKernels> {
+pub struct PleScratch<F: FieldBuffer> {
     table: Vec<u8>,
     field: PhantomData<F>,
 }
 
-impl<F: FieldKernels> PleScratch<F> {
+impl<F: FieldBuffer> PleScratch<F> {
     /// An empty scratch.
     #[must_use]
     pub const fn new() -> Self {
@@ -64,13 +64,13 @@ impl<F: FieldKernels> PleScratch<F> {
     }
 }
 
-impl<F: FieldKernels> Default for PleScratch<F> {
+impl<F: FieldBuffer> Default for PleScratch<F> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<F: FieldKernels> fmt::Debug for PleScratch<F> {
+impl<F: FieldBuffer> fmt::Debug for PleScratch<F> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("PleScratch")
             .field("table_bytes", &self.table.len())
@@ -78,7 +78,7 @@ impl<F: FieldKernels> fmt::Debug for PleScratch<F> {
     }
 }
 
-impl<F: FieldKernels> fmt::Debug for Ple<F> {
+impl<F: FieldBuffer> fmt::Debug for Ple<F> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Ple")
             .field("field", &F::NAME)
@@ -97,7 +97,7 @@ enum TrailingMode {
     NewtonJohn,
 }
 
-impl<F: FieldKernels> Ple<F> {
+impl<F: FieldBuffer> Ple<F> {
     /// Decomposes `a`, consuming its storage.
     #[must_use]
     pub fn decompose(a: Matrix<F>, scratch: &mut PleScratch<F>) -> Self {
@@ -280,7 +280,7 @@ impl<F: FieldKernels> Ple<F> {
 /// in the window are updated by every elimination of this panel, and a column
 /// once found zero below the frontier stays zero forever (the pivot rows
 /// chosen later have zeros there by the scan's own invariant).
-fn factor_panel<F: FieldKernels>(
+fn factor_panel<F: FieldBuffer>(
     mat: &mut Matrix<F>,
     row_perm: &mut Perm,
     col_perm: &mut Perm,
@@ -329,7 +329,7 @@ fn factor_panel<F: FieldKernels>(
 /// The first pivot in the unblocked sweep order: the leftmost column position
 /// in `[max(step, wstart), wend)` with a nonzero entry at or below row
 /// `step`, and that column's first nonzero row.
-fn find_pivot<F: FieldKernels>(
+fn find_pivot<F: FieldBuffer>(
     mat: &Matrix<F>,
     step: usize,
     wstart: usize,
@@ -349,7 +349,7 @@ fn find_pivot<F: FieldKernels>(
 /// rows' right parts, then the rank-`s` update of the trailing submatrix.
 /// Both cover only columns at and past `wend` — the window's columns were
 /// already updated during the panel phase.
-fn bulk_update<F: FieldKernels>(
+fn bulk_update<F: FieldBuffer>(
     mat: &mut Matrix<F>,
     frontier: usize,
     pivots: usize,
@@ -385,7 +385,7 @@ fn bulk_update<F: FieldKernels>(
     }
 }
 
-fn update_trailing_axpy<F: FieldKernels>(
+fn update_trailing_axpy<F: FieldBuffer>(
     mat: &mut Matrix<F>,
     frontier: usize,
     pivots: usize,
@@ -415,7 +415,7 @@ fn update_trailing_axpy<F: FieldKernels>(
 ///
 /// Reached through [`Ple::decompose_newton_john`], the `internals` facade's
 /// trailing-update candidate.
-fn update_trailing_newton_john<F: FieldKernels>(
+fn update_trailing_newton_john<F: FieldBuffer>(
     mat: &mut Matrix<F>,
     frontier: usize,
     pivots: usize,

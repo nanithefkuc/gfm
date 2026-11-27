@@ -14,7 +14,7 @@
 //! override variable exists.
 
 pub use fgf::Backend;
-use fgf::FieldKernels;
+use fgf::FieldBuffer;
 
 /// The backend `fgf`'s kernels for field `F` resolve to on this host.
 ///
@@ -25,7 +25,7 @@ use fgf::FieldKernels;
 /// override. `gfm` does not narrow it further; there is no second resolver.
 #[inline]
 #[must_use]
-pub fn backend_for<F: FieldKernels>() -> Backend {
+pub fn backend_for<F: FieldBuffer>() -> Backend {
     fgf::backend_for::<F>()
 }
 /// Dense-elimination panel width for the active shape and backend.
@@ -33,7 +33,7 @@ pub fn backend_for<F: FieldKernels>() -> Backend {
 /// Blocking is applied only where a measurement selected it; every other
 /// backend and shape uses the unblocked sweep. The comparison and the
 /// retained thresholds are recorded in `BENCHMARKS.md`.
-pub(crate) fn panel_width<F: FieldKernels>(rows: usize, cols: usize) -> usize {
+pub(crate) fn panel_width<F: FieldBuffer>(rows: usize, cols: usize) -> usize {
     if backend_for::<F>() != Backend::V3GfniCrypto {
         return 1;
     }

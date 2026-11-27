@@ -15,7 +15,7 @@ use alloc::vec::Vec;
 use core::fmt;
 use core::marker::PhantomData;
 
-use fgf::{FieldKernels, field::Elem};
+use fgf::{Elem, FieldBuffer};
 
 use crate::GeometryError;
 use crate::dense::layout::{aligned_zeroed, pitch_for};
@@ -26,7 +26,7 @@ use crate::dense::{Perm, invert_in_place};
 /// Element `(r, c)` lives at `map[r] * pitch + c * F::BYTES` of the buffer,
 /// little-endian. The invariants of [`crate::dense::layout`] hold from
 /// construction through every mutating operation.
-pub struct Matrix<F: FieldKernels> {
+pub struct Matrix<F: FieldBuffer> {
     buf: Box<[u8]>,
     /// Offset of the first aligned byte within `buf`.
     off: usize,
@@ -40,7 +40,7 @@ pub struct Matrix<F: FieldKernels> {
     field: PhantomData<F>,
 }
 
-impl<F: FieldKernels> Matrix<F> {
+impl<F: FieldBuffer> Matrix<F> {
     /// Validates the geometry and returns `(cols_bytes, pitch)`.
     fn geometry(rows: usize, cols: usize) -> Result<(usize, usize), GeometryError> {
         let cols_bytes = cols.checked_mul(F::BYTES).ok_or(GeometryError::Overflow {
@@ -80,7 +80,7 @@ impl<F: FieldKernels> Matrix<F> {
     pub fn identity(n: usize) -> Result<Self, GeometryError> {
         let mut m = Self::zeros(n, n)?;
         for i in 0..n {
-            m.set(i, i, F::Elem::ONE);
+            m.set(i, i, Elem::<F>::ONE);
         }
         Ok(m)
     }
@@ -176,7 +176,7 @@ impl<F: FieldKernels> Matrix<F> {
     ///
     /// Panics if either index is out of bounds.
     #[must_use]
-    pub fn get(&self, row: usize, col: usize) -> F::Elem {
+    pub fn get(&self, row: usize, col: usize) -> Elem<F> {
         assert!(row < self.rows && col < self.cols, "index out of bounds");
         let start = self.map[row] * self.pitch + col * F::BYTES;
         F::decode(&self.region()[start..start + F::BYTES])
@@ -187,7 +187,7 @@ impl<F: FieldKernels> Matrix<F> {
     /// # Panics
     ///
     /// Panics if either index is out of bounds.
-    pub fn set(&mut self, row: usize, col: usize, value: F::Elem) {
+    pub fn set(&mut self, row: usize, col: usize, value: Elem<F>) {
         assert!(row < self.rows && col < self.cols, "index out of bounds");
         let start = self.map[row] * self.pitch + col * F::BYTES;
         F::encode(&mut self.region_mut()[start..start + F::BYTES], value);
@@ -395,7 +395,7 @@ impl<F: FieldKernels> Matrix<F> {
     }
 }
 
-impl<F: FieldKernels> Clone for Matrix<F> {
+impl<F: FieldBuffer> Clone for Matrix<F> {
     fn clone(&self) -> Self {
         // The clone gets its own allocation, whose base alignment differs in
         // general; re-align rather than copy the offset.
@@ -414,7 +414,7 @@ impl<F: FieldKernels> Clone for Matrix<F> {
     }
 }
 
-impl<F: FieldKernels> PartialEq for Matrix<F> {
+impl<F: FieldBuffer> PartialEq for Matrix<F> {
     /// Logical content equality: shape and live bytes in logical row order.
     /// Physical arrangement (row map, padding, allocation offset) is
     /// incidental and not compared.
@@ -425,9 +425,9 @@ impl<F: FieldKernels> PartialEq for Matrix<F> {
     }
 }
 
-impl<F: FieldKernels> Eq for Matrix<F> {}
+impl<F: FieldBuffer> Eq for Matrix<F> {}
 
-impl<F: FieldKernels> fmt::Debug for Matrix<F> {
+impl<F: FieldBuffer> fmt::Debug for Matrix<F> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Matrix")
             .field("field", &F::NAME)
@@ -440,7 +440,7 @@ impl<F: FieldKernels> fmt::Debug for Matrix<F> {
 
 /// Physical-layout inspection, reached through the `internals` facade.
 #[allow(dead_code)]
-impl<F: FieldKernels> Matrix<F> {
+impl<F: FieldBuffer> Matrix<F> {
     /// Address of the first byte of the physical backing region. A multiple
     /// of [`crate::dense::layout::ALIGN`] by construction.
     pub(crate) fn base_addr(&self) -> usize {
@@ -466,7 +466,7 @@ impl<F: FieldKernels> Matrix<F> {
 
 /// A read-only borrow of a [`Matrix`]'s rows, with its geometry and row map.
 #[derive(Clone, Copy)]
-pub struct View<'a, F: FieldKernels> {
+pub struct View<'a, F: FieldBuffer> {
     data: &'a [u8],
     map: &'a [usize],
     rows: usize,
@@ -475,7 +475,7 @@ pub struct View<'a, F: FieldKernels> {
     field: PhantomData<F>,
 }
 
-impl<'a, F: FieldKernels> View<'a, F> {
+impl<'a, F: FieldBuffer> View<'a, F> {
     /// Number of rows.
     #[must_use]
     pub const fn rows(&self) -> usize {
@@ -500,7 +500,7 @@ impl<'a, F: FieldKernels> View<'a, F> {
     ///
     /// Panics if either index is out of bounds.
     #[must_use]
-    pub fn get(&self, row: usize, col: usize) -> F::Elem {
+    pub fn get(&self, row: usize, col: usize) -> Elem<F> {
         assert!(row < self.rows && col < self.cols, "index out of bounds");
         let start = self.map[row] * self.pitch + col * F::BYTES;
         F::decode(&self.data[start..start + F::BYTES])
@@ -540,7 +540,7 @@ impl<'a, F: FieldKernels> View<'a, F> {
     }
 }
 
-impl<F: FieldKernels> fmt::Debug for View<'_, F> {
+impl<F: FieldBuffer> fmt::Debug for View<'_, F> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("View")
             .field("field", &F::NAME)
@@ -553,7 +553,7 @@ impl<F: FieldKernels> fmt::Debug for View<'_, F> {
 
 /// A mutable borrow of a [`Matrix`]'s rows, the write-capable counterpart of
 /// [`View`].
-pub struct ViewMut<'a, F: FieldKernels> {
+pub struct ViewMut<'a, F: FieldBuffer> {
     data: &'a mut [u8],
     map: &'a mut [usize],
     rows: usize,
@@ -562,7 +562,7 @@ pub struct ViewMut<'a, F: FieldKernels> {
     field: PhantomData<F>,
 }
 
-impl<F: FieldKernels> ViewMut<'_, F> {
+impl<F: FieldBuffer> ViewMut<'_, F> {
     /// Number of rows.
     #[must_use]
     pub const fn rows(&self) -> usize {
@@ -587,7 +587,7 @@ impl<F: FieldKernels> ViewMut<'_, F> {
     ///
     /// Panics if either index is out of bounds.
     #[must_use]
-    pub fn get(&self, row: usize, col: usize) -> F::Elem {
+    pub fn get(&self, row: usize, col: usize) -> Elem<F> {
         assert!(row < self.rows && col < self.cols, "index out of bounds");
         let start = self.map[row] * self.pitch + col * F::BYTES;
         F::decode(&self.data[start..start + F::BYTES])
@@ -598,7 +598,7 @@ impl<F: FieldKernels> ViewMut<'_, F> {
     /// # Panics
     ///
     /// Panics if either index is out of bounds.
-    pub fn set(&mut self, row: usize, col: usize, value: F::Elem) {
+    pub fn set(&mut self, row: usize, col: usize, value: Elem<F>) {
         assert!(row < self.rows && col < self.cols, "index out of bounds");
         let start = self.map[row] * self.pitch + col * F::BYTES;
         F::encode(&mut self.data[start..start + F::BYTES], value);
@@ -654,7 +654,7 @@ impl<F: FieldKernels> ViewMut<'_, F> {
     }
 }
 
-impl<F: FieldKernels> fmt::Debug for ViewMut<'_, F> {
+impl<F: FieldBuffer> fmt::Debug for ViewMut<'_, F> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("ViewMut")
             .field("field", &F::NAME)

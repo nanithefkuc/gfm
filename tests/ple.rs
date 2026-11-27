@@ -12,10 +12,9 @@
 mod common;
 mod oracles;
 
+use common::{FanPaar8, FanPaar16, FanPaar32, FanPaar64, Gf8B, Gf16, Gf32, Gf64};
 use common::{draw, noise};
-use fgf::FieldKernels;
-use fgf::field::Elem;
-use fgf::{FanPaar8, FanPaar16, FanPaar32, FanPaar64, Field, Gf8B, Gf16, Gf32, Gf64};
+use fgf::{Elem, FieldBuffer, FieldElem};
 use gfm::internals::PleInternals;
 use gfm::{
     Matrix, Ple, PleScratch, SolveScratch, mul_add, mul_into, solve_lower_unit_assign,
@@ -28,16 +27,16 @@ use oracles::{
 };
 
 /// A zero naive matrix.
-fn naive_zero<F: FieldKernels>(rows: usize, cols: usize) -> Naive<F> {
+fn naive_zero<F: FieldBuffer>(rows: usize, cols: usize) -> Naive<F> {
     (0..rows)
-        .map(|_| (0..cols).map(|_| F::Elem::ZERO).collect())
+        .map(|_| (0..cols).map(|_| Elem::<F>::ZERO).collect())
         .collect()
 }
 
 /// The public-surface check for one (shape, rank) case: the decomposition
 /// exists, its rank agrees with the oracle's, and the oracle's `P·L·U·Q`
 /// reassembles to the input — the independent certificate.
-fn check_case<F: FieldKernels>(rows: usize, cols: usize, rank: usize, seed: u64) {
+fn check_case<F: FieldBuffer>(rows: usize, cols: usize, rank: usize, seed: u64) {
     let a = packed_with_rank::<F>(rows, cols, rank, seed);
     let ple = Ple::decompose(matrix_of::<F>(&a, cols), &mut PleScratch::new());
     let o = oracle_ple_packed::<F>(&a, cols);
@@ -75,7 +74,7 @@ fn rank_samples(m: usize, n: usize) -> Vec<usize> {
 
 /// A rank-`rank` matrix with `dead` zero columns prepended: column pivoting
 /// is mandatory, never incidental.
-fn with_dead_leading<F: FieldKernels>(
+fn with_dead_leading<F: FieldBuffer>(
     rows: usize,
     cols: usize,
     dead: usize,
@@ -86,20 +85,14 @@ fn with_dead_leading<F: FieldKernels>(
     inner
         .iter()
         .map(|row| {
-            let mut out = vec![F::Elem::ZERO; dead];
+            let mut out = vec![Elem::<F>::ZERO; dead];
             out.extend_from_slice(row);
             out
         })
         .collect()
 }
 
-fn check_dense_rref<F: FieldKernels>(
-    rows: usize,
-    cols: usize,
-    dead: usize,
-    rank: usize,
-    seed: u64,
-) {
+fn check_dense_rref<F: FieldBuffer>(rows: usize, cols: usize, dead: usize, rank: usize, seed: u64) {
     let a = with_dead_leading::<F>(rows, cols, dead, rank, seed);
     let ple = Ple::decompose(crate_matrix::<F>(&a), &mut PleScratch::new());
     assert_eq!(ple.rank(), rank, "rank at ({rows}, {cols}, dead {dead})");
@@ -374,7 +367,7 @@ fn rank_is_invariant() {
         let target = draw(&mut state, rows);
         let mut s = Gf16::decode(&noise(2, 0x5CA1));
         if s.is_zero() {
-            s = fgf::gf16::Elem::ONE;
+            s = Elem::<Gf16>::ONE;
         }
         for cell in scaled[target].iter_mut() {
             *cell = cell.mul(s);
@@ -461,10 +454,10 @@ fn inverse_round_trips() {
 
 #[test]
 fn diagonal_inverse_is_the_elementwise_inverse() {
-    fn check<F: FieldKernels>(n: usize, seed: u64) {
+    fn check<F: FieldBuffer>(n: usize, seed: u64) {
         // Nonzero diagonal entries, almost surely non-unit: every
         // back-substitution factor is skipped and every pivot is scaled.
-        let mut diag = vec![F::Elem::ZERO; n];
+        let mut diag = vec![Elem::<F>::ZERO; n];
         let mut state = seed | 1;
         for d in diag.iter_mut() {
             loop {
@@ -495,7 +488,7 @@ fn diagonal_inverse_is_the_elementwise_inverse() {
         ple.inverse_into(&mut inv).unwrap();
         for (i, &d) in diag.iter().enumerate() {
             for j in 0..n {
-                let expected = if i == j { d.inv() } else { F::Elem::ZERO };
+                let expected = if i == j { d.inv() } else { Elem::<F>::ZERO };
                 assert_eq!(inv.get(i, j), expected, "inverse ({i}, {j})");
             }
         }
@@ -543,19 +536,19 @@ fn ple_moves_columns_when_the_pivot_is_not_leading() {
     let n = 5;
     let mut m = Matrix::<Gf8B>::zeros(n, n).unwrap();
     for i in 0..n {
-        m.set(i, n - 1 - i, <Gf8B as Field>::Elem::ONE);
+        m.set(i, n - 1 - i, Elem::<Gf8B>::ONE);
     }
     let ple = Ple::decompose(m, &mut PleScratch::new());
     assert_eq!(ple.rank(), n);
-    assert_eq!(ple.det(), <Gf8B as Field>::Elem::ONE);
+    assert_eq!(ple.det(), Elem::<Gf8B>::ONE);
     let mut inv = Matrix::<Gf8B>::zeros(n, n).unwrap();
     ple.inverse_into(&mut inv).unwrap();
     for i in 0..n {
         for j in 0..n {
             let expected = if i + j == n - 1 {
-                <Gf8B as Field>::Elem::ONE
+                Elem::<Gf8B>::ONE
             } else {
-                <Gf8B as Field>::Elem::ZERO
+                Elem::<Gf8B>::ZERO
             };
             assert_eq!(inv.get(i, j), expected, "inverse ({i}, {j})");
         }
@@ -586,8 +579,8 @@ fn solve_consistent_systems() {
 }
 #[test]
 fn solve_undoes_multiple_column_swaps_in_reverse() {
-    let zero = <Gf8B as Field>::Elem::ZERO;
-    let one = <Gf8B as Field>::Elem::ONE;
+    let zero = Elem::<Gf8B>::ZERO;
+    let one = Elem::<Gf8B>::ONE;
     let a = vec![
         vec![zero, one, zero, one],
         vec![zero, zero, one, one],
@@ -624,7 +617,7 @@ fn solve_reports_genuine_inconsistency() {
         a[7][c] = a[0][c].add(a[1][c]);
     }
     let mut b = naive_noise::<Gf8B>(8, 1, 0x1C01);
-    b[7][0] = b[0][0].add(b[1][0]).add(fgf::gf8b::Elem::ONE);
+    b[7][0] = b[0][0].add(b[1][0]).add(Elem::<Gf8B>::ONE);
     let ple = Ple::decompose(crate_matrix::<Gf8B>(&a), &mut PleScratch::new());
     let mut x = crate_matrix::<Gf8B>(&naive_noise::<Gf8B>(6, 1, 0x1C02));
     let before = x.clone();
@@ -711,9 +704,9 @@ fn trsm_matches_naive() {
             l[i][t] = if t < i {
                 l[i][t]
             } else if t == i {
-                fgf::gf8b::Elem::ONE
+                Elem::<Gf8B>::ONE
             } else {
-                fgf::gf8b::Elem::ZERO
+                Elem::<Gf8B>::ZERO
             };
         }
     }
@@ -730,9 +723,9 @@ fn trsm_matches_naive() {
     for i in 0..8 {
         for t in 0..8 {
             if t < i {
-                u[i][t] = fgf::gf8b::Elem::ZERO;
+                u[i][t] = Elem::<Gf8B>::ZERO;
             } else if t == i && u[i][t].is_zero() {
-                u[i][t] = fgf::gf8b::Elem::ONE;
+                u[i][t] = Elem::<Gf8B>::ONE;
             }
         }
     }
@@ -811,7 +804,7 @@ mod byte_for_byte {
     /// Asserts the crate's decomposition matches the packed oracle
     /// byte-for-byte: `lu` contents, both permutation actions, rank, and
     /// both profiles.
-    pub(super) fn assert_matches_oracle_packed<F: FieldKernels>(
+    pub(super) fn assert_matches_oracle_packed<F: FieldBuffer>(
         ple: &Ple<F>,
         o: &PackedPle,
         m: usize,

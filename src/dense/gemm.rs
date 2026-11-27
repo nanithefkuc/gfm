@@ -6,7 +6,7 @@
 //! nonzero weight of `A`'s row, not its width. Every multiplication goes
 //! through `fgf`; nothing here re-hosts field arithmetic.
 
-use fgf::{FieldKernels, field::Elem};
+use fgf::{FieldBuffer, FieldElem};
 
 use crate::dense::Matrix;
 
@@ -17,7 +17,7 @@ use crate::dense::Matrix;
 /// # Panics
 ///
 /// Panics unless `out` is `a.rows × b.cols` and `a.cols == b.rows`.
-pub fn mul_into<F: FieldKernels>(out: &mut Matrix<F>, a: &Matrix<F>, b: &Matrix<F>) {
+pub fn mul_into<F: FieldBuffer>(out: &mut Matrix<F>, a: &Matrix<F>, b: &Matrix<F>) {
     check_shapes(out, a, b);
     for r in 0..out.rows() {
         out.row_mut(r).fill(0);
@@ -30,7 +30,7 @@ pub fn mul_into<F: FieldKernels>(out: &mut Matrix<F>, a: &Matrix<F>, b: &Matrix<
 /// # Panics
 ///
 /// Panics unless `c` is `a.rows × b.cols` and `a.cols == b.rows`.
-pub fn mul_add<F: FieldKernels>(c: &mut Matrix<F>, a: &Matrix<F>, b: &Matrix<F>) {
+pub fn mul_add<F: FieldBuffer>(c: &mut Matrix<F>, a: &Matrix<F>, b: &Matrix<F>) {
     check_shapes(c, a, b);
     for i in 0..c.rows() {
         for t in 0..a.cols() {
@@ -43,7 +43,7 @@ pub fn mul_add<F: FieldKernels>(c: &mut Matrix<F>, a: &Matrix<F>, b: &Matrix<F>)
     }
 }
 
-fn check_shapes<F: FieldKernels>(c: &Matrix<F>, a: &Matrix<F>, b: &Matrix<F>) {
+fn check_shapes<F: FieldBuffer>(c: &Matrix<F>, a: &Matrix<F>, b: &Matrix<F>) {
     assert_eq!(
         (c.rows(), c.cols()),
         (a.rows(), b.cols()),

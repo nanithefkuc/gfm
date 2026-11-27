@@ -6,16 +6,16 @@
 mod common;
 mod oracles;
 
+use common::{FanPaar32, Gf8B, Gf16, Gf64};
 use common::{all_images, draw, noise, perm_from_image, sample_dims};
-use fgf::field::{Elem, Field};
-use fgf::{FanPaar32, Gf8B, Gf16, Gf64};
+use fgf::{Elem, FieldBuffer};
 use gfm::dense::layout::{ALIGN, pitch_for};
 use gfm::internals::MatrixInternals;
 use gfm::{GeometryError, Matrix, Perm, Ple, PleScratch, SmallMatrix, SolveScratch};
 use oracles::{crate_matrix, naive_mul, naive_noise, naive_of};
 
 /// Fills every row with deterministic noise, one seed per row.
-fn fill_noise<F: fgf::FieldKernels>(m: &mut Matrix<F>, seed: u64) {
+fn fill_noise<F: fgf::FieldBuffer>(m: &mut Matrix<F>, seed: u64) {
     for r in 0..m.rows() {
         let live = m.row(r).len();
         m.row_mut(r).copy_from_slice(&noise(live, seed + r as u64));
@@ -41,7 +41,7 @@ fn small_source<const K: usize>(seed: u64, deficient: bool) -> Matrix<Gf8B> {
     for row in 0..K {
         for col in 0..K {
             let value = if deficient && (row + 1 == K || col + 1 == K) {
-                <Gf8B as Field>::Elem::ZERO
+                Elem::<Gf8B>::ZERO
             } else {
                 Gf8B::decode(&[draw(&mut state, 256) as u8])
             };
@@ -64,7 +64,7 @@ fn check_solve<const K: usize>() {
     let mut state = 0x501E ^ K as u64;
     let mut matrix = Matrix::<Gf16>::zeros(K, K).unwrap();
     for row in 0..K {
-        matrix.set(row, row, <Gf16 as Field>::Elem::ONE);
+        matrix.set(row, row, Elem::<Gf16>::ONE);
         for col in (row + 1)..K {
             matrix.set(
                 row,
@@ -73,7 +73,7 @@ fn check_solve<const K: usize>() {
             );
         }
     }
-    let rhs_bytes = noise(K * 3 * <Gf16 as Field>::BYTES, 0xB001 ^ K as u64);
+    let rhs_bytes = noise(K * 3 * <Gf16 as FieldBuffer>::BYTES, 0xB001 ^ K as u64);
     let rhs = Matrix::<Gf16>::from_rows(K, 3, &rhs_bytes).unwrap();
     let small = SmallMatrix::<Gf16, K>::from_matrix(&matrix);
     let mut small_out = Matrix::<Gf16>::zeros(K, 3).unwrap();
@@ -157,7 +157,7 @@ macro_rules! every_order {
 
 #[test]
 fn constructors_and_accessors() {
-    fn check<F: fgf::FieldKernels>() {
+    fn check<F: fgf::FieldBuffer>() {
         for (rows, cols) in sample_dims(0xC0FFEE) {
             let mut m = Matrix::<F>::zeros(rows, cols).unwrap();
             assert_eq!(m.rows(), rows);
@@ -166,7 +166,7 @@ fn constructors_and_accessors() {
             for r in 0..rows {
                 assert_eq!(m.row(r).len(), cols * F::BYTES);
                 for c in 0..cols {
-                    assert_eq!(m.get(r, c), F::Elem::ZERO);
+                    assert_eq!(m.get(r, c), Elem::<F>::ZERO);
                 }
             }
             fill_noise(&mut m, 0xBEEF);
@@ -195,9 +195,9 @@ fn identity_has_unit_diagonal() {
         for r in 0..n {
             for c in 0..n {
                 let expected = if r == c {
-                    fgf::gf16::Elem::ONE
+                    Elem::<Gf16>::ONE
                 } else {
-                    fgf::gf16::Elem::ZERO
+                    Elem::<Gf16>::ZERO
                 };
                 assert_eq!(m.get(r, c), expected, "({r}, {c})");
             }
@@ -393,7 +393,7 @@ fn mutable_view_edits_the_matrix() {
     let mut m = Matrix::<Gf8B>::zeros(9, 7).unwrap();
     {
         let mut v = m.as_view_mut();
-        v.set(3, 4, fgf::gf8b::Elem::from_raw(0xAB));
+        v.set(3, 4, Elem::<Gf8B>::from_raw(0xAB));
         v.row_mut(5).fill(0x11);
         v.swap_rows(3, 5);
     }
@@ -401,7 +401,7 @@ fn mutable_view_edits_the_matrix() {
     assert_eq!(m.row(5)[4], 0xAB);
     assert!(m.row(5)[..4].iter().all(|&b| b == 0));
     assert!(m.row(5)[5..].iter().all(|&b| b == 0));
-    assert_eq!(m.get(5, 4), fgf::gf8b::Elem::from_raw(0xAB));
+    assert_eq!(m.get(5, 4), Elem::<Gf8B>::from_raw(0xAB));
 }
 
 #[test]
@@ -630,7 +630,7 @@ fn small_default_is_zero() {
     assert_eq!(small.rank(), 0);
     for row in 0..3 {
         for col in 0..3 {
-            assert_eq!(small.get(row, col), <Gf8B as Field>::Elem::ZERO);
+            assert_eq!(small.get(row, col), Elem::<Gf8B>::ZERO);
         }
     }
 }
@@ -641,7 +641,7 @@ fn small_rank_pivots_past_a_dead_leading_column() {
     // column 0 and must exchange columns before eliminating.
     let mut m = Matrix::<Gf8B>::zeros(4, 4).unwrap();
     for i in 0..4 {
-        m.set(i, 3 - i, <Gf8B as Field>::Elem::ONE);
+        m.set(i, 3 - i, Elem::<Gf8B>::ONE);
     }
     let small = SmallMatrix::<Gf8B, 4>::from_matrix(&m);
     assert_eq!(small.rank(), 4);
@@ -651,7 +651,7 @@ fn small_rank_pivots_past_a_dead_leading_column() {
     // Zeroing a row drops the rank by exactly one.
     let mut m = Matrix::<Gf8B>::zeros(4, 4).unwrap();
     for i in 0..3 {
-        m.set(i, 3 - i, <Gf8B as Field>::Elem::ONE);
+        m.set(i, 3 - i, Elem::<Gf8B>::ONE);
     }
     let small = SmallMatrix::<Gf8B, 4>::from_matrix(&m);
     assert_eq!(small.rank(), 3);
@@ -819,7 +819,7 @@ fn triangular_solves_round_trip_against_the_product() {
     gfm::solve_lower_unit_assign(&mut x, &l);
     let mut l_full = l.clone();
     for i in 0..k {
-        l_full.set(i, i, <Gf8B as Field>::Elem::ONE);
+        l_full.set(i, i, Elem::<Gf8B>::ONE);
     }
     let mut prod = Matrix::<Gf8B>::zeros(k, s).unwrap();
     gfm::mul_into(&mut prod, &l_full, &x);
@@ -835,7 +835,7 @@ fn triangular_solves_round_trip_against_the_product() {
 #[should_panic(expected = "zero diagonal entry")]
 fn upper_solve_rejects_a_zero_diagonal() {
     let mut u = Matrix::<Gf8B>::zeros(2, 2).unwrap();
-    u.set(0, 1, <Gf8B as Field>::Elem::ONE);
+    u.set(0, 1, Elem::<Gf8B>::ONE);
     let mut b = Matrix::<Gf8B>::zeros(2, 1).unwrap();
     gfm::solve_upper_assign(&mut b, &u);
 }
@@ -887,9 +887,9 @@ fn redecompose_replaces_the_matrix_in_place() {
 mod physical {
     use super::*;
     use common::straddling_dims;
-    use fgf::{FanPaar8, FanPaar16, FanPaar64, Gf32};
+    use common::{FanPaar8, FanPaar16, FanPaar64, Gf32};
 
-    fn check_layout<F: fgf::FieldKernels>() {
+    fn check_layout<F: fgf::FieldBuffer>() {
         let mut dims = sample_dims(0xFEED);
         dims.extend(straddling_dims(F::BYTES, ALIGN));
         for (rows, cols) in dims {
@@ -920,7 +920,7 @@ mod physical {
         }
     }
 
-    fn assert_padding_zero<F: fgf::FieldKernels>(m: &Matrix<F>) {
+    fn assert_padding_zero<F: fgf::FieldBuffer>(m: &Matrix<F>) {
         let live = m.cols() * F::BYTES;
         for r in 0..m.rows() {
             let phys = m.physical_row_index(r);

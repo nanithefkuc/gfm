@@ -2,6 +2,21 @@
 //! kernel tests: deterministic bytes, no `rand`, same stream everywhere.
 #![allow(dead_code)]
 
+// Field type aliases. `fgf` 2.x exported these names at its root; 4.x spells
+// each field as an explicit `FiniteField` instantiation.
+pub type Gf8B = fgf::FiniteField<2, 8, fgf::binary::Polynomial<{ fgf::binary::AES }>>;
+pub type Gf8D = fgf::FiniteField<2, 8, fgf::binary::Polynomial<{ fgf::binary::RS }>>;
+pub type Gf16 = fgf::FiniteField<2, 16, fgf::extension::Extension<fgf::binary::Rijndael16, 2>>;
+pub type Gf32 = fgf::FiniteField<2, 32, fgf::extension::Extension<fgf::binary::Rijndael32, 2>>;
+pub type Gf64 = fgf::FiniteField<2, 64, fgf::extension::Extension<fgf::binary::Rijndael64, 2>>;
+pub type FanPaar8 = fgf::FiniteField<2, 8, fgf::extension::Extension<fgf::binary::FanPaar8, 2>>;
+pub type FanPaar16 = fgf::FiniteField<2, 16, fgf::extension::Extension<fgf::binary::FanPaar16, 2>>;
+pub type FanPaar32 = fgf::FiniteField<2, 32, fgf::extension::Extension<fgf::binary::FanPaar32, 2>>;
+pub type FanPaar64 = fgf::FiniteField<2, 64, fgf::extension::Extension<fgf::binary::FanPaar64, 2>>;
+pub type Mersenne31 = fgf::prime::Mersenne31;
+pub type Goldilocks = fgf::prime::Goldilocks;
+pub type QuadMersenne31 = fgf::extension::QuadMersenne31;
+
 /// `len` deterministic pseudo-random bytes from `seed`.
 pub fn noise(len: usize, seed: u64) -> Vec<u8> {
     let mut state = seed | 1;

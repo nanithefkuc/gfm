@@ -18,8 +18,7 @@
 use alloc::vec;
 use alloc::vec::Vec;
 
-use fgf::field::Elem;
-use fgf::{FieldKernels, ops};
+use fgf::{Elem, FieldBuffer, FieldElem, ops};
 
 use crate::GeometryError;
 use crate::dense::Matrix;
@@ -27,7 +26,7 @@ use crate::incremental::Innovation;
 
 const STACK_GATHER: usize = 64;
 #[inline]
-fn mul_add_coefficients<F: FieldKernels>(dst: &mut [u8], factor: F::Elem, src: &[u8]) {
+fn mul_add_coefficients<F: FieldBuffer>(dst: &mut [u8], factor: Elem<F>, src: &[u8]) {
     if dst.len() / F::BYTES <= 64 {
         for i in 0..dst.len() / F::BYTES {
             let d = &mut dst[i * F::BYTES..(i + 1) * F::BYTES];
@@ -42,9 +41,9 @@ fn mul_add_coefficients<F: FieldKernels>(dst: &mut [u8], factor: F::Elem, src: &
 }
 
 #[inline]
-fn mul_add_cyclic<F: FieldKernels>(
+fn mul_add_cyclic<F: FieldBuffer>(
     dst: &mut [u8],
-    factor: F::Elem,
+    factor: Elem<F>,
     src: &[u8],
     start: usize,
     len: usize,
@@ -64,7 +63,7 @@ fn mul_add_cyclic<F: FieldKernels>(
 
 /// A streaming echelon accumulator over `cols` coefficient columns, carrying a
 /// right-hand-side payload of `rhs_cols` field elements per row.
-pub struct Echelon<F: FieldKernels> {
+pub struct Echelon<F: FieldBuffer> {
     /// One retained pivot row per rank, coefficients in `cols` columns.
     pivots: Matrix<F>,
     /// The matching right-hand-side payload for each pivot row.
@@ -87,7 +86,7 @@ pub struct Echelon<F: FieldKernels> {
 }
 
 /// A retained echelon row in logical column order.
-pub struct RetainedRow<'a, F: FieldKernels> {
+pub struct RetainedRow<'a, F: FieldBuffer> {
     pivot: usize,
     span: usize,
     coefficients: &'a [u8],
@@ -97,7 +96,7 @@ pub struct RetainedRow<'a, F: FieldKernels> {
     field: core::marker::PhantomData<F>,
 }
 
-impl<'a, F: FieldKernels> RetainedRow<'a, F> {
+impl<'a, F: FieldBuffer> RetainedRow<'a, F> {
     /// The row's logical pivot column.
     #[must_use]
     pub const fn pivot(&self) -> usize {
@@ -129,7 +128,7 @@ impl<'a, F: FieldKernels> RetainedRow<'a, F> {
     /// # Panics
     ///
     /// Panics unless `out` contains exactly `cols` field elements.
-    pub fn mul_coefficients_add(&self, out: &mut [u8], factor: F::Elem) {
+    pub fn mul_coefficients_add(&self, out: &mut [u8], factor: Elem<F>) {
         assert_eq!(out.len(), self.cols * F::BYTES, "coefficient output length");
         let dst_start = self.pivot * F::BYTES;
         let src_start = self.physical;
@@ -150,7 +149,7 @@ impl<'a, F: FieldKernels> RetainedRow<'a, F> {
     }
 }
 
-impl<F: FieldKernels> core::fmt::Debug for RetainedRow<'_, F> {
+impl<F: FieldBuffer> core::fmt::Debug for RetainedRow<'_, F> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("RetainedRow")
             .field("pivot", &self.pivot)
@@ -158,7 +157,7 @@ impl<F: FieldKernels> core::fmt::Debug for RetainedRow<'_, F> {
     }
 }
 
-impl<F: FieldKernels> Echelon<F> {
+impl<F: FieldBuffer> Echelon<F> {
     /// A fresh accumulator over `cols` coefficient columns and a right-hand
     /// side of `rhs_len` bytes per row.
     ///
@@ -308,7 +307,7 @@ impl<F: FieldKernels> Echelon<F> {
         let slot = self.take_slot();
         if self.unit_physical[slot] != Some(physical) {
             self.pivots.row_mut(slot).fill(0);
-            self.pivots.set(slot, physical, F::Elem::ONE);
+            self.pivots.set(slot, physical, Elem::<F>::ONE);
             self.unit_physical[slot] = Some(physical);
         }
         self.span_of_slot[slot] = 1;
@@ -341,7 +340,7 @@ impl<F: FieldKernels> Echelon<F> {
         // Reduce coefficients in pivot order. For codec-sized systems, collect
         // the matching RHS operation into one gather so each payload byte is
         // loaded and stored once rather than once per pivot.
-        let mut rhs_factors = [F::Elem::ZERO; STACK_GATHER];
+        let mut rhs_factors = [Elem::<F>::ZERO; STACK_GATHER];
         let mut rhs_sources = [&[][..]; STACK_GATHER];
         let mut rhs_count = 0;
         let mut pivot = None;
@@ -498,7 +497,7 @@ impl<F: FieldKernels> Echelon<F> {
                 if factor.is_zero() {
                     continue;
                 }
-                self.pivots.set(slot, known_physical, F::Elem::ZERO);
+                self.pivots.set(slot, known_physical, Elem::<F>::ZERO);
                 let pivot = self.physical_to_logical(other_physical);
                 while self.span_of_slot[slot] > 1 {
                     let last = self.logical_to_physical(pivot + self.span_of_slot[slot] - 1);
@@ -575,7 +574,7 @@ impl<F: FieldKernels> Echelon<F> {
     }
 }
 
-impl<F: FieldKernels> core::fmt::Debug for Echelon<F> {
+impl<F: FieldBuffer> core::fmt::Debug for Echelon<F> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("Echelon")
             .field("cols", &self.cols)

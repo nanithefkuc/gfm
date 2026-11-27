@@ -1,13 +1,13 @@
 //! The owning GF(2) container [`BitMatrix`].
 //!
-//! Rows are bit-packed GF(2) strings in [`fgf::bits`] layout — element `c`
+//! Rows are bit-packed GF(2) strings in [`fgf::ops::bits`] layout — element `c`
 //! is bit `c % 8` (LSB-first) of byte `c / 8` — stored contiguously `pitch`
 //! bytes apart with the base 64-byte aligned and every padding bit zero.
 //! Bit `c` of logical row `r` is that bit of byte `map[r] * pitch + c / 8`.
 //! As in the dense domain, row exchange is an index operation on the row
 //! map; data moves only through [`BitMatrix::compact_rows`]. Every vector
 //! operation on a row — XOR, masked ranges, weight — goes through
-//! `fgf::bits`; this module owns only geometry and indexing.
+//! `fgf::ops::bits`; this module owns only geometry and indexing.
 //!
 //! Bits between `cols` and the next alignment boundary are padding too and
 //! are always zero. That is why there is no `row_mut`: mutable byte access
@@ -42,7 +42,7 @@ pub struct BitMatrix {
 impl BitMatrix {
     /// Validates the geometry and returns `(row_bytes, pitch_bytes)`.
     fn geometry(rows: usize, cols: usize) -> Result<(usize, usize), GeometryError> {
-        let row_bytes = fgf::bits::bytes_for(cols);
+        let row_bytes = fgf::ops::bits::bytes_for(cols);
         let pitch_bytes = row_bytes.div_ceil(ALIGN) * ALIGN;
         rows.checked_mul(pitch_bytes)
             .ok_or(GeometryError::Overflow {
@@ -85,7 +85,7 @@ impl BitMatrix {
 
     /// Creates a matrix from packed rows: `rows * ceil(cols / 8)` bytes,
     /// row-major, element `c` of a row in bit `c % 8` (LSB-first) of its
-    /// byte `c / 8` — the [`fgf::bits`] layout. Bits beyond `cols` in the
+    /// byte `c / 8` — the [`fgf::ops::bits`] layout. Bits beyond `cols` in the
     /// last byte of each row are cleared on entry, keeping the padding zero.
     ///
     /// # Errors
@@ -110,7 +110,7 @@ impl BitMatrix {
                 // Zero every bit past `cols`, up to the end of the copied
                 // bytes; nothing past them exists in the fresh buffer.
                 let row_len = &mut m.region_mut()[start..start + row_bytes];
-                fgf::bits::clear_range(row_len, row_bytes * 8, cols, row_bytes * 8);
+                fgf::ops::bits::clear_range(row_len, row_bytes * 8, cols, row_bytes * 8);
             }
         }
         Ok(m)
@@ -339,7 +339,7 @@ impl BitMatrix {
 
     /// Whether logical row `r` is entirely zero.
     pub(crate) fn row_is_zero(&self, r: usize) -> bool {
-        fgf::bits::weight(self.row(r), self.cols()) == 0
+        fgf::ops::bits::weight(self.row(r), self.cols()) == 0
     }
 
     /// Copies the live bytes of `src`'s logical row `src_row` into `self`'s

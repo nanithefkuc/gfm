@@ -1,6 +1,6 @@
 //! Internal dispatch for contiguous field row updates.
 
-use fgf::{FieldKernels, ops};
+use fgf::{Elem, FieldBuffer, ops};
 
 /// Minimum contiguous update assigned to Rayon. The serial and parallel
 /// boundary measurements are recorded in `BENCHMARKS.md`.
@@ -8,7 +8,7 @@ use fgf::{FieldKernels, ops};
 pub(crate) const PAR_MIN_BYTES: usize = 2 * 1024 * 1024;
 
 #[cfg(feature = "parallel")]
-pub(crate) fn mul_add<F: FieldKernels>(dst: &mut [u8], factor: F::Elem, src: &[u8]) {
+pub(crate) fn mul_add<F: FieldBuffer>(dst: &mut [u8], factor: Elem<F>, src: &[u8]) {
     use rayon::prelude::{
         IndexedParallelIterator, ParallelIterator, ParallelSlice, ParallelSliceMut,
     };
@@ -37,6 +37,6 @@ pub(crate) fn mul_add<F: FieldKernels>(dst: &mut [u8], factor: F::Elem, src: &[u
 }
 #[cfg(not(feature = "parallel"))]
 #[inline]
-pub(crate) fn mul_add<F: FieldKernels>(dst: &mut [u8], factor: F::Elem, src: &[u8]) {
+pub(crate) fn mul_add<F: FieldBuffer>(dst: &mut [u8], factor: Elem<F>, src: &[u8]) {
     ops::mul_add::<F>(dst, factor, src);
 }

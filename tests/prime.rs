@@ -10,8 +10,10 @@ mod common;
 mod oracles;
 
 use common::draw;
-use fgf::field::Elem;
-use fgf::{FieldKernels, Goldilocks, Mersenne31, QuadMersenne31};
+use fgf::extension::QuadMersenne31;
+use fgf::prime::{Goldilocks, Mersenne31, PrimeIdentity};
+use fgf::{Elem, FieldElem};
+use fgf::{Field, FieldBuffer};
 use gfm::dense::layout::ALIGN;
 use gfm::{
     Echelon, Hybrid, Innovation, Matrix, Ple, PleScratch, SmallMatrix, SolveError, SolveScratch,
@@ -24,31 +26,34 @@ use oracles::{
 
 /// A prime field with a deterministic canonical element stream. Packed
 /// kernels require canonical lanes, so every element enters through this.
-trait PrimeField: FieldKernels {
+trait PrimeField: FieldBuffer {
     /// One canonical element, zero included, drawn from `state`.
-    fn elem(state: &mut u64) -> Self::Elem;
+    fn elem(state: &mut u64) -> Elem<Self>;
 }
 
 impl PrimeField for Mersenne31 {
-    fn elem(state: &mut u64) -> Self::Elem {
-        Self::Elem::from_raw(draw(state, fgf::mersenne31::MODULUS as usize) as u32)
+    fn elem(state: &mut u64) -> Elem<Self> {
+        Elem::<Self>::from_raw(draw(
+            state,
+            <<Mersenne31 as Field>::Characteristic as PrimeIdentity>::CHARACTERISTIC as usize,
+        ) as u32)
     }
 }
 
 impl PrimeField for Goldilocks {
-    fn elem(state: &mut u64) -> Self::Elem {
+    fn elem(state: &mut u64) -> Elem<Self> {
         // Two draws under 2^30 combine into a lane below the modulus.
         let lo = draw(state, 1 << 30) as u64;
         let hi = draw(state, 1 << 30) as u64;
-        Self::Elem::from_raw((hi << 30) | lo)
+        Elem::<Self>::from_raw((hi << 30) | lo)
     }
 }
 
 impl PrimeField for QuadMersenne31 {
-    fn elem(state: &mut u64) -> Self::Elem {
-        let re = fgf::mersenne31::reduce(draw(state, u32::MAX as usize) as u32);
-        let im = fgf::mersenne31::reduce(draw(state, u32::MAX as usize) as u32);
-        Self::Elem::from_raw(re, im)
+    fn elem(state: &mut u64) -> Elem<Self> {
+        let re = Elem::<Mersenne31>::from_raw(draw(state, u32::MAX as usize) as u32).to_raw();
+        let im = Elem::<Mersenne31>::from_raw(draw(state, u32::MAX as usize) as u32).to_raw();
+        Elem::<Self>::from_raw([re, im])
     }
 }
 
@@ -69,9 +74,9 @@ fn unit_lower<F: PrimeField>(rows: usize, cols: usize, state: &mut u64) -> Naive
                     if t < i {
                         F::elem(state)
                     } else if t == i {
-                        F::Elem::ONE
+                        Elem::<F>::ONE
                     } else {
-                        F::Elem::ZERO
+                        Elem::<F>::ZERO
                     }
                 })
                 .collect()
@@ -88,9 +93,9 @@ fn unit_upper<F: PrimeField>(rows: usize, cols: usize, state: &mut u64) -> Naive
                     if c > t {
                         F::elem(state)
                     } else if c == t {
-                        F::Elem::ONE
+                        Elem::<F>::ONE
                     } else {
-                        F::Elem::ZERO
+                        Elem::<F>::ZERO
                     }
                 })
                 .collect()
@@ -112,7 +117,7 @@ fn naive_invertible<F: PrimeField>(n: usize, seed: u64) -> Naive<F> {
 fn naive_rank_of<F: PrimeField>(rows: usize, cols: usize, rank: usize, seed: u64) -> Naive<F> {
     assert!(rank <= rows.min(cols));
     if rank == 0 {
-        return (0..rows).map(|_| vec![F::Elem::ZERO; cols]).collect();
+        return (0..rows).map(|_| vec![Elem::<F>::ZERO; cols]).collect();
     }
     let mut state = seed | 1;
     let l = unit_lower::<F>(rows, rank, &mut state);
@@ -124,7 +129,7 @@ fn naive_rank_of<F: PrimeField>(rows: usize, cols: usize, rank: usize, seed: u64
 // The augmented row spans coefficients plus right-hand sides; the split
 // index `n` is the algorithm.
 #[allow(clippy::needless_range_loop)]
-fn naive_solve<F: FieldKernels>(a: &Naive<F>, b: &Naive<F>) -> Naive<F> {
+fn naive_solve<F: FieldBuffer>(a: &Naive<F>, b: &Naive<F>) -> Naive<F> {
     let n = a.len();
     let s = b.first().map_or(0, Vec::len);
     let mut aug: Naive<F> = (0..n)
@@ -160,13 +165,13 @@ fn naive_solve<F: FieldKernels>(a: &Naive<F>, b: &Naive<F>) -> Naive<F> {
 }
 
 /// Evaluates one sparse equation against per-column solution rows.
-fn eval_eq<F: FieldKernels>(
+fn eval_eq<F: FieldBuffer>(
     support: &[u32],
-    coeffs: &[F::Elem],
-    sol: &[Vec<F::Elem>],
-) -> Vec<F::Elem> {
+    coeffs: &[Elem<F>],
+    sol: &[Vec<Elem<F>>],
+) -> Vec<Elem<F>> {
     let s = sol.first().map_or(0, Vec::len);
-    let mut acc = vec![F::Elem::ZERO; s];
+    let mut acc = vec![Elem::<F>::ZERO; s];
     for (&col, &c) in support.iter().zip(coeffs) {
         for (k, slot) in acc.iter_mut().enumerate() {
             *slot = slot.add(c.mul(sol[col as usize][k]));
@@ -176,8 +181,8 @@ fn eval_eq<F: FieldKernels>(
 }
 
 /// The dense coefficient matrix of pushed sparse equations.
-fn dense_of_system<F: FieldKernels>(rows: &[(Vec<u32>, Vec<F::Elem>)], n: usize) -> Naive<F> {
-    let mut out: Naive<F> = (0..rows.len()).map(|_| vec![F::Elem::ZERO; n]).collect();
+fn dense_of_system<F: FieldBuffer>(rows: &[(Vec<u32>, Vec<Elem<F>>)], n: usize) -> Naive<F> {
+    let mut out: Naive<F> = (0..rows.len()).map(|_| vec![Elem::<F>::ZERO; n]).collect();
     for (i, (support, coeffs)) in rows.iter().enumerate() {
         for (&col, &c) in support.iter().zip(coeffs) {
             out[i][col as usize] = c;
@@ -187,14 +192,14 @@ fn dense_of_system<F: FieldKernels>(rows: &[(Vec<u32>, Vec<F::Elem>)], n: usize)
 }
 
 /// Byte width of `sym_cols` field elements.
-fn sym_bytes<F: FieldKernels>(sym_cols: usize) -> usize {
+fn sym_bytes<F: FieldBuffer>(sym_cols: usize) -> usize {
     sym_cols * F::BYTES
 }
 
 /// The dense reference verdict for a hybrid system: rank, consistency, the
 /// packed solution, and per-column determinedness from the kernel support.
 fn hybrid_reference<F: PrimeField>(
-    rows: &[(Vec<u32>, Vec<F::Elem>)],
+    rows: &[(Vec<u32>, Vec<Elem<F>>)],
     rhs: &[Vec<u8>],
     n: usize,
     sym_cols: usize,
@@ -228,15 +233,15 @@ fn hybrid_reference<F: PrimeField>(
 }
 
 /// Packs one naive row into its little-endian bytes.
-fn pack_row<F: FieldKernels>(row: &[F::Elem]) -> Vec<u8> {
+fn pack_row<F: FieldBuffer>(row: &[Elem<F>]) -> Vec<u8> {
     pack::<F>(&vec![row.to_vec()]).pop().unwrap()
 }
 
 /// Asserts the packed solution satisfies every equation exactly.
 fn assert_system_satisfied<F: PrimeField>(
-    rows: &[(Vec<u32>, Vec<F::Elem>)],
+    rows: &[(Vec<u32>, Vec<Elem<F>>)],
     rhs: &[Vec<u8>],
-    sol: &[Vec<F::Elem>],
+    sol: &[Vec<Elem<F>>],
 ) {
     for (i, (support, coeffs)) in rows.iter().enumerate() {
         let expected = pack_row::<F>(&eval_eq::<F>(support, coeffs, sol));
@@ -246,7 +251,7 @@ fn assert_system_satisfied<F: PrimeField>(
 
 /// Packs naive rows into a crate matrix of the given column count. `cols` is
 /// explicit because an empty row list carries no column count of its own.
-fn to_matrix<F: FieldKernels>(a: &Naive<F>, cols: usize) -> Matrix<F> {
+fn to_matrix<F: FieldBuffer>(a: &Naive<F>, cols: usize) -> Matrix<F> {
     matrix_of::<F>(&pack::<F>(a), cols)
 }
 
@@ -264,11 +269,11 @@ fn random_support(n: usize, state: &mut u64) -> Vec<u32> {
 
 /// Field coefficients parallel to `support`, never zero: a zero would not be
 /// part of a support.
-fn random_coeffs<F: PrimeField>(len: usize, state: &mut u64) -> Vec<F::Elem> {
+fn random_coeffs<F: PrimeField>(len: usize, state: &mut u64) -> Vec<Elem<F>> {
     (0..len)
         .map(|_| {
             let c = F::elem(state);
-            if c.is_zero() { F::Elem::ONE } else { c }
+            if c.is_zero() { Elem::<F>::ONE } else { c }
         })
         .collect()
 }
@@ -341,12 +346,12 @@ fn check_ple<F: PrimeField>() {
     // The reversed identity is an odd permutation: its determinant is minus
     // one, and the decomposition reproduces the signed value.
     let a: Naive<F> = vec![
-        vec![F::Elem::ZERO, F::Elem::ONE],
-        vec![F::Elem::ONE, F::Elem::ZERO],
+        vec![Elem::<F>::ZERO, Elem::<F>::ONE],
+        vec![Elem::<F>::ONE, Elem::<F>::ZERO],
     ];
     let ple = Ple::decompose(to_matrix::<F>(&a, 2), &mut PleScratch::new());
-    assert_eq!(naive_det::<F>(&a), F::Elem::ONE.neg());
-    assert_eq!(ple.det(), F::Elem::ONE.neg());
+    assert_eq!(naive_det::<F>(&a), Elem::<F>::ONE.neg());
+    assert_eq!(ple.det(), Elem::<F>::ONE.neg());
 }
 
 /// Solves over one prime field: unique solutions against the textbook
@@ -393,7 +398,7 @@ fn check_solve<F: PrimeField>() {
     let mut tall_a = a.clone();
     let mut tall_b = b.clone();
     tall_a.push(a[0].clone());
-    tall_b.push(b[0].iter().map(|e| e.add(F::Elem::ONE)).collect());
+    tall_b.push(b[0].iter().map(|e| e.add(Elem::<F>::ONE)).collect());
     let aug: Naive<F> = tall_a
         .iter()
         .zip(&tall_b)
@@ -441,7 +446,7 @@ fn check_inverse<F: PrimeField>() {
 
     // Rank deficiency is the Singular error.
     let mut a = naive_invertible::<F>(3, 0x1A00);
-    a[2] = vec![F::Elem::ZERO; 3];
+    a[2] = vec![Elem::<F>::ZERO; 3];
     let ple = Ple::decompose(to_matrix::<F>(&a, 3), &mut PleScratch::new());
     let err = ple
         .inverse_into(&mut Matrix::<F>::zeros(3, 3).unwrap())
@@ -466,12 +471,12 @@ fn check_det<F: PrimeField>() {
 
     // Odd permutation: the reversed identity carries determinant minus one.
     let a: Naive<F> = vec![
-        vec![F::Elem::ZERO, F::Elem::ONE],
-        vec![F::Elem::ONE, F::Elem::ZERO],
+        vec![Elem::<F>::ZERO, Elem::<F>::ONE],
+        vec![Elem::<F>::ONE, Elem::<F>::ZERO],
     ];
     let ple = Ple::decompose(to_matrix::<F>(&a, 2), &mut PleScratch::new());
-    assert_eq!(ple.det(), F::Elem::ONE.neg());
-    assert_eq!(naive_det::<F>(&a), F::Elem::ONE.neg());
+    assert_eq!(ple.det(), Elem::<F>::ONE.neg());
+    assert_eq!(naive_det::<F>(&a), Elem::<F>::ONE.neg());
 }
 
 // ── Row kernels ──────────────────────────────────────────────────────────────
@@ -494,7 +499,7 @@ fn check_gemm<F: PrimeField>() {
         let product: Naive<F> = if m == 0 {
             Vec::new()
         } else if k == 0 {
-            (0..m).map(|_| vec![F::Elem::ZERO; n]).collect()
+            (0..m).map(|_| vec![Elem::<F>::ZERO; n]).collect()
         } else {
             naive_mul::<F>(&a, &b)
         };
@@ -529,7 +534,7 @@ fn check_trsm<F: PrimeField>() {
     // The upper triangle needs a nonzero diagonal.
     for (i, row) in u.iter_mut().enumerate() {
         if row[i].is_zero() {
-            row[i] = F::Elem::ONE;
+            row[i] = Elem::<F>::ONE;
         }
     }
     let b = naive_field::<F>(n, 3, 0x7E52);
@@ -558,7 +563,7 @@ fn check_small_k<F: PrimeField, const K: usize>() {
 
     // A rank-deficient block answers Singular.
     let mut sing = a.clone();
-    sing[K - 1] = vec![F::Elem::ZERO; K];
+    sing[K - 1] = vec![Elem::<F>::ZERO; K];
     let small = SmallMatrix::<F, K>::from_matrix(&to_matrix::<F>(&sing, K));
     let err = small
         .solve_into(&to_matrix::<F>(&b, 3), &mut out)
@@ -582,11 +587,11 @@ fn check_small<F: PrimeField>() {
 fn hybrid_consistent_case<F: PrimeField>(n: usize, sym_cols: usize, initial: &[u32]) {
     let sym_len = sym_bytes::<F>(sym_cols);
     let mut state = (0x6E10 ^ n as u64) | 1;
-    let x: Vec<Vec<F::Elem>> = (0..n)
+    let x: Vec<Vec<Elem<F>>> = (0..n)
         .map(|_| (0..sym_cols).map(|_| F::elem(&mut state)).collect())
         .collect();
 
-    let mut rows: Vec<(Vec<u32>, Vec<F::Elem>)> = Vec::new();
+    let mut rows: Vec<(Vec<u32>, Vec<Elem<F>>)> = Vec::new();
     let mut rhs: Vec<Vec<u8>> = Vec::new();
 
     // Binary rows, two of them on the same support: eliminating one against
@@ -598,7 +603,7 @@ fn hybrid_consistent_case<F: PrimeField>(n: usize, sym_cols: usize, initial: &[u
         shared,
         (1..6).map(|c| (c * 2) as u32).collect(),
     ] {
-        let coeffs = vec![F::Elem::ONE; support.len()];
+        let coeffs = vec![Elem::<F>::ONE; support.len()];
         rhs.push(pack_row::<F>(&eval_eq::<F>(&support, &coeffs, &x)));
         rows.push((support, coeffs));
     }
@@ -649,13 +654,13 @@ fn hybrid_deficient_and_inconsistent_case<F: PrimeField>() {
     let sym_cols = 2usize;
     let sym_len = sym_bytes::<F>(sym_cols);
     let mut state = 0x6E77 | 1;
-    let x: Vec<Vec<F::Elem>> = (0..n)
+    let x: Vec<Vec<Elem<F>>> = (0..n)
         .map(|_| (0..sym_cols).map(|_| F::elem(&mut state)).collect())
         .collect();
 
     // Equations only over the first six columns: the last two stay free.
     // Even rows are all-ones equations, odd rows carry explicit coefficients.
-    let mut rows: Vec<(Vec<u32>, Vec<F::Elem>)> = Vec::new();
+    let mut rows: Vec<(Vec<u32>, Vec<Elem<F>>)> = Vec::new();
     let mut rhs: Vec<Vec<u8>> = Vec::new();
     for i in 0..6usize {
         let support: Vec<u32> = (0..6)
@@ -663,13 +668,13 @@ fn hybrid_deficient_and_inconsistent_case<F: PrimeField>() {
             .map(|c| c as u32)
             .collect();
         let support = if support.is_empty() { vec![0] } else { support };
-        let coeffs: Vec<F::Elem> = if i % 2 == 0 {
-            vec![F::Elem::ONE; support.len()]
+        let coeffs: Vec<Elem<F>> = if i % 2 == 0 {
+            vec![Elem::<F>::ONE; support.len()]
         } else {
             support
                 .iter()
                 .map(|_| F::elem(&mut state))
-                .map(|c| if c.is_zero() { F::Elem::ONE } else { c })
+                .map(|c| if c.is_zero() { Elem::<F>::ONE } else { c })
                 .collect()
         };
         rhs.push(pack_row::<F>(&eval_eq::<F>(&support, &coeffs, &x)));
@@ -705,7 +710,7 @@ fn hybrid_deficient_and_inconsistent_case<F: PrimeField>() {
     // An extra contradictory equation makes the system inconsistent.
     let (support, coeffs) = rows[0].clone();
     let mut bumped = eval_eq::<F>(&support, &coeffs, &sol);
-    bumped[0] = bumped[0].add(F::Elem::ONE);
+    bumped[0] = bumped[0].add(Elem::<F>::ONE);
     let bumped = pack_row::<F>(&bumped);
     let mut hybrid = Hybrid::<F>::new(n, sym_len);
     for (i, (support, coeffs)) in rows.iter().enumerate() {
@@ -780,7 +785,7 @@ fn check_echelon<F: PrimeField>() {
         ech.absorb(&pack_row::<F>(&sum[0]), &zero),
         Innovation::Dependent
     ));
-    let one = pack_row::<F>(&[F::Elem::ONE]);
+    let one = pack_row::<F>(&[Elem::<F>::ONE]);
     assert!(matches!(
         ech.absorb(&pack_row::<F>(&sum[0]), &one),
         Innovation::Inconsistent
@@ -804,12 +809,12 @@ fn check_echelon<F: PrimeField>() {
     assert!(ech.is_complete());
     for row in ech.retained_rows() {
         let (head, tail) = row.coefficient_slices();
-        let coeffs: Vec<F::Elem> = head
+        let coeffs: Vec<Elem<F>> = head
             .chunks(F::BYTES)
             .chain(tail.chunks(F::BYTES))
             .map(F::decode)
             .collect();
-        let mut acc = vec![F::Elem::ZERO; sym_cols];
+        let mut acc = vec![Elem::<F>::ZERO; sym_cols];
         for (t, &c) in coeffs.iter().enumerate() {
             for (k, slot) in acc.iter_mut().enumerate() {
                 *slot = slot.add(c.mul(x[row.pivot() + t][k]));
