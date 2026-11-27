@@ -72,6 +72,9 @@ required-features = ["internals"]
 name = "incremental"
 
 [[test]]
+name = "prime"
+
+[[test]]
 name = "format"
 
 [[test]]

@@ -30,15 +30,18 @@ use fgf::field::Elem;
 /// Sentinel frozen ordinal for a column that is not (yet) inactivated.
 pub(crate) const NOT_FROZEN: u32 = u32::MAX;
 
-/// One sparse row over GF(2)-majority systems: unit coefficients on `cols`
-/// until a field operation touches the row.
+/// One sparse row: unit coefficients on `cols` until a field operation
+/// touches the row.
 ///
 /// A packed row (`binary == true`) carries implicit unit coefficients:
 /// `coeffs` is empty, `cols` holds exactly the active columns, and `frozen`
 /// holds one bit per inactivated column keyed by the global frozen ordinal
-/// (word `w` covers ordinals `[64w, 64w + 64)`, padding zero). A widened row
-/// (`binary == false`) carries explicit coefficients parallel to `cols`,
-/// which then lists every column — active and frozen alike.
+/// (word `w` covers ordinals `[64w, 64w + 64)`, padding zero). Packing
+/// assumes characteristic two — combinations cancel entries pairwise and
+/// fold the bit words with XOR — so only a field of characteristic two
+/// creates or keeps a packed row. A widened row (`binary == false`) carries
+/// explicit coefficients parallel to `cols`, which then lists every column —
+/// active and frozen alike.
 pub(crate) struct Row<F: FieldKernels> {
     pub cols: Vec<u32>,
     pub coeffs: Vec<F::Elem>,
@@ -97,6 +100,9 @@ impl<F: FieldKernels> MergeScratch<F> {
 impl<F: FieldKernels> Row<F> {
     /// A binary row: unit coefficients on `support` (assumed sorted, distinct,
     /// and all active — packing splits it later, in `prepare_work`).
+    ///
+    /// The caller owns the characteristic-two precondition; packed rows are
+    /// built only for fields where `1 + 1` is zero.
     pub(crate) fn binary(support: Vec<u32>) -> Self {
         Self {
             cols: support,

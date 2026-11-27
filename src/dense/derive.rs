@@ -1,17 +1,20 @@
 //! The derived queries: every one a reader of a cached [`Ple`], none an
 //! elimination of its own (the one-elimination invariant).
 //!
-//! With `A = P·L·U·Q`, `P·A·Q = L·U`, and all arithmetic in characteristic
-//! two:
+//! With `A = P·L·U·Q`, `P·A·Q = L·U`:
 //!
-//! - `det` is the product of `U`'s diagonal — the permutation signs are
-//!   always one in characteristic two, and the product is zero exactly when
-//!   the rank is short of the order;
+//! - `det` is the permutation-sign product `sign(P)·sign(Q)` times the
+//!   product of `U`'s diagonal — the signs are one in characteristic two,
+//!   and the product is zero exactly when the rank is short of the order;
 //! - a solve is `x = Q·U⁻¹·L⁻¹·P·b`: permute, forward-substitute the unit
 //!   triangle, check the tail for consistency, back-substitute, permute;
 //! - an inverse is the same pipeline applied to the identity;
 //! - the kernel basis lives at the free column positions of the permuted
 //!   system, back-substituted through `U`, then un-permuted.
+//!
+//! The substitutions add the negated elimination factors, so every result
+//! holds over any `fgf` field; in characteristic two negation is the
+//! identity and the arithmetic is the XOR the binary fields share.
 
 use fgf::{FieldKernels, field::Elem, ops};
 
@@ -61,9 +64,9 @@ impl<F: FieldKernels> core::fmt::Debug for SolveScratch<F> {
 }
 
 impl<F: FieldKernels> Ple<F> {
-    /// The determinant: the product of `U`'s diagonal for a full-rank square
-    /// matrix, zero otherwise. Permutation signs are one in characteristic
-    /// two, so neither permutation contributes a factor.
+    /// The determinant: the permutation signs times the product of `U`'s
+    /// diagonal for a full-rank square matrix, zero otherwise. In
+    /// characteristic two the signs are one and drop out.
     ///
     /// # Panics
     ///
@@ -78,6 +81,9 @@ impl<F: FieldKernels> Ple<F> {
         let lu = self.lu_matrix();
         for k in 0..self.rank() {
             d = d.mul(lu.get(k, k));
+        }
+        if self.p_perm().parity() != self.q_perm().parity() {
+            d = d.neg();
         }
         d
     }
@@ -126,7 +132,7 @@ impl<F: FieldKernels> Ple<F> {
                     continue;
                 }
                 let (row_dst, row_src) = out.two_live_rows(row, piv);
-                crate::row_ops::mul_add::<F>(row_dst, factor, row_src);
+                crate::row_ops::mul_add::<F>(row_dst, factor.neg(), row_src);
             }
         }
     }
@@ -166,7 +172,7 @@ impl<F: FieldKernels> Ple<F> {
                     acc = acc.add(lu.get(piv, term).mul(already));
                 }
                 let pivot = lu.get(piv, piv);
-                out.set(piv, col, acc.mul(pivot.inv()));
+                out.set(piv, col, acc.neg().mul(pivot.inv()));
             }
             out.set(free, col, F::Elem::ONE);
         }
@@ -217,7 +223,7 @@ impl<F: FieldKernels> Ple<F> {
                     continue;
                 }
                 let (row_dst, row_src) = ws.two_live_rows(row, src);
-                crate::row_ops::mul_add::<F>(row_dst, factor, row_src);
+                crate::row_ops::mul_add::<F>(row_dst, factor.neg(), row_src);
             }
         }
         // Consistency: the eliminated tail rows must vanish on the right too.
@@ -238,7 +244,7 @@ impl<F: FieldKernels> Ple<F> {
                     continue;
                 }
                 let (row_dst, row_src) = out.two_live_rows(piv, term);
-                crate::row_ops::mul_add::<F>(row_dst, factor, row_src);
+                crate::row_ops::mul_add::<F>(row_dst, factor.neg(), row_src);
             }
             let pivot = lu.get(piv, piv);
             if !pivot.is_one() {
@@ -287,7 +293,7 @@ impl<F: FieldKernels> Ple<F> {
                     continue;
                 }
                 let (row_dst, row_src) = out.two_live_rows(row, src);
-                crate::row_ops::mul_add::<F>(row_dst, factor, row_src);
+                crate::row_ops::mul_add::<F>(row_dst, factor.neg(), row_src);
             }
         }
         for piv in (0..order).rev() {
@@ -297,7 +303,7 @@ impl<F: FieldKernels> Ple<F> {
                     continue;
                 }
                 let (row_dst, row_src) = out.two_live_rows(piv, term);
-                crate::row_ops::mul_add::<F>(row_dst, factor, row_src);
+                crate::row_ops::mul_add::<F>(row_dst, factor.neg(), row_src);
             }
             let pivot = lu.get(piv, piv);
             if !pivot.is_one() {

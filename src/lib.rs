@@ -1,5 +1,7 @@
 //! gfm — Galois Field Math: dense, bit-packed, and hybrid sparse/dense
-//! linear algebra over GF(2) and GF(2^m).
+//! linear algebra over the finite fields of `fgf`. The packed dense domain
+//! holds over every field `fgf` implements; the bit-packed domain covers
+//! GF(2).
 //!
 //! > `gfm` is a solver, not a codec. Field arithmetic and byte-buffer vector
 //! > primitives come from `fgf` — never re-implement them here. Sparse graph

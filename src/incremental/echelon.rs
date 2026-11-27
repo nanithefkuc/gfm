@@ -354,6 +354,9 @@ impl<F: FieldKernels> Echelon<F> {
             if factor.is_zero() {
                 continue;
             }
+            // The reduction subtracts `factor · pivot_row`; the AXPY helpers
+            // accumulate, so the factor carries the sign.
+            let factor = factor.neg();
             let Some(slot) = self.pivot_of_col[physical] else {
                 pivot = Some(c);
                 break;
@@ -393,6 +396,7 @@ impl<F: FieldKernels> Echelon<F> {
                 if factor.is_zero() {
                     continue;
                 }
+                let factor = factor.neg();
                 let Some(slot) = self.pivot_of_col[physical] else {
                     continue;
                 };
@@ -504,7 +508,7 @@ impl<F: FieldKernels> Echelon<F> {
                     self.span_of_slot[slot] -= 1;
                 }
                 let (dst, src) = self.rhs.two_live_rows(slot, known_slot);
-                crate::row_ops::mul_add::<F>(dst, factor, src);
+                crate::row_ops::mul_add::<F>(dst, factor.neg(), src);
                 if !self.recovered[other_physical] && self.span_of_slot[slot] == 1 {
                     self.recovered[other_physical] = true;
                     self.unit_physical[slot] = Some(other_physical);

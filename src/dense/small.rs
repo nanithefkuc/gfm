@@ -113,7 +113,7 @@ impl<F: FieldKernels, const K: usize> SmallMatrix<F, K> {
                 let factor = entry.mul(inverse);
                 a[row][rank] = factor;
                 for col in (rank + 1)..K {
-                    a[row][col] = a[row][col].add(factor.mul(a[rank][col]));
+                    a[row][col] = a[row][col].sub(factor.mul(a[rank][col]));
                 }
             }
             rank += 1;
@@ -145,7 +145,7 @@ impl<F: FieldKernels, const K: usize> SmallMatrix<F, K> {
                 }
                 let factor = entry.mul(inverse);
                 F::encode(&mut a[row][pivot..=pivot], factor);
-                let prepared = ops::Coeff::<F>::new(factor);
+                let prepared = ops::Coeff::<F>::new(factor.neg());
                 let (row_dst, row_src) = two_array_rows(&mut a, row, pivot);
                 ops::mul_add_with::<F>(&mut row_dst[pivot + 1..], &prepared, &row_src[pivot + 1..]);
                 let (rhs_dst, rhs_src) = out.two_live_rows(row, pivot);
@@ -157,7 +157,7 @@ impl<F: FieldKernels, const K: usize> SmallMatrix<F, K> {
                 let factor = F::decode(&a[pivot][term..=term]);
                 if !factor.is_zero() {
                     let (rhs_dst, rhs_src) = out.two_live_rows(pivot, term);
-                    crate::row_ops::mul_add::<F>(rhs_dst, factor, rhs_src);
+                    crate::row_ops::mul_add::<F>(rhs_dst, factor.neg(), rhs_src);
                 }
             }
             let pivot_value = F::decode(&a[pivot][pivot..=pivot]);
@@ -221,10 +221,10 @@ impl<F: FieldKernels, const K: usize> SmallMatrix<F, K> {
                 }
                 a[row][pivot] = F::Elem::ZERO;
                 for col in (pivot + 1)..K {
-                    a[row][col] = a[row][col].add(factor.mul(a[pivot][col]));
+                    a[row][col] = a[row][col].sub(factor.mul(a[pivot][col]));
                 }
                 let (row_dst, row_src) = out.two_live_rows(row, pivot);
-                crate::row_ops::mul_add::<F>(row_dst, factor, row_src);
+                crate::row_ops::mul_add::<F>(row_dst, factor.neg(), row_src);
             }
         }
         Ok(())

@@ -2,7 +2,7 @@
 //!
 //! The sparse phase decides the whole pivot structure from coefficients alone,
 //! which are cheap to combine. The expensive work is the payload: every
-//! elimination implies `dst.rhs ^= factor · src.rhs` over `sym_len` bytes.
+//! elimination implies `dst.rhs += factor · src.rhs` over `sym_len` bytes.
 //! RFC 6330 §5.4.2.1 is explicit that this is where the time goes and that the
 //! operations "should not be performed until the affected row is itself
 //! chosen". So each coefficient elimination is *recorded* here; the payloads
