@@ -221,8 +221,13 @@ impl<F: FieldBuffer> Echelon<F> {
     }
 
     /// Whether `column` owns a retained pivot.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `column` is outside `0..cols`.
     #[must_use]
     pub fn is_pivot(&self, column: usize) -> bool {
+        assert!(column < self.cols, "is_pivot column out of range");
         self.pivot_of_col[self.logical_to_physical(column)].is_some()
     }
 
@@ -543,8 +548,14 @@ impl<F: FieldBuffer> Echelon<F> {
     }
 
     /// The recovered payload at `column`, if its retained row is a lone unit.
+    /// `None` means `column` is a valid column with no recovered value.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `column` is outside `0..cols`.
     #[must_use]
     pub fn recovered_value(&self, column: usize) -> Option<&[u8]> {
+        assert!(column < self.cols, "recovered_value column out of range");
         let physical = self.logical_to_physical(column);
         if !self.recovered[physical] {
             return None;

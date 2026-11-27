@@ -936,3 +936,30 @@ fn wide_reduced_substitution_drives_the_kernel_directly() {
         &pack::<Gf8B>(&[x5, x5])[..]
     );
 }
+
+#[test]
+#[should_panic(expected = "is_pivot column out of range")]
+fn is_pivot_rejects_columns_past_the_window() {
+    let mut echelon = Echelon::<Gf8B>::new(3, 1, true).unwrap();
+    assert_eq!(
+        echelon.absorb(&[0, 0, 1], &[1]),
+        Innovation::Innovative { pivot: 2 }
+    );
+    let _ = echelon.is_pivot(5);
+}
+
+#[test]
+#[should_panic(expected = "recovered_value column out of range")]
+fn recovered_value_rejects_columns_past_the_window() {
+    let echelon = Echelon::<Gf8B>::new(3, 1, true).unwrap();
+    let _ = echelon.recovered_value(3);
+}
+
+#[test]
+fn zero_column_accumulator_decides_by_right_hand_side() {
+    let mut echelon = Echelon::<Gf8B>::new(0, 1, true).unwrap();
+    assert_eq!(echelon.absorb(&[], &[0]), Innovation::Dependent);
+    assert_eq!(echelon.absorb(&[], &[1]), Innovation::Inconsistent);
+    assert_eq!(echelon.rank(), 0);
+    assert_eq!(echelon.recovered().count(), 0);
+}
