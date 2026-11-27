@@ -6,9 +6,11 @@ release changes and migration guidance.
 
 ## Scope and ownership
 
-`gfm` owns matrices over GF(2) and GF(2^m), rank-revealing decompositions,
-streaming echelon state, and hybrid sparse/dense solving. It receives equations
-and returns matrix facts or solutions; it is not a codec.
+`gfm` owns matrices and linear systems over 𝔽q: dense matrices over valid
+`fgf::FieldBuffer` presentations and bit-packed GF(2) matrices, rank-revealing
+PLUQ and its derived queries, incremental echelon under row insertion and
+leading-column eviction, and sparse-to-dense inactivation solving. It receives
+equations and returns matrix facts or solutions; it is not a codec.
 
 Field arithmetic and packed row operations belong to `fgf`. Structured
 Cauchy and Vandermonde matrices belong to `structmat`; polynomial-matrix
@@ -63,9 +65,10 @@ Crate-specific values and recipes belong in `crate.just`.
 
 ## Modules and features
 
-The existing `dense`, `bits`, `incremental`, and `hybrid` subtrees use `mod.rs`.
-Keep that style. Parent modules hold documentation, declarations, re-exports,
-and genuinely shared items; concrete implementations belong to their owners.
+The `dense`, `bits`, `incremental`, and `hybrid` subtrees use module-named
+files (`src/dense.rs` beside `src/dense/`). Keep that style. Parent modules
+hold documentation, declarations, re-exports, and genuinely shared items;
+concrete implementations belong to their owners.
 
 `src/internals.rs` is the sole feature-gated, re-export-only facade. It contains
 no implementation bodies. The extension traits and implementations in private
@@ -91,8 +94,10 @@ selection. `simdispatch`, reached through `fgf`, owns CPU detection, ordering,
 and the process-startup downgrade-only `SIMD_BACKEND` request. Do not add a
 second detector, override, or cache.
 
-`crate.just` declares `v3_gfni_crypto v3 v2 v1 scalar`. This is a requested x86
-sweep, not proof those tiers executed: unsupported requests can fall back.
+`crate.just` declares `v4x v3_gfni_crypto v3 v2 scalar`, the x86-64 tiers
+`fgf` 4.0.1 routes; `v4x` needs the `simd512` feature, which the all-feature
+sweep enables. This is a requested sweep, not proof those tiers executed:
+unsupported requests can fall back.
 Record resolved field backends when collecting measurements. The fingerprint
 test writes the requested override and resolved field backends directly to stderr,
 including during captured tier-test runs. Other architecture runs must account

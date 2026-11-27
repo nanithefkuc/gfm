@@ -1,7 +1,8 @@
 //! `Ple` — the rank-revealing PLE/PLUQ decomposition, and the crate's single
 //! elimination.
 //!
-//! `A = P·L·U·Q` with `P` a row permutation, `Q` a column permutation, `L`
+//! `P·A·Q = L·U`, so `A = P⁻¹·L·U·Q⁻¹`, with `P` applying the recorded row
+//! exchanges, `Q` the recorded column exchanges, `L`
 //! unit lower `m × r`, and `U` upper `r × n`, stored in place: `lu` holds
 //! `L`'s factors below the diagonal and `U` on and above it. Every query the
 //! crate answers — rank, determinant, RREF, kernel, solve, inverse — is a
@@ -27,7 +28,7 @@ use fgf::{FieldBuffer, FieldElem};
 use crate::backend::panel_width;
 use crate::dense::{Matrix, Perm, ViewMut};
 
-/// A rank-revealing `A = P·L·U·Q` decomposition.
+/// A rank-revealing `P·A·Q = L·U` decomposition.
 ///
 /// The decomposed matrix had shape `m × n`; `rank() <= min(m, n)`. Rank
 /// deficiency is normal: a rank-deficient input produces a rank-deficient

@@ -1,14 +1,15 @@
-//! gfm — Galois Field Math: dense, bit-packed, and hybrid sparse/dense
-//! linear algebra over the finite fields of `fgf`. The packed dense domain
-//! holds over every field `fgf` implements; the bit-packed domain covers
-//! GF(2).
+//! gfm — Galois Field Math: matrices and linear systems over the finite
+//! fields of `fgf`. Dense matrices hold over every field `fgf` packs into
+//! byte lanes (`fgf::FieldBuffer`); bit-packed matrices cover GF(2).
 //!
 //! > `gfm` is a solver, not a codec. Field arithmetic and byte-buffer vector
 //! > primitives come from `fgf` — never re-implement them here. Sparse graph
-//! > topology, Tanner-graph generation, and peeling belong to `fgraph`. Wire
-//! > formats, shard ownership, rate adaptation, degree distributions, and
-//! > codec shells belong to consumers. This crate receives a matrix and
-//! > returns facts about it.
+//! > topology, Tanner-graph generation, and peeling over a graph as symbols
+//! > arrive belong to `fgraph`; `hybrid`'s weight-one pivot rule is an
+//! > elimination order inside this crate's solve. Wire formats, shard
+//! > ownership, rate adaptation, degree distributions, and codec shells
+//! > belong to consumers. This crate receives a matrix and returns facts
+//! > about it.
 
 #![cfg_attr(not(feature = "std"), no_std)]
 #![forbid(unsafe_code)]

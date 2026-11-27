@@ -1,7 +1,8 @@
 //! The derived queries: every one a reader of a cached [`Ple`], none an
 //! elimination of its own (the one-elimination invariant).
 //!
-//! With `A = P·L·U·Q`, `P·A·Q = L·U`:
+//! With `P·A·Q = L·U`, where `P` and `Q` apply the recorded row and column
+//! exchanges:
 //!
 //! - `det` is the permutation-sign product `sign(P)·sign(Q)` times the
 //!   product of `U`'s diagonal — the signs are one in characteristic two,

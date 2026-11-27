@@ -1,16 +1,15 @@
 //! `Ple` over GF(2) — the bit domain's single elimination.
 //!
-//! Structurally the twin of [`crate::dense::Ple`]: the same `A = P·L·U·Q`
+//! Structurally the twin of [`crate::dense::Ple`]: the same `P·A·Q = L·U`
 //! decomposition, the same pivot order (leftmost available column, first
 //! nonzero row), the same panel-blocked schedule with a locally shrinking
 //! window on rank-deficient slabs, and therefore the same `lu`, `p`, `q`,
-//! and rank profiles. Only the inner loop differs (I8): a bit is one bit,
-//! a pivot is always one, no coefficient exists, and the elimination of a
-//! column is a masked range XOR of the pivot row through [`fgf::ops::bits`] —
-//! no AXPY, no normalization, because the only nonzero element is one.
-//!
-//! No Method-of-the-Four-Russians slab tables yet: that acceleration keeps
-//! the same answer and lands later, gated on measurement.
+//! and rank profiles. Only the inner loop differs: a bit is one bit, a pivot
+//! is always one, no coefficient exists, and the elimination of a column is
+//! a masked range XOR of the pivot row through [`fgf::ops::bits`] — no AXPY,
+//! no normalization, because the only nonzero element is one. Wide
+//! trailing updates combine slabs of pivot rows through Method of the Four
+//! Russians tables, which leave the result unchanged.
 
 use alloc::vec::Vec;
 use core::fmt;
@@ -28,7 +27,7 @@ use crate::dense::Perm;
 const SLAB_WIDTH: usize = 8;
 const M4RI_CROSSOVER: usize = 224;
 
-/// A rank-revealing `A = P·L·U·Q` decomposition over GF(2).
+/// A rank-revealing `P·A·Q = L·U` decomposition over GF(2).
 ///
 /// The decomposed matrix had shape `m × n`; `rank() <= min(m, n)`. Rank
 /// deficiency is normal, not an error.
