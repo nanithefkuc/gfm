@@ -7,10 +7,14 @@
 //! whole of on-the-fly decoding — the rank reaches full the instant the last
 //! innovative packet arrives, with no batch phase.
 //!
-//! The `reduced` flag collapses `ccrlnc`'s two bases into one type: a decoder
-//! sets it to substitute every recovered unit row and propagate new unit rows
-//! backward, so a variable's value is readable as soon as it is determined; a
-//! recoder clears it and keeps forward echelon only.
+//! The two [`EchelonMode`] variants collapse `ccrlnc`'s two bases into one
+//! type. A recoder keeps [`EchelonMode::Forward`] echelon rows only.
+//! [`EchelonMode::PropagateUnits`] also substitutes recovered unit rows and
+//! propagates new unit rows backward, so a coordinate is reported once its
+//! retained row collapses to a lone unit — a sound subset of the determined
+//! coordinates, not reduced row echelon form. After `x + y + z = 1` and
+//! `y + z = 0`, `x = 1` is determined but not reported; an exact route such
+//! as [`crate::dense::Ple::rref_into`] reports every determined coordinate.
 //!
 //! `absorb` reuses two internal scratch rows, so a steady-state stream
 //! allocates nothing.
@@ -18,8 +22,7 @@
 use alloc::vec;
 use alloc::vec::Vec;
 
-use fgf::field::Elem;
-use fgf::{FieldKernels, ops};
+use fgf::{Elem, FieldBuffer, FieldElem, ops};
 
 use crate::GeometryError;
 use crate::dense::Matrix;
@@ -27,7 +30,7 @@ use crate::incremental::Innovation;
 
 const STACK_GATHER: usize = 64;
 #[inline]
-fn mul_add_coefficients<F: FieldKernels>(dst: &mut [u8], factor: F::Elem, src: &[u8]) {
+fn mul_add_coefficients<F: FieldBuffer>(dst: &mut [u8], factor: Elem<F>, src: &[u8]) {
     if dst.len() / F::BYTES <= 64 {
         for i in 0..dst.len() / F::BYTES {
             let d = &mut dst[i * F::BYTES..(i + 1) * F::BYTES];
@@ -42,9 +45,9 @@ fn mul_add_coefficients<F: FieldKernels>(dst: &mut [u8], factor: F::Elem, src: &
 }
 
 #[inline]
-fn mul_add_cyclic<F: FieldKernels>(
+fn mul_add_cyclic<F: FieldBuffer>(
     dst: &mut [u8],
-    factor: F::Elem,
+    factor: Elem<F>,
     src: &[u8],
     start: usize,
     len: usize,
@@ -62,9 +65,27 @@ fn mul_add_cyclic<F: FieldKernels>(
     }
 }
 
+/// Retention policy for [`Echelon`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EchelonMode {
+    /// Keeps forward-echelon rows for recoding: every retained row is zero
+    /// before its pivot and is not reduced against later pivots.
+    Forward,
+    /// Additionally substitutes recovered unit rows and propagates newly
+    /// recovered units backward, so [`Echelon::recovered`] and
+    /// [`Echelon::recovered_value`] report a sound subset of the determined
+    /// coordinates.
+    ///
+    /// This is not reduced row echelon form, and it does not report every
+    /// determined coordinate. After `x + y + z = 1` and `y + z = 0`, `x = 1`
+    /// is determined but not reported. Callers that need every determined
+    /// coordinate use an exact route such as [`crate::dense::Ple::rref_into`].
+    PropagateUnits,
+}
+
 /// A streaming echelon accumulator over `cols` coefficient columns, carrying a
 /// right-hand-side payload of `rhs_cols` field elements per row.
-pub struct Echelon<F: FieldKernels> {
+pub struct Echelon<F: FieldBuffer> {
     /// One retained pivot row per rank, coefficients in `cols` columns.
     pivots: Matrix<F>,
     /// The matching right-hand-side payload for each pivot row.
@@ -79,7 +100,7 @@ pub struct Echelon<F: FieldKernels> {
     cols: usize,
     rhs_cols: usize,
     column_offset: usize,
-    reduced: bool,
+    mode: EchelonMode,
     scratch_coeffs: Vec<u8>,
     scratch_rhs: Vec<u8>,
     recovered: Vec<bool>,
@@ -87,7 +108,7 @@ pub struct Echelon<F: FieldKernels> {
 }
 
 /// A retained echelon row in logical column order.
-pub struct RetainedRow<'a, F: FieldKernels> {
+pub struct RetainedRow<'a, F: FieldBuffer> {
     pivot: usize,
     span: usize,
     coefficients: &'a [u8],
@@ -97,7 +118,7 @@ pub struct RetainedRow<'a, F: FieldKernels> {
     field: core::marker::PhantomData<F>,
 }
 
-impl<'a, F: FieldKernels> RetainedRow<'a, F> {
+impl<'a, F: FieldBuffer> RetainedRow<'a, F> {
     /// The row's logical pivot column.
     #[must_use]
     pub const fn pivot(&self) -> usize {
@@ -129,7 +150,7 @@ impl<'a, F: FieldKernels> RetainedRow<'a, F> {
     /// # Panics
     ///
     /// Panics unless `out` contains exactly `cols` field elements.
-    pub fn mul_coefficients_add(&self, out: &mut [u8], factor: F::Elem) {
+    pub fn mul_coefficients_add(&self, out: &mut [u8], factor: Elem<F>) {
         assert_eq!(out.len(), self.cols * F::BYTES, "coefficient output length");
         let dst_start = self.pivot * F::BYTES;
         let src_start = self.physical;
@@ -150,7 +171,7 @@ impl<'a, F: FieldKernels> RetainedRow<'a, F> {
     }
 }
 
-impl<F: FieldKernels> core::fmt::Debug for RetainedRow<'_, F> {
+impl<F: FieldBuffer> core::fmt::Debug for RetainedRow<'_, F> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("RetainedRow")
             .field("pivot", &self.pivot)
@@ -158,25 +179,17 @@ impl<F: FieldKernels> core::fmt::Debug for RetainedRow<'_, F> {
     }
 }
 
-impl<F: FieldKernels> Echelon<F> {
+impl<F: FieldBuffer> Echelon<F> {
     /// A fresh accumulator over `cols` coefficient columns and a right-hand
-    /// side of `rhs_len` bytes per row.
+    /// side of `rhs_cols` field elements per row.
     ///
-    /// `reduced` selects recovered-unit substitution and propagation
-    /// (decoder) versus forward echelon only (recoder).
+    /// `mode` selects forward-echelon retention ([`EchelonMode::Forward`]) or
+    /// recovered-unit propagation ([`EchelonMode::PropagateUnits`]).
     ///
     /// # Errors
     ///
-    /// [`GeometryError::Ragged`] if `rhs_len` is not a whole number of
-    /// elements, [`GeometryError::Overflow`] if the state geometry overflows.
-    pub fn new(cols: usize, rhs_len: usize, reduced: bool) -> Result<Self, GeometryError> {
-        if !rhs_len.is_multiple_of(F::BYTES) {
-            return Err(GeometryError::Ragged {
-                len: rhs_len,
-                element_bytes: F::BYTES,
-            });
-        }
-        let rhs_cols = rhs_len / F::BYTES;
+    /// [`GeometryError::Overflow`] if the state geometry overflows.
+    pub fn new(cols: usize, rhs_cols: usize, mode: EchelonMode) -> Result<Self, GeometryError> {
         let pivots = Matrix::<F>::zeros(cols, cols)?;
         let rhs = Matrix::<F>::zeros(cols, rhs_cols)?;
         Ok(Self {
@@ -191,7 +204,7 @@ impl<F: FieldKernels> Echelon<F> {
             cols,
             rhs_cols,
             column_offset: 0,
-            reduced,
+            mode,
             scratch_coeffs: vec![0u8; cols * F::BYTES],
             scratch_rhs: vec![0u8; rhs_cols * F::BYTES],
             recovered: vec![false; cols],
@@ -222,8 +235,13 @@ impl<F: FieldKernels> Echelon<F> {
     }
 
     /// Whether `column` owns a retained pivot.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `column` is outside `0..cols`.
     #[must_use]
     pub fn is_pivot(&self, column: usize) -> bool {
+        assert!(column < self.cols, "is_pivot column out of range");
         self.pivot_of_col[self.logical_to_physical(column)].is_some()
     }
 
@@ -251,7 +269,7 @@ impl<F: FieldKernels> Echelon<F> {
     /// New columns opened at the right are zero in every retained equation.
     /// Rows pivoted in the discarded prefix are removed. Every surviving row
     /// is already zero before its pivot, so dropping the prefix preserves the
-    /// represented equations in both forward and reduced modes.
+    /// represented equations in either mode.
     ///
     /// This is the storage operation sliding-window codecs need; absolute
     /// source numbering and window validation remain caller policy.
@@ -290,12 +308,13 @@ impl<F: FieldKernels> Echelon<F> {
     /// Retains a unit equation at a currently free pivot column.
     ///
     /// This is the allocation-free systematic-packet path: it avoids building
-    /// and reducing a dense coefficient scratch row.
+    /// and reducing a dense coefficient scratch row. `rhs` holds `rhs_cols`
+    /// packed field elements (`rhs_cols * F::BYTES` bytes).
     ///
     /// # Panics
     ///
-    /// Panics if `column` is out of range, already pivoted, or `rhs` has the
-    /// wrong length.
+    /// Panics if `column` is out of range, already pivoted, or `rhs` is not
+    /// `rhs_cols * F::BYTES` bytes.
     pub fn absorb_unit(&mut self, column: usize, rhs: &[u8]) -> Innovation {
         assert!(column < self.cols, "pivot column out of range");
         assert!(
@@ -308,22 +327,23 @@ impl<F: FieldKernels> Echelon<F> {
         let slot = self.take_slot();
         if self.unit_physical[slot] != Some(physical) {
             self.pivots.row_mut(slot).fill(0);
-            self.pivots.set(slot, physical, F::Elem::ONE);
+            self.pivots.set(slot, physical, Elem::<F>::ONE);
             self.unit_physical[slot] = Some(physical);
         }
         self.span_of_slot[slot] = 1;
         self.rhs.row_mut(slot).copy_from_slice(rhs);
         self.pivot_of_col[physical] = Some(slot);
 
-        if self.reduced {
+        if matches!(self.mode, EchelonMode::PropagateUnits) {
             self.propagate_unit(physical);
         }
         self.rank += 1;
         Innovation::Innovative { pivot: column }
     }
 
-    /// Absorbs one equation: coefficients (`cols` elements) and a right-hand
-    /// side (`rhs_cols` elements), both packed little-endian.
+    /// Absorbs one equation: coefficients (`cols` elements, `cols * F::BYTES`
+    /// bytes) and a right-hand side (`rhs_cols` elements,
+    /// `rhs_cols * F::BYTES` bytes), both packed little-endian.
     ///
     /// # Panics
     ///
@@ -341,7 +361,7 @@ impl<F: FieldKernels> Echelon<F> {
         // Reduce coefficients in pivot order. For codec-sized systems, collect
         // the matching RHS operation into one gather so each payload byte is
         // loaded and stored once rather than once per pivot.
-        let mut rhs_factors = [F::Elem::ZERO; STACK_GATHER];
+        let mut rhs_factors = [Elem::<F>::ZERO; STACK_GATHER];
         let mut rhs_sources = [&[][..]; STACK_GATHER];
         let mut rhs_count = 0;
         let mut pivot = None;
@@ -354,6 +374,9 @@ impl<F: FieldKernels> Echelon<F> {
             if factor.is_zero() {
                 continue;
             }
+            // The reduction subtracts `factor · pivot_row`; the AXPY helpers
+            // accumulate, so the factor carries the sign.
+            let factor = factor.neg();
             let Some(slot) = self.pivot_of_col[physical] else {
                 pivot = Some(c);
                 break;
@@ -377,7 +400,7 @@ impl<F: FieldKernels> Echelon<F> {
                 crate::row_ops::mul_add::<F>(&mut self.scratch_rhs, factor, self.rhs.row(slot));
             }
         }
-        if self.reduced
+        if matches!(self.mode, EchelonMode::PropagateUnits)
             && let Some(pivot_column) = pivot
         {
             for (_, physical) in (self.column_offset..self.cols)
@@ -393,6 +416,7 @@ impl<F: FieldKernels> Echelon<F> {
                 if factor.is_zero() {
                     continue;
                 }
+                let factor = factor.neg();
                 let Some(slot) = self.pivot_of_col[physical] else {
                     continue;
                 };
@@ -415,16 +439,16 @@ impl<F: FieldKernels> Echelon<F> {
         }
         // The first surviving non-pivot coefficient is the new pivot column.
         let Some(pivot) = pivot else {
-            return if self.scratch_rhs.iter().any(|&b| b != 0) {
-                Innovation::Inconsistent
-            } else {
+            return if crate::row_ops::is_zero::<F>(&self.scratch_rhs) {
                 Innovation::Dependent
+            } else {
+                Innovation::Inconsistent
             };
         };
 
         let (slot, pivot_physical, span) = self.retain_scratch_row(pivot);
 
-        if self.reduced && span == 1 {
+        if matches!(self.mode, EchelonMode::PropagateUnits) && span == 1 {
             self.unit_physical[slot] = Some(pivot_physical);
             self.propagate_unit(pivot_physical);
         }
@@ -494,7 +518,7 @@ impl<F: FieldKernels> Echelon<F> {
                 if factor.is_zero() {
                     continue;
                 }
-                self.pivots.set(slot, known_physical, F::Elem::ZERO);
+                self.pivots.set(slot, known_physical, Elem::<F>::ZERO);
                 let pivot = self.physical_to_logical(other_physical);
                 while self.span_of_slot[slot] > 1 {
                     let last = self.logical_to_physical(pivot + self.span_of_slot[slot] - 1);
@@ -504,7 +528,7 @@ impl<F: FieldKernels> Echelon<F> {
                     self.span_of_slot[slot] -= 1;
                 }
                 let (dst, src) = self.rhs.two_live_rows(slot, known_slot);
-                crate::row_ops::mul_add::<F>(dst, factor, src);
+                crate::row_ops::mul_add::<F>(dst, factor.neg(), src);
                 if !self.recovered[other_physical] && self.span_of_slot[slot] == 1 {
                     self.recovered[other_physical] = true;
                     self.unit_physical[slot] = Some(other_physical);
@@ -527,8 +551,10 @@ impl<F: FieldKernels> Echelon<F> {
 
     /// The variables that are fully recovered: pivot columns whose retained
     /// row has collapsed to a lone unit entry, paired with the recovered
-    /// payload borrowed from that row. Meaningful only for a `reduced`
-    /// accumulator; a forward-echelon one recovers nothing until complete.
+    /// payload borrowed from that row. A [`EchelonMode::Forward`] accumulator
+    /// retains no recovered units and reports nothing; a
+    /// [`EchelonMode::PropagateUnits`] accumulator reports a sound subset of
+    /// the determined coordinates.
     pub fn recovered(&self) -> impl Iterator<Item = (usize, &[u8])> + '_ {
         (0..self.cols).filter_map(move |column| {
             let physical = self.logical_to_physical(column);
@@ -540,8 +566,14 @@ impl<F: FieldKernels> Echelon<F> {
     }
 
     /// The recovered payload at `column`, if its retained row is a lone unit.
+    /// `None` means `column` is a valid column with no recovered value.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `column` is outside `0..cols`.
     #[must_use]
     pub fn recovered_value(&self, column: usize) -> Option<&[u8]> {
+        assert!(column < self.cols, "recovered_value column out of range");
         let physical = self.logical_to_physical(column);
         if !self.recovered[physical] {
             return None;
@@ -571,13 +603,13 @@ impl<F: FieldKernels> Echelon<F> {
     }
 }
 
-impl<F: FieldKernels> core::fmt::Debug for Echelon<F> {
+impl<F: FieldBuffer> core::fmt::Debug for Echelon<F> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("Echelon")
             .field("cols", &self.cols)
             .field("rhs_cols", &self.rhs_cols)
             .field("rank", &self.rank)
-            .field("reduced", &self.reduced)
+            .field("mode", &self.mode)
             .finish_non_exhaustive()
     }
 }

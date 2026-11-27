@@ -6,9 +6,11 @@ release changes and migration guidance.
 
 ## Scope and ownership
 
-`gfm` owns matrices over GF(2) and GF(2^m), rank-revealing decompositions,
-streaming echelon state, and hybrid sparse/dense solving. It receives equations
-and returns matrix facts or solutions; it is not a codec.
+`gfm` owns matrices and linear systems over 𝔽q: dense matrices over valid
+`fgf::FieldBuffer` presentations and bit-packed GF(2) matrices, rank-revealing
+PLUQ and its derived queries, incremental echelon under row insertion and
+leading-column eviction, and sparse-to-dense inactivation solving. It receives
+equations and returns matrix facts or solutions; it is not a codec.
 
 Field arithmetic and packed row operations belong to `fgf`. Structured
 Cauchy and Vandermonde matrices belong to `structmat`; polynomial-matrix
@@ -63,16 +65,18 @@ Crate-specific values and recipes belong in `crate.just`.
 
 ## Modules and features
 
-The existing `dense`, `bits`, `incremental`, and `hybrid` subtrees use `mod.rs`.
-Keep that style. Parent modules hold documentation, declarations, re-exports,
-and genuinely shared items; concrete implementations belong to their owners.
+The `dense`, `bits`, `incremental`, and `hybrid` subtrees use module-named
+files (`src/dense.rs` beside `src/dense/`). Keep that style. Parent modules
+hold documentation, declarations, re-exports, and genuinely shared items;
+concrete implementations belong to their owners.
 
 `src/internals.rs` is the sole feature-gated, re-export-only facade. It contains
 no implementation bodies. The extension traits and implementations in private
-`src/internal_api.rs` compile in every feature configuration and expose
+`src/inspection.rs` compile in every feature configuration and expose
 otherwise crate-private inspection and experiment methods without making them
-stable inherent methods. Combining these files under the facade's gate would
-make `internals` control compilation rather than reachability.
+stable inherent methods. The hybrid counter type is reachable only through the
+same facade. Combining these files under the facade's gate would make
+`internals` control compilation rather than reachability.
 
 `internals = []` activates no dependencies and carries no compatibility promise.
 Benchmarks and integration targets using it declare `required-features`;
@@ -84,15 +88,49 @@ The runtime dependency set is exact-pinned `fgf` and optional `rayon`.
 Without default features the crate uses `no_std` plus `alloc`; owning matrix
 storage still allocates. Do not introduce `std` outside its functional gate.
 
+## Public API surface
+
+`gfm` adopts umbrella A1–A10 in full. Public modules are facades: they hold
+documentation, attributes, module declarations, and explicit re-exports, never
+operation bodies. Each stable item has exactly one path.
+
+The stable module set is closed for the major version: `dense`, `bits`,
+`incremental`, `hybrid`, and the feature-gated `internals` facade. `error` is
+private and surfaces only `GeometryError` and `SolveError` at the crate root.
+No approval adds a stable module inside the major.
+
+New stable items are placed by this ordered first-match list:
+
+1. An owned value, borrowed view, scratch workspace, or prepared form over
+   packed field elements goes in `dense`.
+2. An owned value, borrowed view, scratch workspace, or prepared form over
+   GF(2) bits goes in `bits`.
+3. An operation over an incrementally maintained echelon, or its verdict or
+   retained-row view, goes in `incremental`.
+4. An operation over sparse equations or their dense reduction, or its
+   solution, goes in `hybrid`.
+5. An error type shared across storage domains stays at the crate root.
+6. Otherwise, stop and ask the maintainer.
+
+Prepared state, borrowed views, and their capability traits follow their
+operation's module; backend representations stay private or behind
+`internals`. The stable API exposes no backend queries: no tier list,
+threshold, capability boolean, or kernel name appears in it. The committed
+inventory under `api/` is the source-level contract, `just api` checks it, and
+regenerating it happens only inside an authorized API change.
+
 ## Backend selection
 
-`gfm` owns no SIMD kernels. `backend_for::<F>()` delegates to `fgf`'s per-field
-selection. `simdispatch`, reached through `fgf`, owns CPU detection, ordering,
-and the process-startup downgrade-only `SIMD_BACKEND` request. Do not add a
-second detector, override, or cache.
+`gfm` owns no SIMD kernels. Callers use `fgf::backend_for::<F>()`; the crate's
+private blocking policy reads the same answer. `gfm`'s stable API exposes no
+backend query or backend type. `simdispatch`, reached through `fgf`, owns CPU
+detection, ordering, and the process-startup downgrade-only `SIMD_BACKEND`
+request. Do not add a second detector, override, or cache.
 
-`crate.just` declares `v3_gfni_crypto v3 v2 v1 scalar`. This is a requested x86
-sweep, not proof those tiers executed: unsupported requests can fall back.
+`crate.just` declares `v4x v3_gfni_crypto v3 v2 scalar`, the x86-64 tiers
+`fgf` 4.0.1 routes; `v4x` needs the `simd512` feature, which the all-feature
+sweep enables. This is a requested sweep, not proof those tiers executed:
+unsupported requests can fall back.
 Record resolved field backends when collecting measurements. The fingerprint
 test writes the requested override and resolved field backends directly to stderr,
 including during captured tier-test runs. Other architecture runs must account

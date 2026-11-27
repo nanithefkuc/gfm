@@ -73,16 +73,17 @@ features:
 msrv:
     cargo +{{MSRV}} check --all-features --all-targets
 
-# Crates that forbid unsafe have no `MIRI` args and skip; kernel owners list
-# one `cargo miri test` argument set per line in `crate.just`.
+# A crate leaves `MIRI` empty when it lists no owned-unsafe Miri targets. Each
+# target must execute at least one crate-owned unsafe item; non-empty argument
+# sets live in that crate's `crate.just`.
 #
-# Miri over the scalar paths.
+# Miri over the listed owned-unsafe paths.
 [group('test')]
 unsafe-check:
     #!/usr/bin/env bash
     set -euo pipefail
     if [[ -z "{{MIRI}}" ]]; then
-        echo "{{CRATE}} declares no unsafe surface; nothing for miri to check"
+        echo "{{CRATE}} lists no Miri targets"
         exit 0
     fi
     while IFS= read -r args; do
@@ -94,10 +95,12 @@ unsafe-check:
 
 # ── Lint and docs ─────────────────────────────────────────────────────────────
 
+# Both feature ends plus the default set, which neither end builds.
 [group('lint')]
 lint:
     cargo fmt --all --check
     cargo clippy --all-targets --all-features -- -D warnings
+    cargo clippy --all-targets -- -D warnings
     cargo clippy --all-targets --no-default-features -- -D warnings
 
 [group('lint')]
@@ -155,24 +158,43 @@ cover-html: _cover-runs
     cargo llvm-cov report --html "${ignore[@]}"
     echo "target/llvm-cov/html/index.html"
 
+# Coverage counters are shared by every thread of a process, so threads
+# running the same code contend on them and in-process test parallelism
+# collapses; nextest runs each test in its own process instead. Line counts
+# need unoptimized codegen, since inlining and constant folding drop counted
+# lines, so the runs pin opt-level 0 whatever the test profile sets.
 [private]
 _cover-runs:
     #!/usr/bin/env bash
     set -euo pipefail
+    export CARGO_PROFILE_TEST_OPT_LEVEL=0
+    run=(cargo llvm-cov nextest --no-report --no-tests=warn)
     cargo llvm-cov clean --workspace
-    cargo llvm-cov --no-report --all-features
+    "${run[@]}" --all-features
     for tier in {{TIERS}}; do
         echo "── SIMD_BACKEND=${tier}"
-        SIMD_BACKEND="${tier}" cargo llvm-cov --no-report --all-features
+        SIMD_BACKEND="${tier}" "${run[@]}" --all-features
     done
-    cargo llvm-cov --no-report --no-default-features
+    "${run[@]}" --no-default-features
 
 # ── The pull-request gate ─────────────────────────────────────────────────────
 
 # Everything CI will run. Green here means green there.
+#
+# `cover` already runs the whole suite at both feature ends and once per tier,
+# failing on any test failure, so the gate does not repeat `features` or
+# `test-tiers`; it adds only the runs coverage leaves out.
 [group('gate')]
-validate: lint deps doc features test-tiers unsafe-check cover
+validate: lint deps doc _coverage-gaps unsafe-check cover
     @echo "{{CRATE}}: validated"
+
+# The default feature set, which neither feature end builds, and doctests,
+# which coverage runs do not execute.
+[private]
+_coverage-gaps:
+    cargo test
+    cargo test --doc --no-default-features
+    cargo test --doc --all-features
 
 # ── Benchmarks ────────────────────────────────────────────────────────────────
 
@@ -329,14 +351,15 @@ doctor:
     check "rustfmt"             cargo fmt --version
     check "clippy"              cargo clippy --version
     check "cargo-llvm-cov"      cargo llvm-cov --version
+    check "cargo-nextest"       cargo nextest --version
     check "msrv toolchain {{MSRV}}" rustup run {{MSRV}} cargo --version
     check "jq (perf-bench)"     jq --version
     check "perf (perf-bench)"   perf --version
     check "taskset (bench pinning)" taskset --version
-    if [[ -n "{{MIRI}}" ]]; then
+    if [[ -n "{{MIRI}}" ]] || grep -qE '^MIRI_[A-Z_]+[[:space:]]*:=' crate.just; then
         check "nightly miri"    cargo +nightly miri --version
     else
-        printf '  n/a     nightly miri (crate forbids unsafe)\n'
+        printf '  n/a     nightly miri (no Miri targets listed)\n'
     fi
     if [[ -n "${FEC_GOLDEN_CORE:-}" ]]; then
         printf '  ok      FEC_GOLDEN_CORE=%s\n' "${FEC_GOLDEN_CORE}"

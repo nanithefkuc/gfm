@@ -6,6 +6,112 @@ All notable changes to this project are documented here. The format follows
 
 ## Unreleased
 
+### Added
+
+- `simd512` feature, forwarding to `fgf`'s AVX-512 kernels on capable x86-64
+  hosts. [#29](https://github.com/nanithefkuc/gfm/issues/29).
+
+### Changed
+
+- **Breaking:** every stable item has one canonical module path; the crate-root
+  re-exports are removed. Import `Matrix`, `ViewMut`, `Perm`, `Ple`,
+  `SolveScratch`, `SmallMatrix`, `mul_into`, `mul_add`,
+  `solve_lower_unit_assign`, and `solve_upper_assign` from `gfm::dense`;
+  `BitMatrix` from `gfm::bits`; `Hybrid`, `Solution`, `SparseEquation`, and
+  `SparseEquationSource` from `gfm::hybrid`; and `Echelon`, `EchelonMode`,
+  `Innovation`, and `RetainedRow` from `gfm::incremental`. `GeometryError` and
+  `SolveError` stay at the crate root, and `SolveStats` moves behind
+  `internals`. Update imports, then remove any `gfm::` prefix that previously
+  named a root re-export.
+  [#21](https://github.com/nanithefkuc/gfm/issues/21).
+- **Breaking:** the `backend` module and its `Backend` and `backend_for`
+  re-exports are removed; the stable API exposes no backend query. Call
+  `fgf::backend_for::<F>()` and name `fgf::Backend` directly. The public
+  `dense::layout` module and its `pitch_for` helper leave the stable surface:
+  use `gfm::dense::ALIGN` and `gfm::bits::ALIGN` for the alignment constants
+  and obtain pitch through `Matrix::pitch` or `BitMatrix::pitch`.
+  [#21](https://github.com/nanithefkuc/gfm/issues/21).
+- **Breaking:** move to `fgf = "=4.0.1"`. Bounds are `F: fgf::FieldBuffer` and
+  elements are `fgf::Elem<F>`; the dense, hybrid, and incremental domains hold
+  over every `FieldBuffer` presentation, including generic prime residues and
+  custom extensions. Migrate field types and imports with `fgf`'s
+  [3.x guide](https://github.com/nanithefkuc/fgf/wiki/Migrating-from-3.x), then
+  pin `gfm = "=2.0.0"` with `fgf = "=4.0.1"`.
+  [#29](https://github.com/nanithefkuc/gfm/issues/29).
+- **Breaking:** `SmallMatrix` checks its order bound `K <= 64` at compile time
+  instead of panicking at construction; move larger orders to `Ple`.
+  [#16](https://github.com/nanithefkuc/gfm/issues/16).
+- **Breaking:** `row_rank_profile` is renamed `pivot_rows` on dense and bit
+  `Ple`: it returns the factorization's pivot rows, which need not be the
+  lexicographic row rank profile. Rename call sites; code that relied on the
+  lexicographic property needs its own query.
+  [#17](https://github.com/nanithefkuc/gfm/issues/17).
+- **Breaking:** `DenseRow` is renamed `SparseEquation`, `DenseRows` is renamed
+  `SparseEquationSource` (its `for_each_row` method becomes
+  `for_each_equation`), and `Hybrid::extend_rows` becomes
+  `Hybrid::extend_equations`. `kernel_into` becomes `right_kernel_into` on
+  dense and bit `Ple`, writing one right-kernel basis vector (`A·x = 0`) per
+  output column. Rename call sites, trait implementations, and methods.
+  [#23](https://github.com/nanithefkuc/gfm/issues/23).
+- **Breaking:** `Echelon::new` takes `(cols, rhs_cols, mode)`, counts the
+  right-hand side in field elements instead of bytes, and accepts
+  `EchelonMode::Forward` or `EchelonMode::PropagateUnits` instead of a
+  `reduced` flag. `PropagateUnits` reports a sound subset of determined
+  coordinates, not RREF; use `Ple::rref_into` when every determined coordinate
+  is needed. Pass element counts, choose the mode, and keep packed `absorb`
+  buffers at `* F::BYTES` bytes.
+  [#18](https://github.com/nanithefkuc/gfm/issues/18).
+- `Hybrid` documents its answer as a particular solution: rank, consistency,
+  determinedness, and determined values match a dense solve, while
+  undetermined columns depend on the schedule. On `Err`, outputs hold no
+  valid solution. [#19](https://github.com/nanithefkuc/gfm/issues/19).
+- **Breaking:** `Ple::decompose` takes the matrix without a scratch argument
+  and owns its workspace; the `gfm::dense::PleScratch` type is removed. Drop
+  the scratch argument and type. [#20](https://github.com/nanithefkuc/gfm/issues/20).
+- **Breaking:** `Ple::redecompose_scratch` is renamed `Ple::redecompose`; its
+  closure receives a zeroed `ViewMut` instead of a `Matrix`. Rename call sites
+  and adapt the closure. [#20](https://github.com/nanithefkuc/gfm/issues/20).
+- **Breaking:** the `View` type and its operations (`Matrix::as_view`,
+  `ViewMut::as_view`, `View::split_rows`) are removed; use `ViewMut` for view
+  access. [#20](https://github.com/nanithefkuc/gfm/issues/20).
+
+### Fixed
+
+- Elimination subtracts elimination products and determinants include
+  permutation signs over odd-characteristic fields.
+  [#12](https://github.com/nanithefkuc/gfm/issues/12).
+- `Hybrid` drops explicit zero coefficients on entry instead of pivoting on
+  them. [#13](https://github.com/nanithefkuc/gfm/issues/13).
+- Consistency checks, `Echelon` dependence, `Hybrid` verification, and
+  `Matrix` equality compare decoded values, so noncanonical prime-field lanes
+  behave like the values they name.
+  [#14](https://github.com/nanithefkuc/gfm/issues/14).
+- The `parallel` row dispatcher no longer panics for lanes wider than eight
+  bytes. [#15](https://github.com/nanithefkuc/gfm/issues/15).
+- `SmallMatrix::solve_into` reports the matrix rank in `SolveError::Singular`
+  for every field width. [#16](https://github.com/nanithefkuc/gfm/issues/16).
+- `Echelon::is_pivot` and `recovered_value` panic on a column outside the
+  accumulator instead of answering for a wrapped column.
+  [#18](https://github.com/nanithefkuc/gfm/issues/18).
+
+## [1.0.2] - 2026-11-27
+
+Advisory: 1.0.0 and 1.0.1 return wrong results for the inputs below; upgrade
+to 1.0.2. No API change. [#28](https://github.com/nanithefkuc/gfm/issues/28).
+
+### Fixed
+
+- Dense, hybrid, and incremental elimination subtract elimination products
+  and determinants include permutation signs, so results hold over
+  odd-characteristic fields (`Mersenne31`, `Goldilocks`, `QuadMersenne31`).
+  Binary-field results are unchanged.
+  [#12](https://github.com/nanithefkuc/gfm/issues/12).
+- `Hybrid` drops explicit zero coefficients on entry; such equations could be
+  mis-solved or make the solve loop forever in any field.
+  [#13](https://github.com/nanithefkuc/gfm/issues/13).
+
+Release PR: [#30](https://github.com/nanithefkuc/gfm/pull/30).
+
 ## [1.0.1] - 2026-09-25
 
 ### Changed

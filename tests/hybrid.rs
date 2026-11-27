@@ -12,23 +12,25 @@
 mod common;
 
 use common::draw;
-use fgf::field::{Elem, Field};
-use fgf::{FieldKernels, Gf8B, Gf16};
+use common::{Gf8B, Gf16};
+use fgf::{Elem, FieldBuffer, FieldElem};
+use gfm::SolveError;
+use gfm::dense::{Matrix, Ple, SolveScratch};
+use gfm::hybrid::{Hybrid, SparseEquation, SparseEquationSource};
 use gfm::internals::HybridInternals;
-use gfm::{DenseRow, DenseRows, Hybrid, Matrix, Ple, PleScratch, SolveError, SolveScratch};
 
-type Equation<F> = (Vec<u32>, Vec<<F as Field>::Elem>, Vec<u8>);
-type E = <Gf8B as Field>::Elem;
+type Equation<F> = (Vec<u32>, Vec<Elem<F>>, Vec<u8>);
+type E = Elem<Gf8B>;
 
 /// A generated sparse system over `n` unknowns with `sym` symbol elements per
 /// row. Each row is `(support, coeffs, rhs)` with `rhs` packed bytes.
-struct System<F: FieldKernels> {
+struct System<F: FieldBuffer> {
     n: usize,
     sym: usize,
     rows: Vec<Equation<F>>,
 }
 
-impl<F: FieldKernels> System<F> {
+impl<F: FieldBuffer> System<F> {
     fn new(n: usize, sym: usize) -> Self {
         Self {
             n,
@@ -42,7 +44,7 @@ impl<F: FieldKernels> System<F> {
     }
 
     /// Packs a row of symbol elements to bytes.
-    fn pack(row: &[F::Elem]) -> Vec<u8> {
+    fn pack(row: &[Elem<F>]) -> Vec<u8> {
         let mut out = vec![0u8; row.len() * F::BYTES];
         for (i, &e) in row.iter().enumerate() {
             F::encode(&mut out[i * F::BYTES..(i + 1) * F::BYTES], e);
@@ -52,8 +54,8 @@ impl<F: FieldKernels> System<F> {
 
     /// Adds a row with the given coefficients, and a right-hand side induced
     /// by the true solution `x` (so the system stays consistent).
-    fn push_consistent(&mut self, support: Vec<u32>, coeffs: Vec<F::Elem>, x: &[Vec<F::Elem>]) {
-        let mut rhs = vec![F::Elem::ZERO; self.sym];
+    fn push_consistent(&mut self, support: Vec<u32>, coeffs: Vec<Elem<F>>, x: &[Vec<Elem<F>>]) {
+        let mut rhs = vec![Elem::<F>::ZERO; self.sym];
         for (&c, &co) in support.iter().zip(&coeffs) {
             for s in 0..self.sym {
                 rhs[s] = rhs[s].add(co.mul(x[c as usize][s]));
@@ -70,7 +72,7 @@ impl<F: FieldKernels> System<F> {
     fn build_hybrid_with(&self, initial_inactive: &[u32]) -> Hybrid<F> {
         let mut hybrid =
             Hybrid::<F>::with_initial_inactive(self.n, self.sym_len(), initial_inactive);
-        hybrid.extend_rows(self);
+        hybrid.extend_equations(self);
         hybrid
     }
 
@@ -88,10 +90,10 @@ impl<F: FieldKernels> System<F> {
     }
 
     /// Checks that `x` (per-column symbols) satisfies every equation.
-    fn satisfied_by(&self, value: impl Fn(usize) -> Vec<F::Elem>) -> bool {
-        let cache: Vec<Vec<F::Elem>> = (0..self.n).map(&value).collect();
+    fn satisfied_by(&self, value: impl Fn(usize) -> Vec<Elem<F>>) -> bool {
+        let cache: Vec<Vec<Elem<F>>> = (0..self.n).map(&value).collect();
         for (support, coeffs, rhs) in &self.rows {
-            let mut acc = vec![F::Elem::ZERO; self.sym];
+            let mut acc = vec![Elem::<F>::ZERO; self.sym];
             for (&c, &co) in support.iter().zip(coeffs) {
                 for s in 0..self.sym {
                     acc[s] = acc[s].add(co.mul(cache[c as usize][s]));
@@ -104,13 +106,13 @@ impl<F: FieldKernels> System<F> {
         true
     }
 }
-impl<F: FieldKernels> DenseRows<F> for System<F> {
-    fn for_each_row(&self, visit: &mut impl FnMut(DenseRow<'_, F>)) {
+impl<F: FieldBuffer> SparseEquationSource<F> for System<F> {
+    fn for_each_equation(&self, visit: &mut impl FnMut(SparseEquation<'_, F>)) {
         for (support, coeffs, rhs) in &self.rows {
             if coeffs.iter().all(|coefficient| coefficient.is_one()) {
-                visit(DenseRow::Binary { support, rhs });
+                visit(SparseEquation::Binary { support, rhs });
             } else {
-                visit(DenseRow::Field {
+                visit(SparseEquation::Field {
                     support,
                     coeffs,
                     rhs,
@@ -121,7 +123,7 @@ impl<F: FieldKernels> DenseRows<F> for System<F> {
 }
 
 /// A random true solution.
-fn random_solution<F: FieldKernels>(n: usize, sym: usize, seed: u64) -> Vec<Vec<F::Elem>> {
+fn random_solution<F: FieldBuffer>(n: usize, sym: usize, seed: u64) -> Vec<Vec<Elem<F>>> {
     let mut st = seed | 1;
     (0..n)
         .map(|_| {
@@ -190,7 +192,7 @@ fn binary_system_of(n: usize, sym: usize, supports: &[Vec<u32>], x: &[Vec<E>]) -
     system_of(n, sym, &rows, x)
 }
 
-fn read_row<F: FieldKernels>(bytes: &[u8], sym: usize) -> Vec<F::Elem> {
+fn read_row<F: FieldBuffer>(bytes: &[u8], sym: usize) -> Vec<Elem<F>> {
     (0..sym)
         .map(|s| F::decode(&bytes[s * F::BYTES..(s + 1) * F::BYTES]))
         .collect()
@@ -198,12 +200,12 @@ fn read_row<F: FieldKernels>(bytes: &[u8], sym: usize) -> Vec<F::Elem> {
 
 /// Dense-`Ple` reference: rank, consistency, solution, and the columns whose
 /// values are invariant across every solution.
-fn ple_reference<F: FieldKernels>(sys: &System<F>) -> (usize, bool, Option<Matrix<F>>, Vec<bool>) {
+fn ple_reference<F: FieldBuffer>(sys: &System<F>) -> (usize, bool, Option<Matrix<F>>, Vec<bool>) {
     let (a, b) = sys.dense();
-    let ple = Ple::decompose(a, &mut PleScratch::new());
+    let ple = Ple::decompose(a);
     let rank = ple.rank();
     let mut kernel = Matrix::<F>::zeros(sys.n, sys.n - rank).unwrap();
-    ple.kernel_into(&mut kernel);
+    ple.right_kernel_into(&mut kernel);
     let determined = (0..sys.n)
         .map(|row| kernel.row(row).iter().all(|&byte| byte == 0))
         .collect();
@@ -220,10 +222,10 @@ fn ple_reference<F: FieldKernels>(sys: &System<F>) -> (usize, bool, Option<Matri
 /// determinedness column by column, the value of every determined column —
 /// and, when the planted solution is supplied, that every determined column
 /// reads that planted value back exactly.
-fn assert_solution_matches_ple<F: FieldKernels>(
+fn assert_solution_matches_ple<F: FieldBuffer>(
     sys: &System<F>,
-    solved: &Result<gfm::Solution<F>, SolveError>,
-    planted: Option<&[Vec<F::Elem>]>,
+    solved: &Result<gfm::hybrid::Solution<F>, SolveError>,
+    planted: Option<&[Vec<Elem<F>>]>,
 ) {
     let (rank_p, consistent_p, sol_p, determined_p) = ple_reference(sys);
     match solved {
@@ -274,13 +276,13 @@ fn assert_solution_matches_ple<F: FieldKernels>(
 }
 
 /// The whole property, on one system.
-fn assert_matches_ple<F: FieldKernels>(sys: &System<F>) {
+fn assert_matches_ple<F: FieldBuffer>(sys: &System<F>) {
     assert_matches_ple_with(sys, &[])
 }
 
 /// The whole property, on one system whose `initial_inactive` columns start
 /// in the inactive set.
-fn assert_matches_ple_with<F: FieldKernels>(sys: &System<F>, initial_inactive: &[u32]) {
+fn assert_matches_ple_with<F: FieldBuffer>(sys: &System<F>, initial_inactive: &[u32]) {
     let mut hybrid = sys.build_hybrid_with(initial_inactive);
     let solved = hybrid.solve();
     assert_solution_matches_ple(sys, &solved, None);
@@ -298,7 +300,7 @@ fn random_sparse_matches_ple() {
         for _ in 0..m {
             let w = 1 + draw(&mut st, 5);
             let sup = support(n, w, &mut st);
-            sys.push_consistent(sup.clone(), vec![<Gf8B as Field>::Elem::ONE; sup.len()], &x);
+            sys.push_consistent(sup.clone(), vec![Elem::<Gf8B>::ONE; sup.len()], &x);
         }
         assert_matches_ple(&sys);
     }
@@ -315,7 +317,7 @@ fn ldpc_shaped_matches_ple() {
         let mut sys = System::<Gf8B>::new(n, sym);
         for _ in 0..(n + n / 2) {
             let sup = support(n, 3, &mut st);
-            sys.push_consistent(sup.clone(), vec![<Gf8B as Field>::Elem::ONE; sup.len()], &x);
+            sys.push_consistent(sup.clone(), vec![Elem::<Gf8B>::ONE; sup.len()], &x);
         }
         assert_matches_ple(&sys);
     }
@@ -344,12 +346,12 @@ fn stopping_set_shaped_matches_ple() {
             let mut sup = vec![a, b, outside];
             sup.sort_unstable();
             sup.dedup();
-            sys.push_consistent(sup.clone(), vec![<Gf8B as Field>::Elem::ONE; sup.len()], &x);
+            sys.push_consistent(sup.clone(), vec![Elem::<Gf8B>::ONE; sup.len()], &x);
         }
         // Plenty of light rows elsewhere for overall solvability.
         for _ in 0..n {
             let sup = support(n, 2, &mut st);
-            sys.push_consistent(sup.clone(), vec![<Gf8B as Field>::Elem::ONE; sup.len()], &x);
+            sys.push_consistent(sup.clone(), vec![Elem::<Gf8B>::ONE; sup.len()], &x);
         }
         assert_matches_ple(&sys);
     }
@@ -366,7 +368,7 @@ fn field_band_matches_ple() {
         let mut sys = System::<Gf8B>::new(n, sym);
         for _ in 0..n {
             let sup = support(n, 3, &mut st);
-            sys.push_consistent(sup.clone(), vec![<Gf8B as Field>::Elem::ONE; sup.len()], &x);
+            sys.push_consistent(sup.clone(), vec![Elem::<Gf8B>::ONE; sup.len()], &x);
         }
         // A few dense field rows over all columns.
         for _ in 0..6 {
@@ -374,7 +376,7 @@ fn field_band_matches_ple() {
             let coeffs: Vec<_> = (0..n)
                 .map(|_| {
                     let v = 1 + draw(&mut st, 255);
-                    <Gf8B as Field>::decode(&[v as u8])
+                    <Gf8B as FieldBuffer>::decode(&[v as u8])
                 })
                 .collect();
             sys.push_consistent(sup, coeffs, &x);
@@ -393,7 +395,7 @@ fn compact_dispatch_covers_max_order() {
     let sym = 2;
     let x = random_solution::<Gf8B>(n, sym, 0x64_C0FF);
     let support: Vec<u32> = (0..n as u32).collect();
-    let one = <Gf8B as Field>::Elem::ONE;
+    let one = Elem::<Gf8B>::ONE;
     let diagonal = Gf8B::decode(&[2]);
     let mut sys = System::<Gf8B>::new(n, sym);
     for row in 0..n {
@@ -418,7 +420,7 @@ fn inconsistent_systems_are_rejected() {
         let mut sys = System::<Gf8B>::new(n, sym);
         for _ in 0..(n + 5) {
             let sup = support(n, 3, &mut st);
-            sys.push_consistent(sup.clone(), vec![<Gf8B as Field>::Elem::ONE; sup.len()], &x);
+            sys.push_consistent(sup.clone(), vec![Elem::<Gf8B>::ONE; sup.len()], &x);
         }
         // Duplicate an existing row's coefficients with a corrupted RHS.
         let (sup, co, mut rhs) = sys.rows[0].clone();
@@ -439,7 +441,7 @@ fn wider_field_matches_ple() {
         for _ in 0..(n + 8) {
             let w = 1 + draw(&mut st, 4);
             let sup = support(n, w, &mut st);
-            sys.push_consistent(sup.clone(), vec![<Gf16 as Field>::Elem::ONE; sup.len()], &x);
+            sys.push_consistent(sup.clone(), vec![Elem::<Gf16>::ONE; sup.len()], &x);
         }
         assert_matches_ple(&sys);
     }
@@ -897,9 +899,9 @@ fn frozen_word_merge_matches_ple() {
     );
 }
 
-fn assert_same_solution<F: FieldKernels>(
-    left: &gfm::Solution<F>,
-    right: &gfm::Solution<F>,
+fn assert_same_solution<F: FieldBuffer>(
+    left: &gfm::hybrid::Solution<F>,
+    right: &gfm::hybrid::Solution<F>,
     n: usize,
 ) {
     assert_eq!(left.rank(), right.rank());
@@ -917,7 +919,7 @@ fn deferred_is_byte_identical_and_uses_fewer_row_ops() {
     let mut sys = System::<Gf8B>::new(n, sym);
     for column in 0..n {
         let support = vec![column as u32];
-        sys.push_consistent(support.clone(), vec![<Gf8B as Field>::Elem::ONE], &x);
+        sys.push_consistent(support.clone(), vec![Elem::<Gf8B>::ONE], &x);
     }
     // Redundant received equations: eager application updates each duplicate;
     // deferred replay omits them from the independent dense/pivot set.
@@ -926,7 +928,7 @@ fn deferred_is_byte_identical_and_uses_fewer_row_ops() {
             let other = (column + repeat + 1) % n;
             let mut support = vec![column as u32, other as u32];
             support.sort_unstable();
-            sys.push_consistent(support, vec![<Gf8B as Field>::Elem::ONE; 2], &x);
+            sys.push_consistent(support, vec![Elem::<Gf8B>::ONE; 2], &x);
         }
     }
 
@@ -948,7 +950,7 @@ fn field_band_widens_exactly_the_rows_it_touches() {
     let sym = 4;
     let x = random_solution::<Gf8B>(n, sym, 0xBADD_0001);
     let mut sys = System::<Gf8B>::new(n, sym);
-    let alpha = <Gf8B as Field>::decode(&[2]);
+    let alpha = <Gf8B as FieldBuffer>::decode(&[2]);
 
     // All field pivots precede their binary targets. Each pivot touches one
     // distinct binary row, so exactly `band` transitions are necessary.
@@ -958,7 +960,7 @@ fn field_band_widens_exactly_the_rows_it_touches() {
     for index in 0..band {
         sys.push_consistent(
             vec![(2 * index) as u32, (2 * index + 1) as u32],
-            vec![<Gf8B as Field>::Elem::ONE; 2],
+            vec![Elem::<Gf8B>::ONE; 2],
             &x,
         );
     }
@@ -989,7 +991,7 @@ fn rfc_degree_system(columns: usize, seed: u64) -> System<Gf8B> {
         let support = support(columns, degree, &mut state);
         system.rows.push((
             support.clone(),
-            vec![<Gf8B as Field>::Elem::ONE; support.len()],
+            vec![Elem::<Gf8B>::ONE; support.len()],
             vec![0],
         ));
     }
@@ -1045,13 +1047,13 @@ fn initial_inactive_matches_ple() {
             let w = 1 + draw(&mut st, 5);
             let sup = support(n, w, &mut st);
             if draw(&mut st, 4) == 0 {
-                let coeffs: Vec<<Gf8B as Field>::Elem> = sup
+                let coeffs: Vec<Elem<Gf8B>> = sup
                     .iter()
-                    .map(|_| <Gf8B as Field>::decode(&[(1 + draw(&mut st, 255)) as u8]))
+                    .map(|_| <Gf8B as FieldBuffer>::decode(&[(1 + draw(&mut st, 255)) as u8]))
                     .collect();
                 sys.push_consistent(sup, coeffs, &x);
             } else {
-                sys.push_consistent(sup.clone(), vec![<Gf8B as Field>::Elem::ONE; sup.len()], &x);
+                sys.push_consistent(sup.clone(), vec![Elem::<Gf8B>::ONE; sup.len()], &x);
             }
         }
         let initial = subset(n, draw(&mut st, n + 1), &mut st);
@@ -1072,7 +1074,7 @@ fn all_initially_inactive_matches_ple() {
         for _ in 0..(n + 3) {
             let w = 1 + draw(&mut st, 4);
             let sup = support(n, w, &mut st);
-            sys.push_consistent(sup.clone(), vec![<Gf8B as Field>::Elem::ONE; sup.len()], &x);
+            sys.push_consistent(sup.clone(), vec![Elem::<Gf8B>::ONE; sup.len()], &x);
         }
         let initial: Vec<u32> = (0..n as u32).collect();
         assert_matches_ple_with(&sys, &initial);
@@ -1088,14 +1090,14 @@ fn initial_inactive_inconsistent_systems_are_rejected() {
         let x = random_solution::<Gf8B>(n, sym, seed);
         let mut sys = System::<Gf8B>::new(n, sym);
         for column in 0..n {
-            sys.push_consistent(vec![column as u32], vec![<Gf8B as Field>::Elem::ONE], &x);
+            sys.push_consistent(vec![column as u32], vec![Elem::<Gf8B>::ONE], &x);
         }
         // The identity rows force a unique solution; a unit row on column 0
         // with a flipped payload makes the system inconsistent.
         sys.rows.push((
             vec![0],
-            vec![<Gf8B as Field>::Elem::ONE],
-            System::<Gf8B>::pack(&[x[0][0].add(<Gf8B as Field>::Elem::ONE)]),
+            vec![Elem::<Gf8B>::ONE],
+            System::<Gf8B>::pack(&[x[0][0].add(Elem::<Gf8B>::ONE)]),
         ));
         let initial = subset(n, draw(&mut st, n), &mut st);
         let mut hybrid = sys.build_hybrid_with(&initial);
@@ -1134,11 +1136,11 @@ fn initial_inactive_set_is_counted_once_and_stable_across_solves() {
     let x = random_solution::<Gf8B>(n, sym, 0x0517_0002);
     let mut sys = System::<Gf8B>::new(n, sym);
     for column in 0..n {
-        sys.push_consistent(vec![column as u32], vec![<Gf8B as Field>::Elem::ONE], &x);
+        sys.push_consistent(vec![column as u32], vec![Elem::<Gf8B>::ONE], &x);
     }
     for _ in 0..n {
         let sup = support(n, 3, &mut st);
-        sys.push_consistent(sup.clone(), vec![<Gf8B as Field>::Elem::ONE; sup.len()], &x);
+        sys.push_consistent(sup.clone(), vec![Elem::<Gf8B>::ONE; sup.len()], &x);
     }
     let initial: Vec<u32> = (30..n as u32).collect();
     let mut hybrid = sys.build_hybrid_with(&initial);
@@ -1165,14 +1167,14 @@ fn rfc_shaped_system(columns: usize, band: usize, seed: u64) -> System<Gf8B> {
         let support = support(lt_columns, degree, &mut state);
         system.rows.push((
             support.clone(),
-            vec![<Gf8B as Field>::Elem::ONE; support.len()],
+            vec![Elem::<Gf8B>::ONE; support.len()],
             vec![0],
         ));
     }
-    let alpha = <Gf8B as Field>::decode(&[2]);
+    let alpha = <Gf8B as FieldBuffer>::decode(&[2]);
     for index in 0..band {
         let support: Vec<u32> = ((lt_columns + index)..columns).map(|c| c as u32).collect();
-        let mut coefficient = <Gf8B as Field>::Elem::ONE;
+        let mut coefficient = Elem::<Gf8B>::ONE;
         let coeffs: Vec<_> = support
             .iter()
             .map(|_| {
@@ -1328,7 +1330,7 @@ fn dense_band_system(
     n: usize,
     band: usize,
     seed: u64,
-) -> (System<Gf8B>, Vec<u32>, Vec<Vec<<Gf8B as Field>::Elem>>) {
+) -> (System<Gf8B>, Vec<u32>, Vec<Vec<Elem<Gf8B>>>) {
     let mut state = seed | 1;
     let mut x = Vec::with_capacity(n);
     for _ in 0..n {
@@ -1337,7 +1339,7 @@ fn dense_band_system(
             state = state
                 .wrapping_mul(6_364_136_223_846_793_005)
                 .wrapping_add(1);
-            row.push(<Gf8B as Field>::decode(&[(state >> 33) as u8]));
+            row.push(<Gf8B as FieldBuffer>::decode(&[(state >> 33) as u8]));
         }
         x.push(row);
     }
@@ -1345,7 +1347,7 @@ fn dense_band_system(
     for _ in 0..(n + 4) {
         let w = 1 + draw(&mut state, 4);
         let sup = support(n - band, w, &mut state);
-        sys.push_consistent(sup.clone(), vec![<Gf8B as Field>::Elem::ONE; sup.len()], &x);
+        sys.push_consistent(sup.clone(), vec![Elem::<Gf8B>::ONE; sup.len()], &x);
     }
     for _ in 0..band {
         let sup: Vec<u32> = (0..n as u32).collect();
@@ -1354,7 +1356,7 @@ fn dense_band_system(
                 state = state
                     .wrapping_mul(6_364_136_223_846_793_005)
                     .wrapping_add(1);
-                <Gf8B as Field>::decode(&[1 + (state >> 33) as u8 % 255])
+                <Gf8B as FieldBuffer>::decode(&[1 + (state >> 33) as u8 % 255])
             })
             .collect();
         sys.push_consistent(sup, coeffs, &x);
@@ -1403,13 +1405,13 @@ fn deferred_dense_band_inconsistent_is_rejected() {
     // poisoned payload contradicts it, and the post-release
     // verification must catch the inconsistency.
     for column in 0..sys.n {
-        sys.push_consistent(vec![column as u32], vec![<Gf8B as Field>::Elem::ONE], &x);
+        sys.push_consistent(vec![column as u32], vec![Elem::<Gf8B>::ONE], &x);
     }
     let mut poisoned = vec![0u8; sys.sym_len()];
     poisoned[0] ^= 1;
     sys.rows.push((
         (0..sys.n as u32).collect(),
-        vec![<Gf8B as Field>::Elem::ONE; sys.n],
+        vec![Elem::<Gf8B>::ONE; sys.n],
         poisoned,
     ));
     let mut hybrid = build_hybrid_deferring(&sys, 1, &initial);
@@ -1621,4 +1623,51 @@ fn narrow_binary_system_merges_through_the_packed_xor_path() {
     }
     let solved = hybrid.solve();
     assert_solution_matches_ple(&system_of(n, sym, &rows, &x), &solved, Some(&x));
+}
+
+/// Pushes `rows` (support, coefficients, one-byte payload) eagerly, deferred,
+/// or through the `SparseEquationSource` seam.
+fn zero_coefficient_hybrid(rows: &[(&[u32], &[u8], u8)], ingress: usize) -> Hybrid<Gf8B> {
+    let mut hybrid = Hybrid::<Gf8B>::new(2, 1);
+    let mut sys = System::<Gf8B>::new(2, 1);
+    for &(support, coeffs, rhs) in rows {
+        let coeffs: Vec<E> = coeffs.iter().map(|&c| E::from_raw(c)).collect();
+        match ingress {
+            0 => hybrid.push_field_row(support, &coeffs, &[rhs]),
+            1 => hybrid.push_deferred_field_row(support, &coeffs, &[rhs]),
+            _ => sys.rows.push((support.to_vec(), coeffs, vec![rhs])),
+        }
+    }
+    if ingress == 2 {
+        hybrid.extend_equations(&sys);
+    }
+    hybrid
+}
+
+#[test]
+fn zero_coefficients_never_pivot() {
+    for ingress in 0..3 {
+        // `0 · x0 = 5` has no solution.
+        let mut hybrid = zero_coefficient_hybrid(&[(&[0], &[0], 5)], ingress);
+        assert!(matches!(
+            hybrid.solve(),
+            Err(SolveError::Inconsistent { .. })
+        ));
+
+        // `0 · x0 + x1 = 3` determines x1 alone.
+        let mut hybrid = zero_coefficient_hybrid(&[(&[0, 1], &[0, 1], 3)], ingress);
+        let solution = hybrid.solve().unwrap();
+        assert_eq!(solution.rank(), 1);
+        assert!(!solution.is_determined(0));
+        assert!(solution.is_determined(1));
+        assert_eq!(solution.value(1), &[3]);
+
+        // Adding `x0 = 9` completes the system.
+        let mut hybrid =
+            zero_coefficient_hybrid(&[(&[0, 1], &[0, 1], 3), (&[0], &[1], 9)], ingress);
+        let solution = hybrid.solve().unwrap();
+        assert_eq!(solution.rank(), 2);
+        assert_eq!(solution.value(0), &[9]);
+        assert_eq!(solution.value(1), &[3]);
+    }
 }

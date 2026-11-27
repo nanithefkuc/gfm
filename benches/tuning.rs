@@ -6,11 +6,12 @@ use core::hint::black_box;
 use std::time::Duration;
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
-use fgf::field::Field;
-use fgf::{FieldKernels, Gf8B, Gf16};
-use gfm::bits::{Ple as BitPle, PleScratch as BitPleScratch};
+use fgf::{Elem, FieldBuffer};
+type Gf8B = fgf::FiniteField<2, 8, fgf::binary::Polynomial<{ fgf::binary::AES }>>;
+type Gf16 = fgf::FiniteField<2, 16, fgf::extension::Extension<fgf::binary::Rijndael16, 2>>;
+use gfm::bits::{BitMatrix, Ple as BitPle, PleScratch as BitPleScratch};
+use gfm::dense::{Matrix, Ple, SmallMatrix, SolveScratch};
 use gfm::internals::{BitPleInternals, PleInternals};
-use gfm::{BitMatrix, Matrix, Ple, PleScratch, SmallMatrix, SolveScratch};
 
 fn next(state: &mut u64) -> u64 {
     *state = state
@@ -19,11 +20,11 @@ fn next(state: &mut u64) -> u64 {
     *state
 }
 
-fn dense_matrix<F: FieldKernels>(n: usize, seed: u64) -> Matrix<F> {
+fn dense_matrix<F: FieldBuffer>(n: usize, seed: u64) -> Matrix<F> {
     dense_rect::<F>(n, n, seed)
 }
 
-fn dense_rect<F: FieldKernels>(rows: usize, cols: usize, seed: u64) -> Matrix<F> {
+fn dense_rect<F: FieldBuffer>(rows: usize, cols: usize, seed: u64) -> Matrix<F> {
     let mut state = seed;
     let mut matrix = Matrix::<F>::zeros(rows, cols).unwrap();
     for row in 0..rows {
@@ -46,29 +47,25 @@ fn bit_matrix(n: usize, seed: u64) -> BitMatrix {
     matrix
 }
 
-fn bench_dense<F: FieldKernels>(c: &mut Criterion) {
+fn bench_dense<F: FieldBuffer>(c: &mut Criterion) {
     let mut group = c.benchmark_group(format!("dense_dispatch_{}", F::NAME));
     group.sample_size(10);
     group.measurement_time(Duration::from_secs(3));
     for n in [32usize, 64, 128, 256] {
         let matrix = dense_matrix::<F>(n, 0xD15A ^ n as u64);
         group.bench_with_input(BenchmarkId::new("axpy", n), &n, |b, _| {
-            let mut scratch = PleScratch::new();
             b.iter(|| {
                 black_box(Ple::decompose_with_panel_width(
                     black_box(matrix.clone()),
-                    &mut scratch,
                     1,
                 ));
             });
         });
         for (name, width) in [("blocked_8", 8), ("blocked_16", 16), ("blocked_64", 64)] {
             group.bench_with_input(BenchmarkId::new(name, n), &n, |b, _| {
-                let mut scratch = PleScratch::new();
                 b.iter(|| {
                     black_box(Ple::decompose_with_panel_width(
                         black_box(matrix.clone()),
-                        &mut scratch,
                         width,
                     ));
                 });
@@ -78,11 +75,9 @@ fn bench_dense<F: FieldKernels>(c: &mut Criterion) {
     let control = dense_matrix::<F>(128, 0xC017);
     for name in ["control_a", "control_b"] {
         group.bench_function(name, |b| {
-            let mut scratch = PleScratch::new();
             b.iter(|| {
                 black_box(Ple::decompose_with_panel_width(
                     black_box(control.clone()),
-                    &mut scratch,
                     1,
                 ));
             });
@@ -118,38 +113,13 @@ fn bench_bits(c: &mut Criterion) {
     }
     group.finish();
 }
-fn bench_newton_john(c: &mut Criterion) {
-    let mut group = c.benchmark_group("dense_newton_john");
-    group.sample_size(10);
-    group.measurement_time(Duration::from_secs(3));
-    for n in [128usize, 256, 512, 1024] {
-        let matrix = dense_matrix::<Gf8B>(n, 0x4E4A ^ n as u64);
-        group.bench_with_input(BenchmarkId::new("blocked", n), &n, |b, _| {
-            let mut scratch = PleScratch::new();
-            b.iter(|| {
-                black_box(Ple::decompose(black_box(matrix.clone()), &mut scratch));
-            });
-        });
-        group.bench_with_input(BenchmarkId::new("newton_john", n), &n, |b, _| {
-            let mut scratch = PleScratch::new();
-            b.iter(|| {
-                black_box(Ple::decompose_newton_john(
-                    black_box(matrix.clone()),
-                    &mut scratch,
-                ));
-            });
-        });
-    }
-    group.finish();
-}
-
 fn full_rank_gf8<const K: usize>() -> Matrix<Gf8B> {
     let mut state = 0x5A11 ^ K as u64;
-    let mut lower = [[<Gf8B as Field>::Elem::ZERO; K]; K];
+    let mut lower = [[Elem::<Gf8B>::ZERO; K]; K];
     let mut upper = lower;
     for row in 0..K {
-        lower[row][row] = <Gf8B as Field>::Elem::ONE;
-        upper[row][row] = <Gf8B as Field>::Elem::ONE;
+        lower[row][row] = Elem::<Gf8B>::ONE;
+        upper[row][row] = Elem::<Gf8B>::ONE;
         for col in 0..row {
             lower[row][col] = Gf8B::decode(&[(next(&mut state) >> 56) as u8]);
         }
@@ -160,7 +130,7 @@ fn full_rank_gf8<const K: usize>() -> Matrix<Gf8B> {
     let mut matrix = Matrix::<Gf8B>::zeros(K, K).unwrap();
     for row in 0..K {
         for col in 0..K {
-            let mut value = <Gf8B as Field>::Elem::ZERO;
+            let mut value = Elem::<Gf8B>::ZERO;
             for term in 0..K {
                 value = value.add(lower[row][term].mul(upper[term][col]));
             }
@@ -191,10 +161,9 @@ fn bench_small_order<const K: usize>(
         });
     });
     group.bench_with_input(BenchmarkId::new("ple", K), &K, |b, _| {
-        let mut ple_scratch = PleScratch::new();
         let mut solve_scratch = SolveScratch::new();
         b.iter(|| {
-            let ple = Ple::decompose(black_box(matrix.clone()), &mut ple_scratch);
+            let ple = Ple::decompose(black_box(matrix.clone()));
             ple.solve_into(black_box(&rhs), black_box(&mut out), &mut solve_scratch)
                 .unwrap();
             black_box(&out);
@@ -226,7 +195,6 @@ fn bench_small(c: &mut Criterion) {
 fn benchmarks(c: &mut Criterion) {
     bench_dense::<Gf8B>(c);
     bench_dense::<Gf16>(c);
-    bench_newton_john(c);
     bench_bits(c);
     bench_small(c);
 }

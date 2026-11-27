@@ -1,12 +1,15 @@
-//! gfm — Galois Field Math: dense, bit-packed, and hybrid sparse/dense
-//! linear algebra over GF(2) and GF(2^m).
+//! gfm — Galois Field Math: matrices and linear systems over the finite
+//! fields of `fgf`. Dense matrices hold over every field `fgf` packs into
+//! byte lanes (`fgf::FieldBuffer`); bit-packed matrices cover GF(2).
 //!
 //! > `gfm` is a solver, not a codec. Field arithmetic and byte-buffer vector
 //! > primitives come from `fgf` — never re-implement them here. Sparse graph
-//! > topology, Tanner-graph generation, and peeling belong to `fgraph`. Wire
-//! > formats, shard ownership, rate adaptation, degree distributions, and
-//! > codec shells belong to consumers. This crate receives a matrix and
-//! > returns facts about it.
+//! > topology, Tanner-graph generation, and peeling over a graph as symbols
+//! > arrive belong to `fgraph`; `hybrid`'s weight-one pivot rule is an
+//! > elimination order inside this crate's solve. Wire formats, shard
+//! > ownership, rate adaptation, degree distributions, and codec shells
+//! > belong to consumers. This crate receives a matrix and returns facts
+//! > about it.
 
 #![cfg_attr(not(feature = "std"), no_std)]
 #![forbid(unsafe_code)]
@@ -20,25 +23,16 @@
 
 extern crate alloc;
 
-pub mod backend;
 pub mod bits;
+mod blocking;
 pub mod dense;
 mod error;
 pub mod hybrid;
 pub mod incremental;
 // Compiled in every feature set; public reachability comes from `internals`.
-#[allow(dead_code)]
-mod internal_api;
+mod inspection;
 #[cfg(feature = "internals")]
 pub mod internals;
 mod row_ops;
 
-pub use backend::{Backend, backend_for};
-pub use bits::BitMatrix;
-pub use dense::{
-    Matrix, Perm, Ple, PleScratch, SmallMatrix, SolveScratch, View, ViewMut, mul_add, mul_into,
-    solve_lower_unit_assign, solve_upper_assign,
-};
 pub use error::{GeometryError, SolveError};
-pub use hybrid::{DenseRow, DenseRows, Hybrid, Solution, SolveStats};
-pub use incremental::{Echelon, Innovation, RetainedRow};

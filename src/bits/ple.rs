@@ -1,34 +1,33 @@
 //! `Ple` over GF(2) — the bit domain's single elimination.
 //!
-//! Structurally the twin of [`crate::dense::Ple`]: the same `A = P·L·U·Q`
+//! Structurally the twin of [`crate::dense::Ple`]: the same `P·A·Q = L·U`
 //! decomposition, the same pivot order (leftmost available column, first
 //! nonzero row), the same panel-blocked schedule with a locally shrinking
 //! window on rank-deficient slabs, and therefore the same `lu`, `p`, `q`,
-//! and rank profiles. Only the inner loop differs (I8): a bit is one bit,
-//! a pivot is always one, no coefficient exists, and the elimination of a
-//! column is a masked range XOR of the pivot row through [`fgf::bits`] —
-//! no AXPY, no normalization, because the only nonzero element is one.
-//!
-//! No Method-of-the-Four-Russians slab tables yet: that acceleration keeps
-//! the same answer and lands later, gated on measurement.
+//! and rank profiles. Only the inner loop differs: a bit is one bit, a pivot
+//! is always one, no coefficient exists, and the elimination of a column is
+//! a masked range XOR of the pivot row through [`fgf::ops::bits`] — no AXPY,
+//! no normalization, because the only nonzero element is one. Wide
+//! trailing updates combine slabs of pivot rows through Method of the Four
+//! Russians tables, which leave the result unchanged.
 
 use alloc::vec::Vec;
 use core::fmt;
 
-use fgf::bits;
+use fgf::ops::bits;
 
 use crate::bits::BitMatrix;
 use crate::dense::Perm;
 
 /// A slab of pivots forms one M4RI combination table, amortizing the
 /// trailing update over the slab. The plain update reads its per-row
-/// selector in one masked byte-window load through `fgf::bits::XorRange`,
+/// selector in one masked byte-window load through `fgf::ops::bits::XorRange`,
 /// which places the crossover at [`M4RI_CROSSOVER`]; the boundary
 /// measurements are recorded in `BENCHMARKS.md`.
 const SLAB_WIDTH: usize = 8;
 const M4RI_CROSSOVER: usize = 224;
 
-/// A rank-revealing `A = P·L·U·Q` decomposition over GF(2).
+/// A rank-revealing `P·A·Q = L·U` decomposition over GF(2).
 ///
 /// The decomposed matrix had shape `m × n`; `rank() <= min(m, n)`. Rank
 /// deficiency is normal, not an error.
@@ -194,10 +193,12 @@ impl Ple {
         self.lu.cols()
     }
 
-    /// The row rank profile: the lexicographically smallest set of
-    /// independent row indices, ascending.
+    /// The rows holding the factorization's pivots, ascending: `rank()`
+    /// independent row indices of the decomposed matrix. This is the pivot
+    /// set the elimination chose, not necessarily the lexicographically
+    /// smallest independent row set.
     #[must_use]
-    pub fn row_rank_profile(&self) -> &[usize] {
+    pub fn pivot_rows(&self) -> &[usize] {
         &self.row_profile
     }
 
@@ -263,7 +264,7 @@ fn factor_panel(
         for row in (piv + 1)..rows {
             if mat.get(row, piv) {
                 let (row_dst, row_src) = mat.two_live_rows(row, piv);
-                bits::xor_range_with(row_dst, row_src, &plan);
+                bits::xor_range_with(row_dst, &plan, row_src);
             }
         }
         piv += 1;
@@ -281,7 +282,7 @@ fn factor_panel(
 /// column bitmap, with a zero column costing no per-row scan. Wider
 /// windows (custom panel widths through `internals`) fall back to a
 /// word-wise accumulation. Either way this is control flow over gfm's own
-/// geometry, not arithmetic: the row XORs themselves are [`fgf::bits`]
+/// geometry, not arithmetic: the row XORs themselves are [`fgf::ops::bits`]
 /// kernels.
 fn locate_pivot(
     mat: &BitMatrix,
@@ -407,7 +408,7 @@ fn bulk_update(
         for src in frontier..row {
             if mat.get(row, src) {
                 let (row_dst, row_src) = mat.two_live_rows(row, src);
-                bits::xor_range_with(row_dst, row_src, &plan);
+                bits::xor_range_with(row_dst, &plan, row_src);
             }
         }
     }
@@ -434,7 +435,7 @@ fn update_trailing_plain(
             while key != 0 {
                 let src = base + key.trailing_zeros() as usize;
                 let (row_dst, row_src) = mat.two_live_rows(row, src);
-                bits::xor_range_with(row_dst, row_src, plan);
+                bits::xor_range_with(row_dst, plan, row_src);
                 key &= key - 1;
             }
             base += width;
@@ -468,8 +469,8 @@ fn update_trailing_m4ri(
         let pivot = mat.row(frontier + changed);
         bits::xor_range_with(
             &mut scratch.table[gray * live_bytes..(gray + 1) * live_bytes],
-            pivot,
             plan,
+            pivot,
         );
         previous_gray = gray;
     }
@@ -477,7 +478,7 @@ fn update_trailing_m4ri(
         let key = mat.row_selector(row, frontier, pivots) as usize;
         if key != 0 {
             let table_row = &scratch.table[key * live_bytes..(key + 1) * live_bytes];
-            bits::xor_range_with(mat.live_row_mut(row), table_row, plan);
+            bits::xor_range_with(mat.live_row_mut(row), plan, table_row);
         }
     }
 }

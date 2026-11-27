@@ -1,19 +1,23 @@
 //! The derived queries: every one a reader of a cached [`Ple`], none an
 //! elimination of its own (the one-elimination invariant).
 //!
-//! With `A = P·L·U·Q`, `P·A·Q = L·U`, and all arithmetic in characteristic
-//! two:
+//! With `P·A·Q = L·U`, where `P` and `Q` apply the recorded row and column
+//! exchanges:
 //!
-//! - `det` is the product of `U`'s diagonal — the permutation signs are
-//!   always one in characteristic two, and the product is zero exactly when
-//!   the rank is short of the order;
+//! - `det` is the permutation-sign product `sign(P)·sign(Q)` times the
+//!   product of `U`'s diagonal — the signs are one in characteristic two,
+//!   and the product is zero exactly when the rank is short of the order;
 //! - a solve is `x = Q·U⁻¹·L⁻¹·P·b`: permute, forward-substitute the unit
 //!   triangle, check the tail for consistency, back-substitute, permute;
 //! - an inverse is the same pipeline applied to the identity;
 //! - the kernel basis lives at the free column positions of the permuted
 //!   system, back-substituted through `U`, then un-permuted.
+//!
+//! The substitutions add the negated elimination factors, so every result
+//! holds over any `fgf` field; in characteristic two negation is the
+//! identity and the arithmetic is the XOR the binary fields share.
 
-use fgf::{FieldKernels, field::Elem, ops};
+use fgf::{Elem, FieldBuffer, FieldElem, ops};
 
 use crate::SolveError;
 use crate::dense::{Matrix, Ple};
@@ -22,11 +26,11 @@ use crate::dense::{Matrix, Ple};
 ///
 /// Holds the eliminated right-hand side (`m × s`). Grow-only: solving
 /// repeatedly with the same shape allocates nothing.
-pub struct SolveScratch<F: FieldKernels> {
+pub struct SolveScratch<F: FieldBuffer> {
     ws: Option<Matrix<F>>,
 }
 
-impl<F: FieldKernels> SolveScratch<F> {
+impl<F: FieldBuffer> SolveScratch<F> {
     /// An empty scratch.
     #[must_use]
     pub const fn new() -> Self {
@@ -48,36 +52,39 @@ impl<F: FieldKernels> SolveScratch<F> {
     }
 }
 
-impl<F: FieldKernels> Default for SolveScratch<F> {
+impl<F: FieldBuffer> Default for SolveScratch<F> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<F: FieldKernels> core::fmt::Debug for SolveScratch<F> {
+impl<F: FieldBuffer> core::fmt::Debug for SolveScratch<F> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("SolveScratch").finish_non_exhaustive()
     }
 }
 
-impl<F: FieldKernels> Ple<F> {
-    /// The determinant: the product of `U`'s diagonal for a full-rank square
-    /// matrix, zero otherwise. Permutation signs are one in characteristic
-    /// two, so neither permutation contributes a factor.
+impl<F: FieldBuffer> Ple<F> {
+    /// The determinant: the permutation signs times the product of `U`'s
+    /// diagonal for a full-rank square matrix, zero otherwise. In
+    /// characteristic two the signs are one and drop out.
     ///
     /// # Panics
     ///
     /// Panics if the decomposed matrix is not square.
     #[must_use]
-    pub fn det(&self) -> F::Elem {
+    pub fn det(&self) -> Elem<F> {
         assert_eq!(self.rows(), self.cols(), "det requires a square matrix");
         if self.rank() < self.rows() {
-            return F::Elem::ZERO;
+            return Elem::<F>::ZERO;
         }
-        let mut d = F::Elem::ONE;
+        let mut d = Elem::<F>::ONE;
         let lu = self.lu_matrix();
         for k in 0..self.rank() {
             d = d.mul(lu.get(k, k));
+        }
+        if self.p_perm().parity() != self.q_perm().parity() {
+            d = d.neg();
         }
         d
     }
@@ -126,13 +133,13 @@ impl<F: FieldKernels> Ple<F> {
                     continue;
                 }
                 let (row_dst, row_src) = out.two_live_rows(row, piv);
-                crate::row_ops::mul_add::<F>(row_dst, factor, row_src);
+                crate::row_ops::mul_add::<F>(row_dst, factor.neg(), row_src);
             }
         }
     }
 
-    /// A basis of the right kernel, written into `out` (`n × (n - rank)`),
-    /// one basis vector per column.
+    /// A basis of the right kernel `A·x = 0`, written into `out`
+    /// (`n × (n - rank)`), one basis vector per output column.
     ///
     /// Basis column `j` corresponds to the `(rank + j)`-th column of the
     /// permuted system: it has a one at the original index of that column
@@ -142,7 +149,7 @@ impl<F: FieldKernels> Ple<F> {
     /// # Panics
     ///
     /// Panics unless `out` is `n × (n - rank)`.
-    pub fn kernel_into(&self, out: &mut Matrix<F>) {
+    pub fn right_kernel_into(&self, out: &mut Matrix<F>) {
         let (cols, rank) = (self.cols(), self.rank());
         assert_eq!(
             (out.rows(), out.cols()),
@@ -166,9 +173,9 @@ impl<F: FieldKernels> Ple<F> {
                     acc = acc.add(lu.get(piv, term).mul(already));
                 }
                 let pivot = lu.get(piv, piv);
-                out.set(piv, col, acc.mul(pivot.inv()));
+                out.set(piv, col, acc.neg().mul(pivot.inv()));
             }
-            out.set(free, col, F::Elem::ONE);
+            out.set(free, col, Elem::<F>::ONE);
         }
         // x = Q·z: un-permute the solution entries, one row permutation for
         // the whole basis matrix.
@@ -217,12 +224,12 @@ impl<F: FieldKernels> Ple<F> {
                     continue;
                 }
                 let (row_dst, row_src) = ws.two_live_rows(row, src);
-                crate::row_ops::mul_add::<F>(row_dst, factor, row_src);
+                crate::row_ops::mul_add::<F>(row_dst, factor.neg(), row_src);
             }
         }
         // Consistency: the eliminated tail rows must vanish on the right too.
         for row in rank..rows {
-            if ws.row(row).iter().any(|&v| v != 0) {
+            if !crate::row_ops::is_zero::<F>(ws.row(row)) {
                 return Err(SolveError::Inconsistent { row });
             }
         }
@@ -238,7 +245,7 @@ impl<F: FieldKernels> Ple<F> {
                     continue;
                 }
                 let (row_dst, row_src) = out.two_live_rows(piv, term);
-                crate::row_ops::mul_add::<F>(row_dst, factor, row_src);
+                crate::row_ops::mul_add::<F>(row_dst, factor.neg(), row_src);
             }
             let pivot = lu.get(piv, piv);
             if !pivot.is_one() {
@@ -276,7 +283,7 @@ impl<F: FieldKernels> Ple<F> {
         // out := I, then X = Q·U⁻¹·L⁻¹·P applied in place.
         for row in 0..order {
             out.row_mut(row).fill(0);
-            out.set(row, row, F::Elem::ONE);
+            out.set(row, row, Elem::<F>::ONE);
         }
         out.apply_row_perm(self.p_perm())
             .expect("row count matches by construction");
@@ -287,7 +294,7 @@ impl<F: FieldKernels> Ple<F> {
                     continue;
                 }
                 let (row_dst, row_src) = out.two_live_rows(row, src);
-                crate::row_ops::mul_add::<F>(row_dst, factor, row_src);
+                crate::row_ops::mul_add::<F>(row_dst, factor.neg(), row_src);
             }
         }
         for piv in (0..order).rev() {
@@ -297,7 +304,7 @@ impl<F: FieldKernels> Ple<F> {
                     continue;
                 }
                 let (row_dst, row_src) = out.two_live_rows(piv, term);
-                crate::row_ops::mul_add::<F>(row_dst, factor, row_src);
+                crate::row_ops::mul_add::<F>(row_dst, factor.neg(), row_src);
             }
             let pivot = lu.get(piv, piv);
             if !pivot.is_one() {

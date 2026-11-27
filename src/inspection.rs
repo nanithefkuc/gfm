@@ -1,16 +1,17 @@
-//! Unstable extension traits re-exported by the `internals` facade.
+//! Implementation inspection re-exported by the `internals` facade.
 
-use fgf::FieldKernels;
+use fgf::FieldBuffer;
 
 use crate::SolveError;
 use crate::bits::{BitMatrix, Ple as BitPle, PleScratch as BitPleScratch};
-use crate::dense::{Matrix, Perm, Ple, PleScratch};
+use crate::dense::{Matrix, Perm, Ple};
 use crate::hybrid::{Hybrid, Solution, SolveStats};
 
-/// Physical-layout inspection of a GF(2^m) matrix.
+/// Physical-layout inspection of a packed-element matrix.
+#[allow(dead_code)] // Reached through the `internals` facade.
 pub trait MatrixInternals {
     /// Address of the first byte of the physical backing region. A multiple
-    /// of [`crate::dense::layout::ALIGN`] by construction.
+    /// of [`crate::dense::ALIGN`] by construction.
     fn base_addr(&self) -> usize;
 
     /// The physical row logical row `row` maps to.
@@ -25,7 +26,8 @@ pub trait MatrixInternals {
     fn pitched_buffer(&self) -> &[u8];
 }
 
-impl<F: FieldKernels> MatrixInternals for Matrix<F> {
+#[allow(dead_code)] // Reached through the `internals` facade.
+impl<F: FieldBuffer> MatrixInternals for Matrix<F> {
     fn base_addr(&self) -> usize {
         Matrix::base_addr(self)
     }
@@ -40,6 +42,7 @@ impl<F: FieldKernels> MatrixInternals for Matrix<F> {
 }
 
 /// Physical-layout inspection of a bit-packed GF(2) matrix.
+#[allow(dead_code)] // Reached through the `internals` facade.
 pub trait BitMatrixInternals {
     /// Address of the first byte of the physical backing region. A multiple
     /// of [`crate::bits::ALIGN`] by construction.
@@ -57,6 +60,7 @@ pub trait BitMatrixInternals {
     fn pitched_buffer(&self) -> &[u8];
 }
 
+#[allow(dead_code)] // Reached through the `internals` facade.
 impl BitMatrixInternals for BitMatrix {
     fn base_addr(&self) -> usize {
         BitMatrix::base_addr(self)
@@ -71,9 +75,9 @@ impl BitMatrixInternals for BitMatrix {
     }
 }
 
-/// Decomposition storage and the trailing-update candidates of the GF(2^m)
-/// elimination.
-pub trait PleInternals<F: FieldKernels> {
+/// Decomposition storage of the packed elimination.
+#[allow(dead_code)] // Reached through the `internals` facade.
+pub trait PleInternals<F: FieldBuffer> {
     /// The in-place `L`/`U` storage: factors below the diagonal, `U` on and
     /// above it, in the eliminated row and column order.
     fn lu(&self) -> &Matrix<F>;
@@ -86,22 +90,11 @@ pub trait PleInternals<F: FieldKernels> {
 
     /// Decomposes with an explicit panel width. The result is independent of
     /// the width, byte for byte.
-    fn decompose_with_panel_width(
-        a: Matrix<F>,
-        scratch: &mut PleScratch<F>,
-        panel_width: usize,
-    ) -> Self;
-
-    /// Decomposes with the Newton–John trailing-update candidate instead of
-    /// the dispatched one.
-    ///
-    /// # Panics
-    ///
-    /// Panics unless field elements occupy one byte.
-    fn decompose_newton_john(a: Matrix<F>, scratch: &mut PleScratch<F>) -> Self;
+    fn decompose_with_panel_width(a: Matrix<F>, panel_width: usize) -> Self;
 }
 
-impl<F: FieldKernels> PleInternals<F> for Ple<F> {
+#[allow(dead_code)] // Reached through the `internals` facade.
+impl<F: FieldBuffer> PleInternals<F> for Ple<F> {
     fn lu(&self) -> &Matrix<F> {
         self.lu_matrix()
     }
@@ -114,21 +107,14 @@ impl<F: FieldKernels> PleInternals<F> for Ple<F> {
         self.q_perm()
     }
 
-    fn decompose_with_panel_width(
-        a: Matrix<F>,
-        scratch: &mut PleScratch<F>,
-        panel_width: usize,
-    ) -> Self {
-        Ple::decompose_with_panel_width(a, scratch, panel_width)
-    }
-
-    fn decompose_newton_john(a: Matrix<F>, scratch: &mut PleScratch<F>) -> Self {
-        Ple::decompose_newton_john(a, scratch)
+    fn decompose_with_panel_width(a: Matrix<F>, panel_width: usize) -> Self {
+        Ple::decompose_with_panel_width(a, panel_width)
     }
 }
 
 /// Decomposition storage and the trailing-update candidates of the GF(2)
 /// elimination.
+#[allow(dead_code)] // Reached through the `internals` facade.
 pub trait BitPleInternals {
     /// The in-place `L`/`U` storage: factors below the diagonal, `U` on and
     /// above it, in the eliminated row and column order.
@@ -157,6 +143,7 @@ pub trait BitPleInternals {
     fn decompose_m4ri(a: BitMatrix, scratch: &mut BitPleScratch) -> Self;
 }
 
+#[allow(dead_code)] // Reached through the `internals` facade.
 impl BitPleInternals for BitPle {
     fn lu(&self) -> &BitMatrix {
         self.lu_matrix()
@@ -188,7 +175,8 @@ impl BitPleInternals for BitPle {
 }
 
 /// Schedule and row-operation counters of the hybrid solver.
-pub trait HybridInternals<F: FieldKernels> {
+#[allow(dead_code)] // Reached through the `internals` facade.
+pub trait HybridInternals<F: FieldBuffer> {
     /// Solves and reports the schedule and row-operation counters. `defer`
     /// selects the deferred payload path.
     ///
@@ -218,7 +206,8 @@ pub trait HybridInternals<F: FieldKernels> {
     ) -> Result<SolveStats, SolveError>;
 }
 
-impl<F: FieldKernels> HybridInternals<F> for Hybrid<F> {
+#[allow(dead_code)] // Reached through the `internals` facade.
+impl<F: FieldBuffer> HybridInternals<F> for Hybrid<F> {
     fn solve_reported(&mut self, defer: bool) -> Result<(Solution<F>, SolveStats), SolveError> {
         Hybrid::solve_reported(self, defer)
     }
@@ -234,13 +223,15 @@ impl<F: FieldKernels> HybridInternals<F> for Hybrid<F> {
 }
 
 /// The row-update dispatcher elimination and scaling drive.
+#[allow(dead_code)] // Reached through the `internals` facade.
 pub mod row_ops {
-    use fgf::FieldKernels;
+    use fgf::{Elem, FieldBuffer};
 
     /// Accumulates `factor * src` into `dst` through the dispatcher the
     /// elimination uses: the Rayon boundary with the `parallel` feature,
     /// `fgf`'s kernel directly without it.
-    pub fn mul_add<F: FieldKernels>(dst: &mut [u8], factor: F::Elem, src: &[u8]) {
+    #[allow(dead_code)] // Reached through the `internals` facade.
+    pub fn mul_add<F: FieldBuffer>(dst: &mut [u8], factor: Elem<F>, src: &[u8]) {
         crate::row_ops::mul_add::<F>(dst, factor, src);
     }
 }

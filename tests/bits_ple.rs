@@ -12,12 +12,13 @@
 
 mod common;
 
+use common::Gf8B;
 use common::{draw, noise};
-use fgf::Gf8B;
-use fgf::field::Elem;
-use gfm::bits::{Ple, PleScratch, SolveScratch};
+
+use gfm::SolveError;
+use gfm::bits::{BitMatrix, Ple, PleScratch, SolveScratch};
+use gfm::dense::{Matrix, Ple as DensePle};
 use gfm::internals::{BitPleInternals, PleInternals};
-use gfm::{BitMatrix, Matrix, Ple as DensePle, PleScratch as DensePleScratch, SolveError};
 
 /// A GF(2) matrix as plain rows of bits.
 type Naive = Vec<Vec<bool>>;
@@ -71,7 +72,7 @@ fn with_dead_leading(rows: usize, cols: usize, dead: usize, rank: usize, seed: u
         .collect()
 }
 
-/// Packs a naive matrix into `fgf::bits` row bytes.
+/// Packs a naive matrix into `fgf::ops::bits` row bytes.
 fn pack(a: &Naive, cols: usize) -> Vec<u8> {
     let live = cols.div_ceil(8);
     let mut out = vec![0u8; a.len() * live];
@@ -150,15 +151,11 @@ fn rank_samples(m: usize, n: usize) -> Vec<usize> {
 fn check_case(rows: usize, cols: usize, rank: usize, seed: u64) {
     let a = naive_with_rank(rows, cols, rank, seed);
     let bits = Ple::decompose(bit_matrix(&a, cols), &mut PleScratch::new());
-    let dense = DensePle::decompose(dense_matrix(&a, cols), &mut DensePleScratch::new());
+    let dense = DensePle::decompose(dense_matrix(&a, cols));
 
     assert_eq!(bits.rank(), rank, "constructed rank");
     assert_eq!(bits.rank(), dense.rank(), "rank vs dense");
-    assert_eq!(
-        bits.row_rank_profile(),
-        dense.row_rank_profile(),
-        "row rank profile"
-    );
+    assert_eq!(bits.pivot_rows(), dense.pivot_rows(), "pivot rows");
     assert_eq!(
         bits.col_rank_profile(),
         dense.col_rank_profile(),
@@ -204,9 +201,9 @@ fn check_case(rows: usize, cols: usize, rank: usize, seed: u64) {
     // Kernel: agrees with dense, is a kernel, and has the right dimension.
     let kdim = cols - rank;
     let mut k_bits = zeros(cols, kdim);
-    bits.kernel_into(&mut k_bits);
+    bits.right_kernel_into(&mut k_bits);
     let mut k_dense = Matrix::<Gf8B>::zeros(cols, kdim).unwrap();
-    dense.kernel_into(&mut k_dense);
+    dense.right_kernel_into(&mut k_dense);
     for i in 0..cols {
         for j in 0..kdim {
             assert_eq!(
@@ -287,7 +284,7 @@ fn rref_skips_dead_leading_columns() {
                 }
             }
             // And it agrees with the dense twin bit for bit.
-            let dense = DensePle::decompose(dense_matrix(&a, cols), &mut DensePleScratch::new());
+            let dense = DensePle::decompose(dense_matrix(&a, cols));
             let mut r_dense = Matrix::<Gf8B>::zeros(rows, cols).unwrap();
             dense.rref_into(&mut r_dense);
             for r in 0..rows {
@@ -384,7 +381,7 @@ fn det_matches_full_rank() {
         for rank in rank_samples(n, n) {
             let a = naive_with_rank(n, n, rank, 0xDE00 ^ ((n | rank << 16) as u64));
             let bits = Ple::decompose(bit_matrix(&a, n), &mut PleScratch::new());
-            let dense = DensePle::decompose(dense_matrix(&a, n), &mut DensePleScratch::new());
+            let dense = DensePle::decompose(dense_matrix(&a, n));
             assert_eq!(bits.det(), rank == n, "det value at n={n} rank={rank}");
             assert_eq!(
                 bits.det(),
@@ -517,7 +514,7 @@ fn empty_and_zero_matrices() {
         let a = vec![vec![false; n]; m];
         let ple = Ple::decompose(bit_matrix(&a, n), &mut PleScratch::new());
         assert_eq!(ple.rank(), 0);
-        assert!(ple.row_rank_profile().is_empty());
+        assert!(ple.pivot_rows().is_empty());
         assert!(ple.col_rank_profile().is_empty());
         let mut r = zeros(m, n);
         ple.rref_into(&mut r);
@@ -572,7 +569,7 @@ fn narrow_window_reports_last_column_rank() {
     let ple = Ple::decompose_with_panel_width(matrix, &mut PleScratch::new(), 3);
     assert_eq!(ple.rank(), 1);
     assert_eq!(ple.col_rank_profile(), &[cols - 1]);
-    assert_eq!(ple.row_rank_profile(), &[0]);
+    assert_eq!(ple.pivot_rows(), &[0]);
 }
 
 #[test]
@@ -584,7 +581,7 @@ fn empty_window_reports_no_pivot() {
     let (rows, cols) = (6usize, 8usize);
     let ple = Ple::decompose_with_panel_width(zeros(rows, cols), &mut PleScratch::new(), 4);
     assert_eq!(ple.rank(), 0);
-    assert!(ple.row_rank_profile().is_empty());
+    assert!(ple.pivot_rows().is_empty());
     assert!(ple.col_rank_profile().is_empty());
     let ple = Ple::decompose_with_panel_width(zeros(rows, cols), &mut PleScratch::new(), 1);
     assert_eq!(ple.rank(), 0);
@@ -690,7 +687,7 @@ mod byte_for_byte {
             (130, 128, 70),
         ] {
             let a = naive_with_rank(m, n, rank, 0x9A00 ^ ((m << 8 | n | rank << 16) as u64));
-            let dense = DensePle::decompose(dense_matrix(&a, n), &mut DensePleScratch::new());
+            let dense = DensePle::decompose(dense_matrix(&a, n));
             for width in [1, 2, 3, 7, 64, 256] {
                 let bits = Ple::decompose_with_panel_width(
                     bit_matrix(&a, n),
@@ -698,7 +695,7 @@ mod byte_for_byte {
                     width,
                 );
                 assert_eq!(bits.rank(), dense.rank(), "rank at width {width}");
-                assert_eq!(bits.row_rank_profile(), dense.row_rank_profile());
+                assert_eq!(bits.pivot_rows(), dense.pivot_rows());
                 assert_eq!(bits.col_rank_profile(), dense.col_rank_profile());
                 // lu agrees one-bit-per-byte with the dense twin.
                 for i in 0..m {
@@ -737,7 +734,7 @@ mod byte_for_byte {
             let table = Ple::decompose_m4ri(bit_matrix(&a, n), &mut PleScratch::new());
             assert_eq!(naive_of(plain.lu()), naive_of(table.lu()));
             assert_eq!(plain.rank(), table.rank());
-            assert_eq!(plain.row_rank_profile(), table.row_rank_profile());
+            assert_eq!(plain.pivot_rows(), table.pivot_rows());
             assert_eq!(plain.col_rank_profile(), table.col_rank_profile());
             let mut plain_rows: Vec<_> = (0..m).collect();
             let mut table_rows = plain_rows.clone();

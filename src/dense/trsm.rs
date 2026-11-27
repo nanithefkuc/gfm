@@ -3,10 +3,11 @@
 //! [`solve_lower_unit_assign`] is the forward substitution for a unit lower
 //! triangle; [`solve_upper_assign`] is the back substitution for an upper
 //! triangle with a nonzero diagonal. Both overwrite the right-hand side:
-//! the update `row_i ^= f · row_t` is one [`ops::mul_add`], so the
-//! arithmetic is exactly the unblocked elimination's, term for term.
+//! the update `row_i -= f · row_t` is one [`ops::mul_add`] with the negated
+//! factor, so the arithmetic is exactly the unblocked elimination's, term
+//! for term.
 
-use fgf::{FieldKernels, field::Elem, ops};
+use fgf::{FieldBuffer, FieldElem, ops};
 
 use crate::dense::Matrix;
 
@@ -17,7 +18,7 @@ use crate::dense::Matrix;
 /// # Panics
 ///
 /// Panics unless `l` is `k × k` and `b` is `k × s`.
-pub fn solve_lower_unit_assign<F: FieldKernels>(b: &mut Matrix<F>, l: &Matrix<F>) {
+pub fn solve_lower_unit_assign<F: FieldBuffer>(b: &mut Matrix<F>, l: &Matrix<F>) {
     assert_eq!(l.rows(), l.cols(), "lower triangle must be square");
     assert_eq!(b.rows(), l.rows(), "right-hand side row mismatch");
     for i in 0..l.rows() {
@@ -27,7 +28,7 @@ pub fn solve_lower_unit_assign<F: FieldKernels>(b: &mut Matrix<F>, l: &Matrix<F>
                 continue;
             }
             let (row_i, row_t) = b.two_live_rows(i, t);
-            crate::row_ops::mul_add::<F>(row_i, f, row_t);
+            crate::row_ops::mul_add::<F>(row_i, f.neg(), row_t);
         }
     }
 }
@@ -40,7 +41,7 @@ pub fn solve_lower_unit_assign<F: FieldKernels>(b: &mut Matrix<F>, l: &Matrix<F>
 ///
 /// Panics unless `u` is `k × k` and `b` is `k × s`, or if a diagonal entry
 /// of `u` is zero (a singular triangle is a contract violation).
-pub fn solve_upper_assign<F: FieldKernels>(b: &mut Matrix<F>, u: &Matrix<F>) {
+pub fn solve_upper_assign<F: FieldBuffer>(b: &mut Matrix<F>, u: &Matrix<F>) {
     assert_eq!(u.rows(), u.cols(), "upper triangle must be square");
     assert_eq!(b.rows(), u.rows(), "right-hand side row mismatch");
     for i in (0..u.rows()).rev() {
@@ -50,7 +51,7 @@ pub fn solve_upper_assign<F: FieldKernels>(b: &mut Matrix<F>, u: &Matrix<F>) {
                 continue;
             }
             let (row_i, row_t) = b.two_live_rows(i, t);
-            crate::row_ops::mul_add::<F>(row_i, f, row_t);
+            crate::row_ops::mul_add::<F>(row_i, f.neg(), row_t);
         }
         let d = u.get(i, i);
         assert!(!d.is_zero(), "upper triangle has a zero diagonal entry");

@@ -1,7 +1,7 @@
-//! The GF(2) storage domain: bit-packed matrices in [`fgf::bits`] layout.
+//! The GF(2) storage domain: bit-packed matrices in [`fgf::ops::bits`] layout.
 //! Shares naming, error types, and the permutation contract with
 //! [`crate::dense`]; shares no code. Row-vector arithmetic — XORs, masked
-//! ranges, weights — is [`fgf::bits`]'s; this module owns geometry,
+//! ranges, weights — is [`fgf::ops::bits`]'s; this module owns geometry,
 //! indexing, and the single elimination.
 
 mod derive;

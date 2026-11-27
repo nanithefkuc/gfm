@@ -1,5 +1,6 @@
 /target
 .plans/
+__pycache__/
 # The competitor harness links copyleft libraries (FLINT, M4RI, M4RIE,
 # FFLAS-FFPACK), so neither it nor its build products are tracked or packaged.
 /external-bench/*

@@ -1,11 +1,11 @@
 [package]
 name = "gfm"
-version = "1.0.1"
+version = "2.0.0"
 edition = "2024"
 rust-version = "1.93"
 autotests = false
 license = "MIT"
-description = "Dense, bit-packed, and hybrid sparse/dense linear algebra over GF(2) and GF(2^m)."
+description = "Dense, bit-packed, and hybrid sparse/dense linear algebra over finite fields."
 repository = "https://github.com/nanithefkuc/gfm"
 readme = "README.md"
 homepage = "https://github.com/nanithefkuc/gfm"
@@ -13,6 +13,7 @@ categories = ["algorithms", "mathematics", "no-std"]
 keywords = ["galois", "finite-field", "matrix", "linear-algebra", "simd"]
 # Package the library, tests, benchmarks, and user-facing release documents.
 # Cargo also includes the manifest, lockfile, and generated package metadata.
+# The committed `api/` inventory and its tooling stay outside the package.
 include = [
     "/src/**",
     "/tests/**",
@@ -29,6 +30,8 @@ std = ["fgf/std"]
 # cache is a LazyLock, and a simd-without-std combination would compile and
 # silently run scalar.
 simd = ["std", "fgf/simd"]
+# fgf's AVX-512 kernels on capable x86-64 hosts. Opt-in, as in fgf.
+simd512 = ["simd", "fgf/simd512"]
 # Optional symbol-axis parallelism. Off by default; the dependency must not
 # enter default or no-std builds.
 parallel = ["std", "dep:rayon"]
@@ -42,11 +45,14 @@ internals = []
 # at an exact release: a floating dependency is a format-break risk when the
 # dependency feeds wire bytes, and the exact pin keeps one copy resolving
 # across the ecosystem consumers.
-fgf = { version = "=1.2.1", default-features = false }
+fgf = { version = "=4.0.1", default-features = false }
 rayon = { version = "=1.12.0", optional = true }
 
 [dev-dependencies]
 criterion = { version = "=0.8.2", default-features = false, features = ["cargo_bench_support"] }
+# A local worker pool, so the parallel-dispatch test does not depend on the
+# host's core count.
+rayon = "=1.12.0"
 
 [[test]]
 name = "backend"
@@ -72,7 +78,21 @@ required-features = ["internals"]
 name = "incremental"
 
 [[test]]
-name = "format"
+name = "prime"
+
+[[test]]
+name = "diagnostics"
+
+[[test]]
+name = "noncanonical"
+
+[[test]]
+name = "parallel"
+required-features = ["parallel"]
+
+[[test]]
+name = "ple"
+required-features = ["internals"]
 
 [[test]]
 name = "zero_alloc"

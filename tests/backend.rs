@@ -1,14 +1,15 @@
 //! Public-surface test for the backend seam.
 //!
-//! `gfm::backend_for` is a pass-through to `fgf`'s per-field resolution; the
-//! property worth pinning is that gfm reports exactly the backend the field
-//! kernels will run on, and that the stack-wide `SIMD_BACKEND` override
-//! reaches it. There is no second resolver to drift.
+//! gfm resolves no backend of its own: its blocking policy reads
+//! `fgf::backend_for`'s per-field answer, so the property worth pinning is
+//! that the field kernels' backend and the stack-wide `SIMD_BACKEND` override
+//! are what gfm sees. There is no second resolver to drift.
 
-use fgf::{Gf8B, Gf16, Gf32, Gf64};
+use common::{Gf8B, Gf16, Gf32, Gf64};
+use fgf::{Backend, FieldBuffer, backend_for};
 mod common;
+use gfm::dense::{Matrix, Ple};
 use gfm::internals::PleInternals;
-use gfm::{Backend, Matrix, backend_for};
 
 #[test]
 fn reports_the_backend_the_kernels_run_on() {
@@ -35,8 +36,6 @@ fn scalar_override_forces_scalar() {
 
 #[test]
 fn backend_fingerprint_is_stable() {
-    use fgf::Field;
-    use gfm::{Matrix, Ple, PleScratch};
     use std::io::Write;
 
     writeln!(
@@ -67,7 +66,7 @@ fn backend_fingerprint_is_stable() {
             matrix.set(row, col, Gf8B::decode(&[(state >> 56) as u8]));
         }
     }
-    let ple = Ple::decompose(matrix, &mut PleScratch::new());
+    let ple = Ple::decompose(matrix);
     let mut hash = 0xCBF2_9CE4_8422_2325_u64;
     hash_bytes(&mut hash, &(ple.rank() as u64).to_le_bytes());
     for row in 0..ple.rows() {
@@ -80,7 +79,7 @@ fn backend_fingerprint_is_stable() {
             hash_bytes(&mut hash, &(index as u64).to_le_bytes());
         }
     }
-    for profile in [ple.row_rank_profile(), ple.col_rank_profile()] {
+    for profile in [ple.pivot_rows(), ple.col_rank_profile()] {
         for &index in profile {
             hash_bytes(&mut hash, &(index as u64).to_le_bytes());
         }
@@ -91,7 +90,6 @@ fn backend_fingerprint_is_stable() {
 #[cfg(feature = "parallel")]
 #[test]
 fn parallel_row_dispatch_matches_field_kernel() {
-    use fgf::Field;
     use gfm::internals::row_ops::mul_add as row_mul_add;
 
     for bytes in [2 * 1024 * 1024 - 1, 2 * 1024 * 1024, 4 * 1024 * 1024] {
@@ -114,12 +112,10 @@ fn noise_matrix(rows: usize, cols: usize, seed: u64) -> Matrix<Gf8B> {
 
 #[test]
 fn panel_width_does_not_change_the_decomposition() {
-    use gfm::{Ple, PleScratch};
-
     let a = noise_matrix(37, 41, 0x11);
-    let reference = Ple::decompose(a.clone(), &mut PleScratch::new());
+    let reference = Ple::decompose(a.clone());
     for width in [1, 2, 7, 16, 64] {
-        let ple = Ple::decompose_with_panel_width(a.clone(), &mut PleScratch::new(), width);
+        let ple = Ple::decompose_with_panel_width(a.clone(), width);
         assert_eq!(ple.rank(), reference.rank(), "rank at width {width}");
         assert_eq!(ple.lu(), reference.lu(), "LU at width {width}");
         assert_eq!(ple.p(), reference.p(), "row perm at width {width}");
@@ -128,22 +124,8 @@ fn panel_width_does_not_change_the_decomposition() {
 }
 
 #[test]
-fn newton_john_trailing_update_matches_the_dispatched_one() {
-    use gfm::{Ple, PleScratch};
-
-    let a = noise_matrix(33, 33, 0x22);
-    let reference = Ple::decompose(a.clone(), &mut PleScratch::new());
-    let nj = Ple::decompose_newton_john(a, &mut PleScratch::new());
-    assert_eq!(nj.rank(), reference.rank());
-    assert_eq!(nj.lu(), reference.lu());
-    assert_eq!(nj.p(), reference.p());
-    assert_eq!(nj.q(), reference.q());
-}
-
-#[test]
 fn bit_ple_plain_and_m4ri_agree() {
-    use gfm::BitMatrix;
-    use gfm::bits::{Ple as BitPle, PleScratch as BitPleScratch};
+    use gfm::bits::{BitMatrix, Ple as BitPle, PleScratch as BitPleScratch};
     use gfm::internals::{BitMatrixInternals, BitPleInternals};
 
     // 61 x 67 straddles word and table boundaries.

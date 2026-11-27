@@ -1,7 +1,7 @@
 //! Steady-state container operations perform no allocation, proven under a
-//! counting global allocator. Setup allocates; the measured section — views,
-//! row access, swaps, permutations, and the one physical compaction — must
-//! not.
+//! counting global allocator. Setup allocates; the measured section — mutable
+//! view access, row access, swaps, permutations, and the one physical
+//! compaction — must not.
 
 mod common;
 
@@ -9,10 +9,15 @@ use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
 use std::hint::black_box;
 
+use common::Gf8B;
 use common::noise;
-use fgf::Gf8B;
-use gfm::bits::{Ple as BitPle, PleScratch as BitPleScratch, SolveScratch as BitSolveScratch};
-use gfm::{BitMatrix, Echelon, Hybrid, Matrix, Perm, Ple, PleScratch, SolveScratch};
+use fgf::Elem;
+use gfm::bits::{
+    BitMatrix, Ple as BitPle, PleScratch as BitPleScratch, SolveScratch as BitSolveScratch,
+};
+use gfm::dense::{Matrix, Perm, Ple, SolveScratch};
+use gfm::hybrid::Hybrid;
+use gfm::incremental::{Echelon, EchelonMode};
 
 /// A global allocator that counts calls to `alloc` on the current thread.
 struct CountingAllocator;
@@ -95,16 +100,10 @@ fn steady_state_ops_do_not_allocate() {
     // The measured section: every non-constructor container operation.
     {
         let mut v = m.as_view_mut();
-        v.swap_rows(3, 11);
-        v.set(5, 6, fgf::gf8b::Elem::from_raw(0x5A));
+        v.set(5, 6, Elem::<Gf8B>::from_raw(0x5A));
         black_box(v.get(5, 6));
         black_box(v.row(7));
         black_box(v.row_mut(8));
-        let view = v.as_view();
-        let (top, bot) = view.split_rows(9).unwrap();
-        black_box(top.row(2));
-        black_box(bot.row(3));
-        black_box(top.split_rows(4));
     }
     m.swap_rows(0, 36);
     m.apply_row_perm(&p).unwrap();
@@ -133,7 +132,7 @@ fn steady_state_ops_do_not_allocate() {
     for r in 0..n {
         m.row_mut(r).copy_from_slice(&noise(n, r as u64 + 3));
     }
-    let ple = Ple::decompose(m, &mut PleScratch::new());
+    let ple = Ple::decompose(m);
     let rank = ple.rank();
     let mut rref_out = Matrix::<Gf8B>::zeros(n, n).unwrap();
     let mut kernel_out = Matrix::<Gf8B>::zeros(n, n - rank).unwrap();
@@ -148,9 +147,9 @@ fn steady_state_ops_do_not_allocate() {
     let start = alloc_count();
 
     ple.rref_into(&mut rref_out);
-    ple.kernel_into(&mut kernel_out);
+    ple.right_kernel_into(&mut kernel_out);
     black_box(ple.det());
-    black_box(ple.row_rank_profile());
+    black_box(ple.pivot_rows());
     black_box(ple.col_rank_profile());
     let _ = ple.inverse_into(&mut inv_out);
     let _ = ple.solve_into(&rhs, &mut sol, &mut solve_scratch);
@@ -191,9 +190,9 @@ fn steady_state_ops_do_not_allocate() {
     let start = alloc_count();
 
     bple.rref_into(&mut brref);
-    bple.kernel_into(&mut bkernel);
+    bple.right_kernel_into(&mut bkernel);
     black_box(bple.det());
-    black_box(bple.row_rank_profile());
+    black_box(bple.pivot_rows());
     black_box(bple.col_rank_profile());
     let _ = bple.inverse_into(&mut binv);
     let _ = bple.solve_into(&brhs, &mut bsol, &mut bscratch);
@@ -208,7 +207,7 @@ fn steady_state_ops_do_not_allocate() {
     // state and scratch once; steady-state absorb must not allocate.
     let cols = 24;
     let s = 4;
-    let mut ech = Echelon::<Gf8B>::new(cols, s, true).unwrap();
+    let mut ech = Echelon::<Gf8B>::new(cols, s, EchelonMode::PropagateUnits).unwrap();
     // Wire rows: coefficients and payload as packed bytes.
     let rows: Vec<Vec<u8>> = (0..cols).map(|r| noise(cols, 0x700 + r as u64)).collect();
     let payloads: Vec<Vec<u8>> = (0..cols).map(|r| noise(s, 0x900 + r as u64)).collect();

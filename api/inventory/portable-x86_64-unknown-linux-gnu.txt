@@ -1,0 +1,428 @@
+pub mod gfm
+pub mod gfm::bits
+pub struct gfm::bits::BitMatrix
+impl gfm::bits::BitMatrix
+impl gfm::bits::BitMatrix
+pub fn gfm::bits::BitMatrix::apply_row_perm(&mut self, &gfm::dense::Perm) -> core::result::Result<(), gfm::GeometryError>
+pub fn gfm::bits::BitMatrix::apply_row_perm_inv(&mut self, &gfm::dense::Perm) -> core::result::Result<(), gfm::GeometryError>
+pub const fn gfm::bits::BitMatrix::cols(&self) -> usize
+pub fn gfm::bits::BitMatrix::compact_rows(&mut self)
+pub fn gfm::bits::BitMatrix::from_rows(usize, usize, &[u8]) -> core::result::Result<Self, gfm::GeometryError>
+pub fn gfm::bits::BitMatrix::get(&self, usize, usize) -> bool
+pub fn gfm::bits::BitMatrix::identity(usize) -> core::result::Result<Self, gfm::GeometryError>
+pub const fn gfm::bits::BitMatrix::is_square(&self) -> bool
+pub const fn gfm::bits::BitMatrix::pitch(&self) -> usize
+pub fn gfm::bits::BitMatrix::row(&self, usize) -> &[u8]
+pub const fn gfm::bits::BitMatrix::row_bytes(&self) -> usize
+pub const fn gfm::bits::BitMatrix::rows(&self) -> usize
+pub fn gfm::bits::BitMatrix::set(&mut self, usize, usize, bool)
+pub fn gfm::bits::BitMatrix::swap_rows(&mut self, usize, usize)
+pub fn gfm::bits::BitMatrix::zeros(usize, usize) -> core::result::Result<Self, gfm::GeometryError>
+impl core::clone::Clone for gfm::bits::BitMatrix
+pub fn gfm::bits::BitMatrix::clone(&self) -> Self
+impl core::cmp::Eq for gfm::bits::BitMatrix
+impl core::cmp::PartialEq for gfm::bits::BitMatrix
+pub fn gfm::bits::BitMatrix::eq(&self, &Self) -> bool
+impl core::fmt::Debug for gfm::bits::BitMatrix
+pub fn gfm::bits::BitMatrix::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for gfm::bits::BitMatrix
+impl core::marker::Send for gfm::bits::BitMatrix
+impl core::marker::Sync for gfm::bits::BitMatrix
+impl core::marker::Unpin for gfm::bits::BitMatrix
+impl core::marker::UnsafeUnpin for gfm::bits::BitMatrix
+impl core::panic::unwind_safe::RefUnwindSafe for gfm::bits::BitMatrix
+impl core::panic::unwind_safe::UnwindSafe for gfm::bits::BitMatrix
+pub struct gfm::bits::Ple
+impl gfm::bits::Ple
+pub fn gfm::bits::Ple::col_rank_profile(&self) -> &[usize]
+pub const fn gfm::bits::Ple::cols(&self) -> usize
+pub fn gfm::bits::Ple::decompose(gfm::bits::BitMatrix, &mut gfm::bits::PleScratch) -> Self
+pub fn gfm::bits::Ple::into_matrix(self) -> gfm::bits::BitMatrix
+pub fn gfm::bits::Ple::pivot_rows(&self) -> &[usize]
+pub const fn gfm::bits::Ple::rank(&self) -> usize
+pub const fn gfm::bits::Ple::rows(&self) -> usize
+impl gfm::bits::Ple
+pub fn gfm::bits::Ple::det(&self) -> bool
+pub fn gfm::bits::Ple::inverse_into(&self, &mut gfm::bits::BitMatrix) -> core::result::Result<(), gfm::SolveError>
+pub fn gfm::bits::Ple::right_kernel_into(&self, &mut gfm::bits::BitMatrix)
+pub fn gfm::bits::Ple::rref_into(&self, &mut gfm::bits::BitMatrix)
+pub fn gfm::bits::Ple::solve_into(&self, &gfm::bits::BitMatrix, &mut gfm::bits::BitMatrix, &mut gfm::bits::SolveScratch) -> core::result::Result<(), gfm::SolveError>
+impl core::clone::Clone for gfm::bits::Ple
+pub fn gfm::bits::Ple::clone(&self) -> Self
+impl core::fmt::Debug for gfm::bits::Ple
+pub fn gfm::bits::Ple::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for gfm::bits::Ple
+impl core::marker::Send for gfm::bits::Ple
+impl core::marker::Sync for gfm::bits::Ple
+impl core::marker::Unpin for gfm::bits::Ple
+impl core::marker::UnsafeUnpin for gfm::bits::Ple
+impl core::panic::unwind_safe::RefUnwindSafe for gfm::bits::Ple
+impl core::panic::unwind_safe::UnwindSafe for gfm::bits::Ple
+pub struct gfm::bits::PleScratch
+impl gfm::bits::PleScratch
+pub const fn gfm::bits::PleScratch::new() -> Self
+impl core::default::Default for gfm::bits::PleScratch
+pub fn gfm::bits::PleScratch::default() -> Self
+impl core::fmt::Debug for gfm::bits::PleScratch
+pub fn gfm::bits::PleScratch::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for gfm::bits::PleScratch
+impl core::marker::Send for gfm::bits::PleScratch
+impl core::marker::Sync for gfm::bits::PleScratch
+impl core::marker::Unpin for gfm::bits::PleScratch
+impl core::marker::UnsafeUnpin for gfm::bits::PleScratch
+impl core::panic::unwind_safe::RefUnwindSafe for gfm::bits::PleScratch
+impl core::panic::unwind_safe::UnwindSafe for gfm::bits::PleScratch
+pub struct gfm::bits::SolveScratch
+impl gfm::bits::SolveScratch
+pub const fn gfm::bits::SolveScratch::new() -> Self
+impl core::default::Default for gfm::bits::SolveScratch
+pub fn gfm::bits::SolveScratch::default() -> Self
+impl core::fmt::Debug for gfm::bits::SolveScratch
+pub fn gfm::bits::SolveScratch::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for gfm::bits::SolveScratch
+impl core::marker::Send for gfm::bits::SolveScratch
+impl core::marker::Sync for gfm::bits::SolveScratch
+impl core::marker::Unpin for gfm::bits::SolveScratch
+impl core::marker::UnsafeUnpin for gfm::bits::SolveScratch
+impl core::panic::unwind_safe::RefUnwindSafe for gfm::bits::SolveScratch
+impl core::panic::unwind_safe::UnwindSafe for gfm::bits::SolveScratch
+pub const gfm::bits::ALIGN: usize
+pub mod gfm::dense
+pub struct gfm::dense::Matrix<F: fgf::field::FieldBuffer>
+impl<F: fgf::field::FieldBuffer> gfm::dense::Matrix<F>
+impl<F: fgf::field::FieldBuffer> gfm::dense::Matrix<F>
+pub fn gfm::dense::Matrix<F>::apply_row_perm(&mut self, &gfm::dense::Perm) -> core::result::Result<(), gfm::GeometryError>
+pub fn gfm::dense::Matrix<F>::apply_row_perm_inv(&mut self, &gfm::dense::Perm) -> core::result::Result<(), gfm::GeometryError>
+pub fn gfm::dense::Matrix<F>::as_view_mut(&mut self) -> gfm::dense::ViewMut<'_, F>
+pub const fn gfm::dense::Matrix<F>::cols(&self) -> usize
+pub fn gfm::dense::Matrix<F>::compact_rows(&mut self)
+pub fn gfm::dense::Matrix<F>::from_rows(usize, usize, &[u8]) -> core::result::Result<Self, gfm::GeometryError>
+pub fn gfm::dense::Matrix<F>::get(&self, usize, usize) -> fgf::field::Elem<F>
+pub fn gfm::dense::Matrix<F>::identity(usize) -> core::result::Result<Self, gfm::GeometryError>
+pub const fn gfm::dense::Matrix<F>::is_square(&self) -> bool
+pub const fn gfm::dense::Matrix<F>::pitch(&self) -> usize
+pub fn gfm::dense::Matrix<F>::row(&self, usize) -> &[u8]
+pub fn gfm::dense::Matrix<F>::row_mut(&mut self, usize) -> &mut [u8]
+pub const fn gfm::dense::Matrix<F>::rows(&self) -> usize
+pub fn gfm::dense::Matrix<F>::set(&mut self, usize, usize, fgf::field::Elem<F>)
+pub fn gfm::dense::Matrix<F>::swap_rows(&mut self, usize, usize)
+pub fn gfm::dense::Matrix<F>::zeros(usize, usize) -> core::result::Result<Self, gfm::GeometryError>
+impl<F: fgf::field::FieldBuffer> core::clone::Clone for gfm::dense::Matrix<F>
+pub fn gfm::dense::Matrix<F>::clone(&self) -> Self
+impl<F: fgf::field::FieldBuffer> core::cmp::Eq for gfm::dense::Matrix<F>
+impl<F: fgf::field::FieldBuffer> core::cmp::PartialEq for gfm::dense::Matrix<F>
+pub fn gfm::dense::Matrix<F>::eq(&self, &Self) -> bool
+impl<F: fgf::field::FieldBuffer> core::fmt::Debug for gfm::dense::Matrix<F>
+pub fn gfm::dense::Matrix<F>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<F> core::marker::Freeze for gfm::dense::Matrix<F> where core::marker::PhantomData<F>: core::marker::Freeze
+impl<F> core::marker::Send for gfm::dense::Matrix<F> where core::marker::PhantomData<F>: core::marker::Send
+impl<F> core::marker::Sync for gfm::dense::Matrix<F> where core::marker::PhantomData<F>: core::marker::Sync
+impl<F> core::marker::Unpin for gfm::dense::Matrix<F> where core::marker::PhantomData<F>: core::marker::Unpin
+impl<F> core::marker::UnsafeUnpin for gfm::dense::Matrix<F> where core::marker::PhantomData<F>: core::marker::UnsafeUnpin
+impl<F> core::panic::unwind_safe::RefUnwindSafe for gfm::dense::Matrix<F> where core::marker::PhantomData<F>: core::panic::unwind_safe::RefUnwindSafe
+impl<F> core::panic::unwind_safe::UnwindSafe for gfm::dense::Matrix<F> where core::marker::PhantomData<F>: core::panic::unwind_safe::UnwindSafe
+pub struct gfm::dense::Perm
+impl gfm::dense::Perm
+pub fn gfm::dense::Perm::apply<T>(&self, &mut [T])
+pub fn gfm::dense::Perm::apply_inv<T>(&self, &mut [T])
+pub fn gfm::dense::Perm::compose(&self, &Self) -> Self
+pub fn gfm::dense::Perm::identity(usize) -> Self
+pub fn gfm::dense::Perm::image_at(&self, usize) -> usize
+pub const fn gfm::dense::Perm::is_empty(&self) -> bool
+pub const fn gfm::dense::Perm::len(&self) -> usize
+pub fn gfm::dense::Perm::parity(&self) -> bool
+pub fn gfm::dense::Perm::record_swap(&mut self, usize, usize)
+impl core::clone::Clone for gfm::dense::Perm
+pub fn gfm::dense::Perm::clone(&self) -> Self
+impl core::cmp::Eq for gfm::dense::Perm
+pub fn gfm::dense::Perm::assert_fields_are_eq(&self)
+impl core::cmp::PartialEq for gfm::dense::Perm
+pub fn gfm::dense::Perm::eq(&self, &Self) -> bool
+impl core::fmt::Debug for gfm::dense::Perm
+pub fn gfm::dense::Perm::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for gfm::dense::Perm
+impl core::marker::Freeze for gfm::dense::Perm
+impl core::marker::Send for gfm::dense::Perm
+impl core::marker::Sync for gfm::dense::Perm
+impl core::marker::Unpin for gfm::dense::Perm
+impl core::marker::UnsafeUnpin for gfm::dense::Perm
+impl core::panic::unwind_safe::RefUnwindSafe for gfm::dense::Perm
+impl core::panic::unwind_safe::UnwindSafe for gfm::dense::Perm
+pub struct gfm::dense::Ple<F: fgf::field::FieldBuffer>
+impl<F: fgf::field::FieldBuffer> gfm::dense::Ple<F>
+pub fn gfm::dense::Ple<F>::col_rank_profile(&self) -> &[usize]
+pub const fn gfm::dense::Ple<F>::cols(&self) -> usize
+pub fn gfm::dense::Ple<F>::decompose(gfm::dense::Matrix<F>) -> Self
+pub fn gfm::dense::Ple<F>::into_matrix(self) -> gfm::dense::Matrix<F>
+pub fn gfm::dense::Ple<F>::pivot_rows(&self) -> &[usize]
+pub const fn gfm::dense::Ple<F>::rank(&self) -> usize
+pub fn gfm::dense::Ple<F>::redecompose(&mut self, impl core::ops::function::FnOnce(&mut gfm::dense::ViewMut<'_, F>))
+pub const fn gfm::dense::Ple<F>::rows(&self) -> usize
+impl<F: fgf::field::FieldBuffer> gfm::dense::Ple<F>
+pub fn gfm::dense::Ple<F>::det(&self) -> fgf::field::Elem<F>
+pub fn gfm::dense::Ple<F>::inverse_into(&self, &mut gfm::dense::Matrix<F>) -> core::result::Result<(), gfm::SolveError>
+pub fn gfm::dense::Ple<F>::right_kernel_into(&self, &mut gfm::dense::Matrix<F>)
+pub fn gfm::dense::Ple<F>::rref_into(&self, &mut gfm::dense::Matrix<F>)
+pub fn gfm::dense::Ple<F>::solve_into(&self, &gfm::dense::Matrix<F>, &mut gfm::dense::Matrix<F>, &mut gfm::dense::SolveScratch<F>) -> core::result::Result<(), gfm::SolveError>
+impl<F: core::clone::Clone + fgf::field::FieldBuffer> core::clone::Clone for gfm::dense::Ple<F>
+pub fn gfm::dense::Ple<F>::clone(&self) -> Self
+impl<F: fgf::field::FieldBuffer> core::fmt::Debug for gfm::dense::Ple<F>
+pub fn gfm::dense::Ple<F>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<F> core::marker::Freeze for gfm::dense::Ple<F> where gfm::dense::Matrix<F>: core::marker::Freeze
+impl<F> core::marker::Send for gfm::dense::Ple<F> where gfm::dense::Matrix<F>: core::marker::Send
+impl<F> core::marker::Sync for gfm::dense::Ple<F> where gfm::dense::Matrix<F>: core::marker::Sync
+impl<F> core::marker::Unpin for gfm::dense::Ple<F> where gfm::dense::Matrix<F>: core::marker::Unpin
+impl<F> core::marker::UnsafeUnpin for gfm::dense::Ple<F> where gfm::dense::Matrix<F>: core::marker::UnsafeUnpin
+impl<F> core::panic::unwind_safe::RefUnwindSafe for gfm::dense::Ple<F> where gfm::dense::Matrix<F>: core::panic::unwind_safe::RefUnwindSafe
+impl<F> core::panic::unwind_safe::UnwindSafe for gfm::dense::Ple<F> where gfm::dense::Matrix<F>: core::panic::unwind_safe::UnwindSafe
+pub struct gfm::dense::SmallMatrix<F: fgf::field::FieldBuffer, const K: usize>
+impl<F: fgf::field::FieldBuffer, const K: usize> gfm::dense::SmallMatrix<F, K>
+pub fn gfm::dense::SmallMatrix<F, K>::from_matrix(&gfm::dense::Matrix<F>) -> Self
+pub fn gfm::dense::SmallMatrix<F, K>::get(&self, usize, usize) -> fgf::field::Elem<F>
+pub fn gfm::dense::SmallMatrix<F, K>::rank(&self) -> usize
+pub fn gfm::dense::SmallMatrix<F, K>::set(&mut self, usize, usize, fgf::field::Elem<F>)
+pub fn gfm::dense::SmallMatrix<F, K>::solve_into(&self, &gfm::dense::Matrix<F>, &mut gfm::dense::Matrix<F>) -> core::result::Result<(), gfm::SolveError>
+pub fn gfm::dense::SmallMatrix<F, K>::zeros() -> Self
+impl<F: core::clone::Clone + fgf::field::FieldBuffer, const K: usize> core::clone::Clone for gfm::dense::SmallMatrix<F, K>
+pub fn gfm::dense::SmallMatrix<F, K>::clone(&self) -> Self
+impl<F: fgf::field::FieldBuffer, const K: usize> core::default::Default for gfm::dense::SmallMatrix<F, K>
+pub fn gfm::dense::SmallMatrix<F, K>::default() -> Self
+impl<F: fgf::field::FieldBuffer, const K: usize> core::fmt::Debug for gfm::dense::SmallMatrix<F, K>
+pub fn gfm::dense::SmallMatrix<F, K>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<F, const K: usize> core::marker::Freeze for gfm::dense::SmallMatrix<F, K> where [[fgf::field::Elem<F>; K]; K]: core::marker::Freeze, [[u8; K]; K]: core::marker::Freeze
+impl<F, const K: usize> core::marker::Send for gfm::dense::SmallMatrix<F, K> where [[fgf::field::Elem<F>; K]; K]: core::marker::Send, [[u8; K]; K]: core::marker::Send
+impl<F, const K: usize> core::marker::Sync for gfm::dense::SmallMatrix<F, K> where [[fgf::field::Elem<F>; K]; K]: core::marker::Sync, [[u8; K]; K]: core::marker::Sync
+impl<F, const K: usize> core::marker::Unpin for gfm::dense::SmallMatrix<F, K> where [[fgf::field::Elem<F>; K]; K]: core::marker::Unpin, [[u8; K]; K]: core::marker::Unpin
+impl<F, const K: usize> core::marker::UnsafeUnpin for gfm::dense::SmallMatrix<F, K> where [[fgf::field::Elem<F>; K]; K]: core::marker::UnsafeUnpin, [[u8; K]; K]: core::marker::UnsafeUnpin
+impl<F, const K: usize> core::panic::unwind_safe::RefUnwindSafe for gfm::dense::SmallMatrix<F, K> where [[fgf::field::Elem<F>; K]; K]: core::panic::unwind_safe::RefUnwindSafe, [[u8; K]; K]: core::panic::unwind_safe::RefUnwindSafe
+impl<F, const K: usize> core::panic::unwind_safe::UnwindSafe for gfm::dense::SmallMatrix<F, K> where [[fgf::field::Elem<F>; K]; K]: core::panic::unwind_safe::UnwindSafe, [[u8; K]; K]: core::panic::unwind_safe::UnwindSafe
+pub struct gfm::dense::SolveScratch<F: fgf::field::FieldBuffer>
+impl<F: fgf::field::FieldBuffer> gfm::dense::SolveScratch<F>
+pub const fn gfm::dense::SolveScratch<F>::new() -> Self
+impl<F: fgf::field::FieldBuffer> core::default::Default for gfm::dense::SolveScratch<F>
+pub fn gfm::dense::SolveScratch<F>::default() -> Self
+impl<F: fgf::field::FieldBuffer> core::fmt::Debug for gfm::dense::SolveScratch<F>
+pub fn gfm::dense::SolveScratch<F>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<F> core::marker::Freeze for gfm::dense::SolveScratch<F> where core::option::Option<gfm::dense::Matrix<F>>: core::marker::Freeze
+impl<F> core::marker::Send for gfm::dense::SolveScratch<F> where core::option::Option<gfm::dense::Matrix<F>>: core::marker::Send
+impl<F> core::marker::Sync for gfm::dense::SolveScratch<F> where core::option::Option<gfm::dense::Matrix<F>>: core::marker::Sync
+impl<F> core::marker::Unpin for gfm::dense::SolveScratch<F> where core::option::Option<gfm::dense::Matrix<F>>: core::marker::Unpin
+impl<F> core::marker::UnsafeUnpin for gfm::dense::SolveScratch<F> where core::option::Option<gfm::dense::Matrix<F>>: core::marker::UnsafeUnpin
+impl<F> core::panic::unwind_safe::RefUnwindSafe for gfm::dense::SolveScratch<F> where core::option::Option<gfm::dense::Matrix<F>>: core::panic::unwind_safe::RefUnwindSafe
+impl<F> core::panic::unwind_safe::UnwindSafe for gfm::dense::SolveScratch<F> where core::option::Option<gfm::dense::Matrix<F>>: core::panic::unwind_safe::UnwindSafe
+pub struct gfm::dense::ViewMut<'a, F: fgf::field::FieldBuffer>
+impl<F: fgf::field::FieldBuffer> gfm::dense::ViewMut<'_, F>
+pub const fn gfm::dense::ViewMut<'_, F>::cols(&self) -> usize
+pub fn gfm::dense::ViewMut<'_, F>::get(&self, usize, usize) -> fgf::field::Elem<F>
+pub fn gfm::dense::ViewMut<'_, F>::row(&self, usize) -> &[u8]
+pub fn gfm::dense::ViewMut<'_, F>::row_mut(&mut self, usize) -> &mut [u8]
+pub const fn gfm::dense::ViewMut<'_, F>::rows(&self) -> usize
+pub fn gfm::dense::ViewMut<'_, F>::set(&mut self, usize, usize, fgf::field::Elem<F>)
+impl<F: fgf::field::FieldBuffer> core::fmt::Debug for gfm::dense::ViewMut<'_, F>
+pub fn gfm::dense::ViewMut<'_, F>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<'a, F> core::marker::Freeze for gfm::dense::ViewMut<'a, F> where core::marker::PhantomData<F>: core::marker::Freeze
+impl<'a, F> core::marker::Send for gfm::dense::ViewMut<'a, F> where core::marker::PhantomData<F>: core::marker::Send
+impl<'a, F> core::marker::Sync for gfm::dense::ViewMut<'a, F> where core::marker::PhantomData<F>: core::marker::Sync
+impl<'a, F> core::marker::Unpin for gfm::dense::ViewMut<'a, F> where core::marker::PhantomData<F>: core::marker::Unpin
+impl<'a, F> core::marker::UnsafeUnpin for gfm::dense::ViewMut<'a, F> where core::marker::PhantomData<F>: core::marker::UnsafeUnpin
+impl<'a, F> core::panic::unwind_safe::RefUnwindSafe for gfm::dense::ViewMut<'a, F> where core::marker::PhantomData<F>: core::panic::unwind_safe::RefUnwindSafe
+impl<'a, F> !core::panic::unwind_safe::UnwindSafe for gfm::dense::ViewMut<'a, F>
+pub const gfm::dense::ALIGN: usize
+pub fn gfm::dense::mul_add<F: fgf::field::FieldBuffer>(&mut gfm::dense::Matrix<F>, &gfm::dense::Matrix<F>, &gfm::dense::Matrix<F>)
+pub fn gfm::dense::mul_into<F: fgf::field::FieldBuffer>(&mut gfm::dense::Matrix<F>, &gfm::dense::Matrix<F>, &gfm::dense::Matrix<F>)
+pub fn gfm::dense::solve_lower_unit_assign<F: fgf::field::FieldBuffer>(&mut gfm::dense::Matrix<F>, &gfm::dense::Matrix<F>)
+pub fn gfm::dense::solve_upper_assign<F: fgf::field::FieldBuffer>(&mut gfm::dense::Matrix<F>, &gfm::dense::Matrix<F>)
+pub mod gfm::hybrid
+pub enum gfm::hybrid::SparseEquation<'a, F: fgf::field::FieldBuffer>
+pub gfm::hybrid::SparseEquation::Binary
+pub gfm::hybrid::SparseEquation::Binary::rhs: &'a [u8]
+pub gfm::hybrid::SparseEquation::Binary::support: &'a [u32]
+pub gfm::hybrid::SparseEquation::Field
+pub gfm::hybrid::SparseEquation::Field::coeffs: &'a [fgf::field::Elem<F>]
+pub gfm::hybrid::SparseEquation::Field::rhs: &'a [u8]
+pub gfm::hybrid::SparseEquation::Field::support: &'a [u32]
+impl<'a, F: core::clone::Clone + fgf::field::FieldBuffer> core::clone::Clone for gfm::hybrid::SparseEquation<'a, F>
+pub fn gfm::hybrid::SparseEquation<'a, F>::clone(&self) -> Self
+impl<'a, F: core::fmt::Debug + fgf::field::FieldBuffer> core::fmt::Debug for gfm::hybrid::SparseEquation<'a, F>
+pub fn gfm::hybrid::SparseEquation<'a, F>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<'a, F: core::marker::Copy + fgf::field::FieldBuffer> core::marker::Copy for gfm::hybrid::SparseEquation<'a, F>
+impl<'a, F> core::marker::Freeze for gfm::hybrid::SparseEquation<'a, F> where &'a [fgf::field::Elem<F>]: core::marker::Freeze
+impl<'a, F> core::marker::Send for gfm::hybrid::SparseEquation<'a, F> where &'a [fgf::field::Elem<F>]: core::marker::Send
+impl<'a, F> core::marker::Sync for gfm::hybrid::SparseEquation<'a, F> where &'a [fgf::field::Elem<F>]: core::marker::Sync
+impl<'a, F> core::marker::Unpin for gfm::hybrid::SparseEquation<'a, F> where &'a [fgf::field::Elem<F>]: core::marker::Unpin
+impl<'a, F> core::marker::UnsafeUnpin for gfm::hybrid::SparseEquation<'a, F> where &'a [fgf::field::Elem<F>]: core::marker::UnsafeUnpin
+impl<'a, F> core::panic::unwind_safe::RefUnwindSafe for gfm::hybrid::SparseEquation<'a, F> where &'a [fgf::field::Elem<F>]: core::panic::unwind_safe::RefUnwindSafe
+impl<'a, F> core::panic::unwind_safe::UnwindSafe for gfm::hybrid::SparseEquation<'a, F> where &'a [fgf::field::Elem<F>]: core::panic::unwind_safe::UnwindSafe
+pub struct gfm::hybrid::Hybrid<F: fgf::field::FieldBuffer>
+impl<F: fgf::field::FieldBuffer> gfm::hybrid::Hybrid<F>
+pub fn gfm::hybrid::Hybrid<F>::extend_equations<R: gfm::hybrid::SparseEquationSource<F> + ?core::marker::Sized>(&mut self, &R)
+pub fn gfm::hybrid::Hybrid<F>::new(usize, usize) -> Self
+pub fn gfm::hybrid::Hybrid<F>::push_binary_row(&mut self, &[u32], &[u8])
+pub fn gfm::hybrid::Hybrid<F>::push_deferred_field_row(&mut self, &[u32], &[fgf::field::Elem<F>], &[u8])
+pub fn gfm::hybrid::Hybrid<F>::push_field_row(&mut self, &[u32], &[fgf::field::Elem<F>], &[u8])
+pub fn gfm::hybrid::Hybrid<F>::replace_rhs(&mut self, usize, &[u8])
+pub fn gfm::hybrid::Hybrid<F>::resolve_into(&mut self, &mut gfm::dense::Matrix<F>, &mut [bool]) -> core::result::Result<usize, gfm::SolveError>
+pub fn gfm::hybrid::Hybrid<F>::solve(&mut self) -> core::result::Result<gfm::hybrid::Solution<F>, gfm::SolveError>
+pub fn gfm::hybrid::Hybrid<F>::solve_into(&mut self, &mut gfm::dense::Matrix<F>, &mut [bool]) -> core::result::Result<usize, gfm::SolveError>
+pub fn gfm::hybrid::Hybrid<F>::with_initial_inactive(usize, usize, &[u32]) -> Self
+impl<F: fgf::field::FieldBuffer> core::fmt::Debug for gfm::hybrid::Hybrid<F>
+pub fn gfm::hybrid::Hybrid<F>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<F> core::marker::Freeze for gfm::hybrid::Hybrid<F> where alloc::vec::Vec<Row<F>>: core::marker::Freeze + core::marker::Freeze, alloc::vec::Vec<[fgf::field::Elem<F>; 64]>: core::marker::Freeze + core::marker::Freeze, [fgf::field::Elem<F>; 64]: core::marker::Freeze, MergeScratch<F>: core::marker::Freeze, alloc::vec::Vec<(u32, u32, fgf::field::Elem<F>)>: core::marker::Freeze, alloc::vec::Vec<(usize, u32, fgf::field::Elem<F>)>: core::marker::Freeze, alloc::vec::Vec<fgf::field::Elem<F>>: core::marker::Freeze, DeferredLog<F>: core::marker::Freeze, core::option::Option<gfm::dense::Ple<F>>: core::marker::Freeze + core::marker::Freeze, core::option::Option<gfm::dense::Matrix<F>>: core::marker::Freeze + core::marker::Freeze + core::marker::Freeze + core::marker::Freeze, gfm::dense::SolveScratch<F>: core::marker::Freeze
+impl<F> core::marker::Send for gfm::hybrid::Hybrid<F> where alloc::vec::Vec<Row<F>>: core::marker::Send + core::marker::Send, alloc::vec::Vec<[fgf::field::Elem<F>; 64]>: core::marker::Send + core::marker::Send, [fgf::field::Elem<F>; 64]: core::marker::Send, MergeScratch<F>: core::marker::Send, alloc::vec::Vec<(u32, u32, fgf::field::Elem<F>)>: core::marker::Send, alloc::vec::Vec<(usize, u32, fgf::field::Elem<F>)>: core::marker::Send, alloc::vec::Vec<fgf::field::Elem<F>>: core::marker::Send, DeferredLog<F>: core::marker::Send, core::option::Option<gfm::dense::Ple<F>>: core::marker::Send + core::marker::Send, core::option::Option<gfm::dense::Matrix<F>>: core::marker::Send + core::marker::Send + core::marker::Send + core::marker::Send, gfm::dense::SolveScratch<F>: core::marker::Send
+impl<F> core::marker::Sync for gfm::hybrid::Hybrid<F> where alloc::vec::Vec<Row<F>>: core::marker::Sync + core::marker::Sync, alloc::vec::Vec<[fgf::field::Elem<F>; 64]>: core::marker::Sync + core::marker::Sync, [fgf::field::Elem<F>; 64]: core::marker::Sync, MergeScratch<F>: core::marker::Sync, alloc::vec::Vec<(u32, u32, fgf::field::Elem<F>)>: core::marker::Sync, alloc::vec::Vec<(usize, u32, fgf::field::Elem<F>)>: core::marker::Sync, alloc::vec::Vec<fgf::field::Elem<F>>: core::marker::Sync, DeferredLog<F>: core::marker::Sync, core::option::Option<gfm::dense::Ple<F>>: core::marker::Sync + core::marker::Sync, core::option::Option<gfm::dense::Matrix<F>>: core::marker::Sync + core::marker::Sync + core::marker::Sync + core::marker::Sync, gfm::dense::SolveScratch<F>: core::marker::Sync
+impl<F> core::marker::Unpin for gfm::hybrid::Hybrid<F> where alloc::vec::Vec<Row<F>>: core::marker::Unpin + core::marker::Unpin, alloc::vec::Vec<[fgf::field::Elem<F>; 64]>: core::marker::Unpin + core::marker::Unpin, [fgf::field::Elem<F>; 64]: core::marker::Unpin, MergeScratch<F>: core::marker::Unpin, alloc::vec::Vec<(u32, u32, fgf::field::Elem<F>)>: core::marker::Unpin, alloc::vec::Vec<(usize, u32, fgf::field::Elem<F>)>: core::marker::Unpin, alloc::vec::Vec<fgf::field::Elem<F>>: core::marker::Unpin, DeferredLog<F>: core::marker::Unpin, core::option::Option<gfm::dense::Ple<F>>: core::marker::Unpin + core::marker::Unpin, core::option::Option<gfm::dense::Matrix<F>>: core::marker::Unpin + core::marker::Unpin + core::marker::Unpin + core::marker::Unpin, gfm::dense::SolveScratch<F>: core::marker::Unpin
+impl<F> core::marker::UnsafeUnpin for gfm::hybrid::Hybrid<F> where alloc::vec::Vec<Row<F>>: core::marker::UnsafeUnpin + core::marker::UnsafeUnpin, alloc::vec::Vec<[fgf::field::Elem<F>; 64]>: core::marker::UnsafeUnpin + core::marker::UnsafeUnpin, [fgf::field::Elem<F>; 64]: core::marker::UnsafeUnpin, MergeScratch<F>: core::marker::UnsafeUnpin, alloc::vec::Vec<(u32, u32, fgf::field::Elem<F>)>: core::marker::UnsafeUnpin, alloc::vec::Vec<(usize, u32, fgf::field::Elem<F>)>: core::marker::UnsafeUnpin, alloc::vec::Vec<fgf::field::Elem<F>>: core::marker::UnsafeUnpin, DeferredLog<F>: core::marker::UnsafeUnpin, core::option::Option<gfm::dense::Ple<F>>: core::marker::UnsafeUnpin + core::marker::UnsafeUnpin, core::option::Option<gfm::dense::Matrix<F>>: core::marker::UnsafeUnpin + core::marker::UnsafeUnpin + core::marker::UnsafeUnpin + core::marker::UnsafeUnpin, gfm::dense::SolveScratch<F>: core::marker::UnsafeUnpin
+impl<F> core::panic::unwind_safe::RefUnwindSafe for gfm::hybrid::Hybrid<F> where alloc::vec::Vec<Row<F>>: core::panic::unwind_safe::RefUnwindSafe + core::panic::unwind_safe::RefUnwindSafe, alloc::vec::Vec<[fgf::field::Elem<F>; 64]>: core::panic::unwind_safe::RefUnwindSafe + core::panic::unwind_safe::RefUnwindSafe, [fgf::field::Elem<F>; 64]: core::panic::unwind_safe::RefUnwindSafe, MergeScratch<F>: core::panic::unwind_safe::RefUnwindSafe, alloc::vec::Vec<(u32, u32, fgf::field::Elem<F>)>: core::panic::unwind_safe::RefUnwindSafe, alloc::vec::Vec<(usize, u32, fgf::field::Elem<F>)>: core::panic::unwind_safe::RefUnwindSafe, alloc::vec::Vec<fgf::field::Elem<F>>: core::panic::unwind_safe::RefUnwindSafe, DeferredLog<F>: core::panic::unwind_safe::RefUnwindSafe, core::option::Option<gfm::dense::Ple<F>>: core::panic::unwind_safe::RefUnwindSafe + core::panic::unwind_safe::RefUnwindSafe, core::option::Option<gfm::dense::Matrix<F>>: core::panic::unwind_safe::RefUnwindSafe + core::panic::unwind_safe::RefUnwindSafe + core::panic::unwind_safe::RefUnwindSafe + core::panic::unwind_safe::RefUnwindSafe, gfm::dense::SolveScratch<F>: core::panic::unwind_safe::RefUnwindSafe
+impl<F> core::panic::unwind_safe::UnwindSafe for gfm::hybrid::Hybrid<F> where alloc::vec::Vec<Row<F>>: core::panic::unwind_safe::UnwindSafe + core::panic::unwind_safe::UnwindSafe, alloc::vec::Vec<[fgf::field::Elem<F>; 64]>: core::panic::unwind_safe::UnwindSafe + core::panic::unwind_safe::UnwindSafe, [fgf::field::Elem<F>; 64]: core::panic::unwind_safe::UnwindSafe, MergeScratch<F>: core::panic::unwind_safe::UnwindSafe, alloc::vec::Vec<(u32, u32, fgf::field::Elem<F>)>: core::panic::unwind_safe::UnwindSafe, alloc::vec::Vec<(usize, u32, fgf::field::Elem<F>)>: core::panic::unwind_safe::UnwindSafe, alloc::vec::Vec<fgf::field::Elem<F>>: core::panic::unwind_safe::UnwindSafe, DeferredLog<F>: core::panic::unwind_safe::UnwindSafe, core::option::Option<gfm::dense::Ple<F>>: core::panic::unwind_safe::UnwindSafe + core::panic::unwind_safe::UnwindSafe, core::option::Option<gfm::dense::Matrix<F>>: core::panic::unwind_safe::UnwindSafe + core::panic::unwind_safe::UnwindSafe + core::panic::unwind_safe::UnwindSafe + core::panic::unwind_safe::UnwindSafe, gfm::dense::SolveScratch<F>: core::panic::unwind_safe::UnwindSafe
+pub struct gfm::hybrid::Solution<F: fgf::field::FieldBuffer>
+impl<F: fgf::field::FieldBuffer> gfm::hybrid::Solution<F>
+pub fn gfm::hybrid::Solution<F>::is_determined(&self, usize) -> bool
+pub fn gfm::hybrid::Solution<F>::is_full_rank(&self) -> bool
+pub fn gfm::hybrid::Solution<F>::rank(&self) -> usize
+pub fn gfm::hybrid::Solution<F>::value(&self, usize) -> &[u8]
+impl<F: fgf::field::FieldBuffer> core::fmt::Debug for gfm::hybrid::Solution<F>
+pub fn gfm::hybrid::Solution<F>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<F> core::marker::Freeze for gfm::hybrid::Solution<F> where gfm::dense::Matrix<F>: core::marker::Freeze
+impl<F> core::marker::Send for gfm::hybrid::Solution<F> where gfm::dense::Matrix<F>: core::marker::Send
+impl<F> core::marker::Sync for gfm::hybrid::Solution<F> where gfm::dense::Matrix<F>: core::marker::Sync
+impl<F> core::marker::Unpin for gfm::hybrid::Solution<F> where gfm::dense::Matrix<F>: core::marker::Unpin
+impl<F> core::marker::UnsafeUnpin for gfm::hybrid::Solution<F> where gfm::dense::Matrix<F>: core::marker::UnsafeUnpin
+impl<F> core::panic::unwind_safe::RefUnwindSafe for gfm::hybrid::Solution<F> where gfm::dense::Matrix<F>: core::panic::unwind_safe::RefUnwindSafe
+impl<F> core::panic::unwind_safe::UnwindSafe for gfm::hybrid::Solution<F> where gfm::dense::Matrix<F>: core::panic::unwind_safe::UnwindSafe
+pub trait gfm::hybrid::SparseEquationSource<F: fgf::field::FieldBuffer>
+pub fn gfm::hybrid::SparseEquationSource::for_each_equation(&self, &mut impl core::ops::function::FnMut(gfm::hybrid::SparseEquation<'_, F>))
+pub mod gfm::incremental
+pub enum gfm::incremental::EchelonMode
+pub gfm::incremental::EchelonMode::Forward
+pub gfm::incremental::EchelonMode::PropagateUnits
+impl core::clone::Clone for gfm::incremental::EchelonMode
+pub fn gfm::incremental::EchelonMode::clone(&self) -> Self
+impl core::clone::TrivialClone for gfm::incremental::EchelonMode
+impl core::cmp::Eq for gfm::incremental::EchelonMode
+impl core::cmp::PartialEq for gfm::incremental::EchelonMode
+pub fn gfm::incremental::EchelonMode::eq(&self, &Self) -> bool
+impl core::fmt::Debug for gfm::incremental::EchelonMode
+pub fn gfm::incremental::EchelonMode::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for gfm::incremental::EchelonMode
+impl core::marker::StructuralPartialEq for gfm::incremental::EchelonMode
+impl core::marker::Freeze for gfm::incremental::EchelonMode
+impl core::marker::Send for gfm::incremental::EchelonMode
+impl core::marker::Sync for gfm::incremental::EchelonMode
+impl core::marker::Unpin for gfm::incremental::EchelonMode
+impl core::marker::UnsafeUnpin for gfm::incremental::EchelonMode
+impl core::panic::unwind_safe::RefUnwindSafe for gfm::incremental::EchelonMode
+impl core::panic::unwind_safe::UnwindSafe for gfm::incremental::EchelonMode
+pub enum gfm::incremental::Innovation<I>
+pub gfm::incremental::Innovation::Dependent
+pub gfm::incremental::Innovation::Inconsistent
+pub gfm::incremental::Innovation::Innovative
+pub gfm::incremental::Innovation::Innovative::pivot: I
+impl<I: core::clone::Clone> core::clone::Clone for gfm::incremental::Innovation<I>
+pub fn gfm::incremental::Innovation<I>::clone(&self) -> Self
+impl<I: core::cmp::Eq> core::cmp::Eq for gfm::incremental::Innovation<I>
+pub fn gfm::incremental::Innovation<I>::assert_fields_are_eq(&self)
+impl<I: core::cmp::PartialEq> core::cmp::PartialEq for gfm::incremental::Innovation<I>
+pub fn gfm::incremental::Innovation<I>::eq(&self, &Self) -> bool
+impl<I: core::cmp::PartialEq> core::marker::StructuralPartialEq for gfm::incremental::Innovation<I>
+impl<I: core::fmt::Debug> core::fmt::Debug for gfm::incremental::Innovation<I>
+pub fn gfm::incremental::Innovation<I>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<I: core::marker::Copy> core::marker::Copy for gfm::incremental::Innovation<I>
+impl<I> core::marker::Freeze for gfm::incremental::Innovation<I> where I: core::marker::Freeze
+impl<I> core::marker::Send for gfm::incremental::Innovation<I> where I: core::marker::Send
+impl<I> core::marker::Sync for gfm::incremental::Innovation<I> where I: core::marker::Sync
+impl<I> core::marker::Unpin for gfm::incremental::Innovation<I> where I: core::marker::Unpin
+impl<I> core::marker::UnsafeUnpin for gfm::incremental::Innovation<I> where I: core::marker::UnsafeUnpin
+impl<I> core::panic::unwind_safe::RefUnwindSafe for gfm::incremental::Innovation<I> where I: core::panic::unwind_safe::RefUnwindSafe
+impl<I> core::panic::unwind_safe::UnwindSafe for gfm::incremental::Innovation<I> where I: core::panic::unwind_safe::UnwindSafe
+pub struct gfm::incremental::Echelon<F: fgf::field::FieldBuffer>
+impl<F: fgf::field::FieldBuffer> gfm::incremental::Echelon<F>
+pub fn gfm::incremental::Echelon<F>::absorb(&mut self, &[u8], &[u8]) -> gfm::incremental::Innovation
+pub fn gfm::incremental::Echelon<F>::absorb_unit(&mut self, usize, &[u8]) -> gfm::incremental::Innovation
+pub fn gfm::incremental::Echelon<F>::advance_prefix(&mut self, usize)
+pub fn gfm::incremental::Echelon<F>::is_complete(&self) -> bool
+pub fn gfm::incremental::Echelon<F>::is_pivot(&self, usize) -> bool
+pub fn gfm::incremental::Echelon<F>::new(usize, usize, gfm::incremental::EchelonMode) -> core::result::Result<Self, gfm::GeometryError>
+pub fn gfm::incremental::Echelon<F>::newly_recovered(&self) -> impl core::iter::traits::iterator::Iterator<Item = (usize, &[u8])> + '_
+pub fn gfm::incremental::Echelon<F>::newly_recovered_columns(&self) -> &[usize]
+pub fn gfm::incremental::Echelon<F>::pivot_columns(&self) -> impl core::iter::traits::iterator::Iterator<Item = usize> + '_
+pub const fn gfm::incremental::Echelon<F>::rank(&self) -> usize
+pub fn gfm::incremental::Echelon<F>::recovered(&self) -> impl core::iter::traits::iterator::Iterator<Item = (usize, &[u8])> + '_
+pub fn gfm::incremental::Echelon<F>::recovered_value(&self, usize) -> core::option::Option<&[u8]>
+pub fn gfm::incremental::Echelon<F>::retained_rows(&self) -> impl core::iter::traits::iterator::Iterator<Item = gfm::incremental::RetainedRow<'_, F>> + '_
+impl<F: fgf::field::FieldBuffer> core::fmt::Debug for gfm::incremental::Echelon<F>
+pub fn gfm::incremental::Echelon<F>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<F> core::marker::Freeze for gfm::incremental::Echelon<F> where gfm::dense::Matrix<F>: core::marker::Freeze + core::marker::Freeze
+impl<F> core::marker::Send for gfm::incremental::Echelon<F> where gfm::dense::Matrix<F>: core::marker::Send + core::marker::Send
+impl<F> core::marker::Sync for gfm::incremental::Echelon<F> where gfm::dense::Matrix<F>: core::marker::Sync + core::marker::Sync
+impl<F> core::marker::Unpin for gfm::incremental::Echelon<F> where gfm::dense::Matrix<F>: core::marker::Unpin + core::marker::Unpin
+impl<F> core::marker::UnsafeUnpin for gfm::incremental::Echelon<F> where gfm::dense::Matrix<F>: core::marker::UnsafeUnpin + core::marker::UnsafeUnpin
+impl<F> core::panic::unwind_safe::RefUnwindSafe for gfm::incremental::Echelon<F> where gfm::dense::Matrix<F>: core::panic::unwind_safe::RefUnwindSafe + core::panic::unwind_safe::RefUnwindSafe
+impl<F> core::panic::unwind_safe::UnwindSafe for gfm::incremental::Echelon<F> where gfm::dense::Matrix<F>: core::panic::unwind_safe::UnwindSafe + core::panic::unwind_safe::UnwindSafe
+pub struct gfm::incremental::RetainedRow<'a, F: fgf::field::FieldBuffer>
+impl<'a, F: fgf::field::FieldBuffer> gfm::incremental::RetainedRow<'a, F>
+pub fn gfm::incremental::RetainedRow<'a, F>::coefficient_slices(&self) -> (&'a [u8], &'a [u8])
+pub fn gfm::incremental::RetainedRow<'a, F>::mul_coefficients_add(&self, &mut [u8], fgf::field::Elem<F>)
+pub const fn gfm::incremental::RetainedRow<'a, F>::pivot(&self) -> usize
+pub const fn gfm::incremental::RetainedRow<'a, F>::rhs(&self) -> &'a [u8]
+impl<F: fgf::field::FieldBuffer> core::fmt::Debug for gfm::incremental::RetainedRow<'_, F>
+pub fn gfm::incremental::RetainedRow<'_, F>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<'a, F> core::marker::Freeze for gfm::incremental::RetainedRow<'a, F> where core::marker::PhantomData<F>: core::marker::Freeze
+impl<'a, F> core::marker::Send for gfm::incremental::RetainedRow<'a, F> where core::marker::PhantomData<F>: core::marker::Send
+impl<'a, F> core::marker::Sync for gfm::incremental::RetainedRow<'a, F> where core::marker::PhantomData<F>: core::marker::Sync
+impl<'a, F> core::marker::Unpin for gfm::incremental::RetainedRow<'a, F> where core::marker::PhantomData<F>: core::marker::Unpin
+impl<'a, F> core::marker::UnsafeUnpin for gfm::incremental::RetainedRow<'a, F> where core::marker::PhantomData<F>: core::marker::UnsafeUnpin
+impl<'a, F> core::panic::unwind_safe::RefUnwindSafe for gfm::incremental::RetainedRow<'a, F> where core::marker::PhantomData<F>: core::panic::unwind_safe::RefUnwindSafe
+impl<'a, F> core::panic::unwind_safe::UnwindSafe for gfm::incremental::RetainedRow<'a, F> where core::marker::PhantomData<F>: core::panic::unwind_safe::UnwindSafe
+#[non_exhaustive] pub enum gfm::GeometryError
+pub gfm::GeometryError::Overflow
+pub gfm::GeometryError::Overflow::pitch: usize
+pub gfm::GeometryError::Overflow::rows: usize
+pub gfm::GeometryError::Ragged
+pub gfm::GeometryError::Ragged::element_bytes: usize
+pub gfm::GeometryError::Ragged::len: usize
+pub gfm::GeometryError::Shape
+pub gfm::GeometryError::Shape::lhs: (usize, usize)
+pub gfm::GeometryError::Shape::rhs: (usize, usize)
+impl core::clone::Clone for gfm::GeometryError
+pub fn gfm::GeometryError::clone(&self) -> Self
+impl core::cmp::Eq for gfm::GeometryError
+pub fn gfm::GeometryError::assert_fields_are_eq(&self)
+impl core::cmp::PartialEq for gfm::GeometryError
+pub fn gfm::GeometryError::eq(&self, &Self) -> bool
+impl core::fmt::Debug for gfm::GeometryError
+pub fn gfm::GeometryError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for gfm::GeometryError
+pub fn gfm::GeometryError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for gfm::GeometryError
+impl core::marker::Freeze for gfm::GeometryError
+impl core::marker::Send for gfm::GeometryError
+impl core::marker::Sync for gfm::GeometryError
+impl core::marker::Unpin for gfm::GeometryError
+impl core::marker::UnsafeUnpin for gfm::GeometryError
+impl core::panic::unwind_safe::RefUnwindSafe for gfm::GeometryError
+impl core::panic::unwind_safe::UnwindSafe for gfm::GeometryError
+#[non_exhaustive] pub enum gfm::SolveError
+pub gfm::SolveError::Inconsistent
+pub gfm::SolveError::Inconsistent::row: usize
+pub gfm::SolveError::Singular
+pub gfm::SolveError::Singular::order: usize
+pub gfm::SolveError::Singular::rank: usize
+impl core::clone::Clone for gfm::SolveError
+pub fn gfm::SolveError::clone(&self) -> Self
+impl core::cmp::Eq for gfm::SolveError
+pub fn gfm::SolveError::assert_fields_are_eq(&self)
+impl core::cmp::PartialEq for gfm::SolveError
+pub fn gfm::SolveError::eq(&self, &Self) -> bool
+impl core::fmt::Debug for gfm::SolveError
+pub fn gfm::SolveError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for gfm::SolveError
+pub fn gfm::SolveError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for gfm::SolveError
+impl core::marker::Freeze for gfm::SolveError
+impl core::marker::Send for gfm::SolveError
+impl core::marker::Sync for gfm::SolveError
+impl core::marker::Unpin for gfm::SolveError
+impl core::marker::UnsafeUnpin for gfm::SolveError
+impl core::panic::unwind_safe::RefUnwindSafe for gfm::SolveError
+impl core::panic::unwind_safe::UnwindSafe for gfm::SolveError
+# external re-exports

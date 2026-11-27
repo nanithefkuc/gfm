@@ -1,23 +1,24 @@
 //! The streaming accumulator against its acceptance: agreement with a batch
 //! `Ple` over the same rows in rank, pivot columns, and solution, order
-//! independence, inconsistency detection, pivot queries, ragged and wide
-//! geometry, ring wrap after a prefix advance, and reduced-mode substitution
-//! of recovered columns.
+//! independence, inconsistency detection, pivot queries, element-counted
+//! geometry, ring wrap after a prefix advance, and `PropagateUnits`
+//! substitution of recovered columns.
 
 // Index arithmetic across several matrices at once; iterators would obscure it.
 #![allow(clippy::needless_range_loop)]
 
 mod common;
 
+use common::{Gf8B, Gf16};
 use common::{draw, noise};
-use fgf::field::{Elem, Field};
-use fgf::{FieldKernels, Gf8B, Gf16};
-use gfm::{Echelon, Innovation, Matrix, Ple, PleScratch, SolveScratch};
+use fgf::{Elem, FieldBuffer, FieldElem};
+use gfm::dense::{Matrix, Ple, SolveScratch};
+use gfm::incremental::{Echelon, EchelonMode, Innovation};
 
-type E = <Gf8B as Field>::Elem;
+type E = Elem<Gf8B>;
 
 /// Draws `n` arbitrary field elements deterministically.
-fn elems<F: FieldKernels>(n: usize, seed: u64) -> Vec<F::Elem> {
+fn elems<F: FieldBuffer>(n: usize, seed: u64) -> Vec<Elem<F>> {
     let bytes = noise(n * F::BYTES, seed);
     (0..n)
         .map(|i| F::decode(&bytes[i * F::BYTES..(i + 1) * F::BYTES]))
@@ -25,7 +26,7 @@ fn elems<F: FieldKernels>(n: usize, seed: u64) -> Vec<F::Elem> {
 }
 
 /// Packs a row of elements into little-endian bytes.
-fn pack<F: FieldKernels>(row: &[F::Elem]) -> Vec<u8> {
+fn pack<F: FieldBuffer>(row: &[Elem<F>]) -> Vec<u8> {
     let mut out = vec![0u8; row.len() * F::BYTES];
     for (i, &e) in row.iter().enumerate() {
         F::encode(&mut out[i * F::BYTES..(i + 1) * F::BYTES], e);
@@ -47,26 +48,26 @@ fn matrix_of(rows: &[Vec<E>], cols: usize) -> Matrix<Gf8B> {
 /// A guaranteed-invertible dense coefficient matrix: the product `L·U` of a
 /// unit-diagonal lower triangle and a unit-diagonal upper triangle filled
 /// from deterministic noise, so it is nonsingular and generically dense.
-fn invertible_coeffs<F: FieldKernels>(n: usize, seed: u64) -> Vec<Vec<F::Elem>> {
+fn invertible_coeffs<F: FieldBuffer>(n: usize, seed: u64) -> Vec<Vec<Elem<F>>> {
     let entry = |i: usize, j: usize| elems::<F>(1, seed + ((i * n + j) as u64) * 0x9E37)[0];
-    let mut a = vec![vec![F::Elem::ZERO; n]; n];
+    let mut a = vec![vec![Elem::<F>::ZERO; n]; n];
     for (i, row) in a.iter_mut().enumerate() {
         for (j, cell) in row.iter_mut().enumerate() {
-            let mut acc = F::Elem::ZERO;
+            let mut acc = Elem::<F>::ZERO;
             for t in 0..n {
                 let l = if t < i {
                     entry(i, t)
                 } else if t == i {
-                    F::Elem::ONE
+                    Elem::<F>::ONE
                 } else {
-                    F::Elem::ZERO
+                    Elem::<F>::ZERO
                 };
                 let u = if t > j {
                     entry(t, j)
                 } else if t == j {
-                    F::Elem::ONE
+                    Elem::<F>::ONE
                 } else {
-                    F::Elem::ZERO
+                    Elem::<F>::ZERO
                 };
                 acc = acc.add(l.mul(u));
             }
@@ -113,7 +114,7 @@ fn recovered_matches_the_unique_solution() {
             })
             .collect();
 
-        let mut ech = Echelon::<Gf8B>::new(n, s, true).unwrap();
+        let mut ech = Echelon::<Gf8B>::new(n, s, EchelonMode::PropagateUnits).unwrap();
         for i in 0..n {
             ech.absorb(&pack::<Gf8B>(&coeffs[i]), &pack::<Gf8B>(&rhs[i]));
         }
@@ -142,12 +143,12 @@ fn rank_and_pivots_agree_with_ple() {
             .map(|i| elems::<Gf8B>(cols, 0xB000 + (i as u64)))
             .collect();
         // Homogeneous RHS keeps the system consistent, isolating rank/pivots.
-        let mut ech = Echelon::<Gf8B>::new(cols, 1, true).unwrap();
+        let mut ech = Echelon::<Gf8B>::new(cols, 1, EchelonMode::PropagateUnits).unwrap();
         let zero = vec![0u8; 1];
         for row in &rows {
             ech.absorb(&pack::<Gf8B>(row), &zero);
         }
-        let ple = Ple::decompose(matrix_of(&rows, cols), &mut PleScratch::new());
+        let ple = Ple::decompose(matrix_of(&rows, cols));
         assert_eq!(ech.rank(), ple.rank(), "rank ({num_rows}x{cols})");
         let pivots: Vec<_> = ech.pivot_columns().collect();
         assert_eq!(
@@ -194,7 +195,7 @@ fn absorb_order_is_irrelevant() {
         .collect();
 
     let run = |order: &[usize]| -> (usize, Vec<(usize, Vec<u8>)>, bool) {
-        let mut ech = Echelon::<Gf8B>::new(cols, s, true).unwrap();
+        let mut ech = Echelon::<Gf8B>::new(cols, s, EchelonMode::PropagateUnits).unwrap();
         let mut inconsistent = false;
         for &i in order {
             if matches!(
@@ -230,7 +231,7 @@ fn absorb_order_is_irrelevant() {
 #[test]
 fn detects_inconsistency() {
     let cols = 6;
-    let mut ech = Echelon::<Gf8B>::new(cols, 1, true).unwrap();
+    let mut ech = Echelon::<Gf8B>::new(cols, 1, EchelonMode::PropagateUnits).unwrap();
     let row = elems::<Gf8B>(cols, 0x1234);
     // First absorb is innovative.
     assert!(matches!(
@@ -246,22 +247,22 @@ fn detects_inconsistency() {
 }
 
 #[test]
-fn forward_echelon_matches_reduced_rank() {
-    // The recoder (reduced == false) and decoder agree on rank, and on the
+fn forward_echelon_matches_propagating_rank() {
+    // The `Forward` and `PropagateUnits` modes agree on rank, and on the
     // final solution when driven to completion via a batch Ple.
     for &(num_rows, cols) in &[(12, 10), (8, 8), (20, 15)] {
         let rows: Vec<Vec<E>> = (0..num_rows)
             .map(|i| elems::<Gf8B>(cols, 0x2200 + i as u64))
             .collect();
         let zero = vec![0u8; 1];
-        let mut decoder = Echelon::<Gf8B>::new(cols, 1, true).unwrap();
-        let mut recoder = Echelon::<Gf8B>::new(cols, 1, false).unwrap();
+        let mut decoder = Echelon::<Gf8B>::new(cols, 1, EchelonMode::PropagateUnits).unwrap();
+        let mut recoder = Echelon::<Gf8B>::new(cols, 1, EchelonMode::Forward).unwrap();
         for row in &rows {
             decoder.absorb(&pack::<Gf8B>(row), &zero);
             recoder.absorb(&pack::<Gf8B>(row), &zero);
         }
         assert_eq!(decoder.rank(), recoder.rank(), "{num_rows}x{cols}");
-        let ple = Ple::decompose(matrix_of(&rows, cols), &mut PleScratch::new());
+        let ple = Ple::decompose(matrix_of(&rows, cols));
         assert_eq!(decoder.rank(), ple.rank());
     }
 }
@@ -288,14 +289,14 @@ fn solution_matches_ple_solve_when_complete() {
         })
         .collect();
 
-    let mut ech = Echelon::<Gf8B>::new(n, s, true).unwrap();
+    let mut ech = Echelon::<Gf8B>::new(n, s, EchelonMode::PropagateUnits).unwrap();
     for i in 0..n {
         ech.absorb(&pack::<Gf8B>(&coeffs[i]), &pack::<Gf8B>(&rhs[i]));
     }
 
     let a = matrix_of(&coeffs, n);
     let b = matrix_of(&rhs, s);
-    let ple = Ple::decompose(a, &mut PleScratch::new());
+    let ple = Ple::decompose(a);
     let mut out = Matrix::<Gf8B>::zeros(n, s).unwrap();
     ple.solve_into(&b, &mut out, &mut SolveScratch::new())
         .unwrap();
@@ -307,7 +308,7 @@ fn solution_matches_ple_solve_when_complete() {
 
 #[test]
 fn is_pivot_tracks_absorption() {
-    let mut echelon = Echelon::<Gf8B>::new(4, 1, false).unwrap();
+    let mut echelon = Echelon::<Gf8B>::new(4, 1, EchelonMode::Forward).unwrap();
     for c in 0..4 {
         assert!(!echelon.is_pivot(c), "pivot {c} before absorption");
     }
@@ -324,21 +325,28 @@ fn is_pivot_tracks_absorption() {
 }
 
 #[test]
-fn constructor_rejects_ragged_rhs() {
-    let err = Echelon::<Gf16>::new(4, 3, true).unwrap_err();
-    assert_eq!(
-        err,
-        gfm::GeometryError::Ragged {
-            len: 3,
-            element_bytes: 2,
-        }
-    );
+fn constructor_and_absorb_count_rhs_in_elements() {
+    // Two `Gf16` payload elements: the constructor takes the element count,
+    // while the packed buffer passed to `absorb` holds four bytes.
+    let mut echelon = Echelon::<Gf16>::new(2, 2, EchelonMode::PropagateUnits).unwrap();
+    assert!(matches!(
+        echelon.absorb(&[1, 0, 0, 0], &[7, 0, 9, 0]),
+        Innovation::Innovative { pivot: 0 }
+    ));
+    assert_eq!(echelon.recovered_value(0), Some(&[7, 0, 9, 0][..]));
+}
+
+#[test]
+#[should_panic(expected = "right-hand side length")]
+fn absorb_rejects_a_rhs_measured_in_bytes() {
+    let mut echelon = Echelon::<Gf16>::new(1, 2, EchelonMode::Forward).unwrap();
+    echelon.absorb(&[0, 1], &[0, 0]);
 }
 
 #[test]
 fn absorb_unit_matches_a_dense_unit_row() {
-    for reduced in [false, true] {
-        let mut echelon = Echelon::<Gf8B>::new(4, 1, reduced).unwrap();
+    for mode in [EchelonMode::Forward, EchelonMode::PropagateUnits] {
+        let mut echelon = Echelon::<Gf8B>::new(4, 1, mode).unwrap();
         assert!(matches!(
             echelon.absorb_unit(2, &[9]),
             Innovation::Innovative { pivot: 2 }
@@ -346,20 +354,21 @@ fn absorb_unit_matches_a_dense_unit_row() {
         assert_eq!(echelon.rank(), 1);
         assert!(echelon.is_pivot(2));
         // The same absorption through the dense path agrees.
-        let mut dense = Echelon::<Gf8B>::new(4, 1, reduced).unwrap();
+        let mut dense = Echelon::<Gf8B>::new(4, 1, mode).unwrap();
         assert!(matches!(
             dense.absorb(&[0, 0, 1, 0], &[9]),
             Innovation::Innovative { pivot: 2 }
         ));
         assert_eq!(echelon.pivot_columns().collect::<Vec<_>>(), vec![2]);
         assert_eq!(dense.pivot_columns().collect::<Vec<_>>(), vec![2]);
-        if reduced {
+        let propagate = mode == EchelonMode::PropagateUnits;
+        if propagate {
             assert_eq!(echelon.recovered_value(2), Some(&[9][..]));
             assert_eq!(echelon.recovered_value(0), None);
         }
         // Both complete to the same solution as a batch Ple.
         let x = elems::<Gf8B>(4, 0x0417);
-        let mut unit_then_dense = Echelon::<Gf8B>::new(4, 1, reduced).unwrap();
+        let mut unit_then_dense = Echelon::<Gf8B>::new(4, 1, mode).unwrap();
         unit_then_dense.absorb_unit(2, &pack::<Gf8B>(&[x[2]]));
         let mut absolute: Vec<Vec<E>> = vec![vec![E::ZERO; 4]];
         absolute[0][2] = E::ONE;
@@ -381,13 +390,13 @@ fn absorb_unit_matches_a_dense_unit_row() {
             matrix_of(&absolute, absolute[0].len()),
             matrix_of(&absolute_rhs, 1),
         );
-        let ple = Ple::decompose(a, &mut PleScratch::new());
+        let ple = Ple::decompose(a);
         let mut out = Matrix::<Gf8B>::zeros(4, 1).unwrap();
         ple.solve_into(&b, &mut out, &mut SolveScratch::new())
             .unwrap();
         for v in 0..4 {
             assert_eq!(out.get(v, 0), x[v], "variable {v}");
-            if reduced {
+            if propagate {
                 assert_eq!(
                     unit_then_dense.recovered_value(v).unwrap(),
                     out.row(v),
@@ -399,11 +408,11 @@ fn absorb_unit_matches_a_dense_unit_row() {
 }
 
 #[test]
-fn reduced_absorb_substitutes_recovered_columns() {
+fn propagation_substitutes_recovered_columns() {
     // Units on 2 and 3 recover first; a later row pivoting on 0 with a
     // nonzero entry at 2 substitutes the known value out.
     let x = elems::<Gf8B>(4, 0x5EED);
-    let mut echelon = Echelon::<Gf8B>::new(4, 1, true).unwrap();
+    let mut echelon = Echelon::<Gf8B>::new(4, 1, EchelonMode::PropagateUnits).unwrap();
     echelon.absorb_unit(2, &pack::<Gf8B>(&[x[2]]));
     echelon.absorb_unit(3, &pack::<Gf8B>(&[x[3]]));
     assert_eq!(echelon.newly_recovered_columns(), &[3]);
@@ -428,7 +437,7 @@ fn reduced_absorb_substitutes_recovered_columns() {
 #[test]
 fn unit_propagation_shrinks_spans_and_recovers() {
     let x = elems::<Gf8B>(3, 0x9011);
-    let mut echelon = Echelon::<Gf8B>::new(3, 1, true).unwrap();
+    let mut echelon = Echelon::<Gf8B>::new(3, 1, EchelonMode::PropagateUnits).unwrap();
     let r0 = x[0].add(x[1]).add(x[2]);
     assert!(matches!(
         echelon.absorb(&[1, 1, 1], &pack::<Gf8B>(&[r0])),
@@ -458,14 +467,44 @@ fn unit_propagation_shrinks_spans_and_recovers() {
 }
 
 #[test]
+fn propagation_reports_a_sound_subset_of_determined_coordinates() {
+    // `x + y + z = 1` and `y + z = 0` determine `x = 1`, but the retained
+    // row for `x` still carries the free coordinates `y` and `z`, so
+    // propagation has no lone unit to report.
+    let mut echelon = Echelon::<Gf8B>::new(3, 1, EchelonMode::PropagateUnits).unwrap();
+    assert!(matches!(
+        echelon.absorb(&[1, 1, 1], &[1]),
+        Innovation::Innovative { pivot: 0 }
+    ));
+    assert!(matches!(
+        echelon.absorb(&[0, 1, 1], &[0]),
+        Innovation::Innovative { pivot: 1 }
+    ));
+    assert_eq!(echelon.rank(), 2);
+    assert_eq!(echelon.recovered_value(0), None);
+    assert_eq!(echelon.recovered_value(1), None);
+    assert_eq!(echelon.recovered_value(2), None);
+    // The batch factorization agrees on rank, and its RREF is the exact
+    // route: row 0 is the unit equation for `x`.
+    let rows = [vec![E::ONE; 3], vec![E::ZERO, E::ONE, E::ONE]];
+    let ple = Ple::decompose(matrix_of(&rows, 3));
+    assert_eq!(ple.rank(), 2);
+    let mut rref = Matrix::<Gf8B>::zeros(2, 3).unwrap();
+    ple.rref_into(&mut rref);
+    assert!(rref.get(0, 0).is_one());
+    assert!(rref.get(0, 1).is_zero());
+    assert!(rref.get(0, 2).is_zero());
+}
+
+#[test]
 fn wider_field_matches_ple_solution() {
     // The two-byte field through the same streaming interface.
     type F = Gf16;
-    type FElem = <F as Field>::Elem;
+    type FElem = Elem<F>;
     let n = 5;
     let sym = 2;
     let x: Vec<Vec<FElem>> = (0..n).map(|v| elems::<F>(sym, 0xF1E0 + v as u64)).collect();
-    let mut echelon = Echelon::<F>::new(n, sym * F::BYTES, true).unwrap();
+    let mut echelon = Echelon::<F>::new(n, sym, EchelonMode::PropagateUnits).unwrap();
     let mut a = Matrix::<F>::zeros(n, n).unwrap();
     let mut b = Matrix::<F>::zeros(n, sym).unwrap();
     for (i, packed) in invertible_coeffs::<F>(n, 0xF1E1)
@@ -492,7 +531,7 @@ fn wider_field_matches_ple_solution() {
         }
     }
     assert!(echelon.is_complete());
-    let ple = Ple::decompose(a, &mut PleScratch::new());
+    let ple = Ple::decompose(a);
     let mut out = Matrix::<F>::zeros(n, sym).unwrap();
     ple.solve_into(&b, &mut out, &mut SolveScratch::new())
         .unwrap();
@@ -510,7 +549,7 @@ fn wider_field_matches_ple_solution() {
 
 #[test]
 fn advance_prefix_zero_is_a_noop() {
-    let mut echelon = Echelon::<Gf8B>::new(4, 1, true).unwrap();
+    let mut echelon = Echelon::<Gf8B>::new(4, 1, EchelonMode::PropagateUnits).unwrap();
     echelon.absorb(&[1, 0, 0, 0], &[3]);
     echelon.absorb(&[0, 0, 1, 0], &[5]);
     let pivots: Vec<usize> = echelon.pivot_columns().collect();
@@ -521,8 +560,8 @@ fn advance_prefix_zero_is_a_noop() {
 
 #[test]
 fn advancing_prefix_reindexes_surviving_rows() {
-    for reduced in [false, true] {
-        let mut echelon = Echelon::<Gf8B>::new(5, 1, reduced).unwrap();
+    for mode in [EchelonMode::Forward, EchelonMode::PropagateUnits] {
+        let mut echelon = Echelon::<Gf8B>::new(5, 1, mode).unwrap();
         assert!(matches!(
             echelon.absorb(&[1, 0, 0, 0, 0], &[11]),
             Innovation::Innovative { pivot: 0 }
@@ -579,7 +618,7 @@ fn advance_then_dense_absorb_matches_ple() {
     // reduction and retained-row reads cross from the ring end to its start.
     let (n, off) = (8usize, 4usize);
     let x = elems::<Gf8B>(n, 0x0BAD);
-    let mut echelon = Echelon::<Gf8B>::new(n, 1, true).unwrap();
+    let mut echelon = Echelon::<Gf8B>::new(n, 1, EchelonMode::PropagateUnits).unwrap();
     echelon.absorb_unit(0, &pack::<Gf8B>(&[x[0]]));
     echelon.absorb_unit(1, &pack::<Gf8B>(&[x[1]]));
     echelon.advance_prefix(off);
@@ -649,7 +688,7 @@ fn advance_then_dense_absorb_matches_ple() {
         }
         b.set(i, 0, rhs);
     }
-    let ple = Ple::decompose(a, &mut PleScratch::new());
+    let ple = Ple::decompose(a);
     let mut out = Matrix::<Gf8B>::zeros(n, 1).unwrap();
     ple.solve_into(&b, &mut out, &mut SolveScratch::new())
         .unwrap();
@@ -669,7 +708,7 @@ fn cyclic_wrap_second_slice_matches_stored_halves() {
     // `mul_add_cyclic` into its second slice, and the gathered output
     // still reproduces the stored halves.
     let n = 10;
-    let mut echelon = Echelon::<Gf8B>::new(n, 1, false).unwrap();
+    let mut echelon = Echelon::<Gf8B>::new(n, 1, EchelonMode::Forward).unwrap();
     echelon.absorb_unit(0, &[0x11]);
     echelon.absorb_unit(1, &[0x22]);
     echelon.advance_prefix(6);
@@ -718,7 +757,7 @@ fn wrapped_gather_matches_stored_slices() {
     // spanning the wrap point stores coefficients on both sides, and the
     // gather into an output row reproduces exactly the stored slices.
     let n = 12;
-    let mut echelon = Echelon::<Gf8B>::new(n, 1, false).unwrap();
+    let mut echelon = Echelon::<Gf8B>::new(n, 1, EchelonMode::Forward).unwrap();
     echelon.absorb_unit(0, &[0x11]);
     echelon.absorb_unit(1, &[0x22]);
     echelon.advance_prefix(7);
@@ -761,13 +800,13 @@ fn wrapped_gather_matches_stored_slices() {
 fn wide_rows_match_ple() {
     // Seventy columns take the out-of-line row-kernel path in both the
     // forward reduction and the right-hand-side gather.
-    for reduced in [false, true] {
+    for mode in [EchelonMode::Forward, EchelonMode::PropagateUnits] {
         let (cols, rhs_cols) = (70usize, 2usize);
         let rows: Vec<Vec<E>> = (0..cols)
             .map(|i| elems::<Gf8B>(cols, 0xB700 + i as u64))
             .collect();
-        let mut echelon = Echelon::<Gf8B>::new(cols, rhs_cols, reduced).unwrap();
-        let zero_rhs = vec![0u8; rhs_cols];
+        let mut echelon = Echelon::<Gf8B>::new(cols, rhs_cols, mode).unwrap();
+        let zero_rhs = vec![0u8; rhs_cols * Gf8B::BYTES];
         for row in &rows {
             echelon.absorb(&pack::<Gf8B>(row), &zero_rhs);
         }
@@ -777,7 +816,7 @@ fn wide_rows_match_ple() {
                 m.set(i, j, e);
             }
         }
-        let ple = Ple::decompose(m, &mut PleScratch::new());
+        let ple = Ple::decompose(m);
         assert_eq!(echelon.rank(), ple.rank(), "wide rank");
         assert_eq!(
             echelon.pivot_columns().collect::<Vec<_>>(),
@@ -789,13 +828,13 @@ fn wide_rows_match_ple() {
 
 #[test]
 fn wide_forward_absorb_matches_ple_rank() {
-    // Same width without reduction: absorb unit rows first so the pivot
-    // set is non-empty, then a dense reduced-mode-style row whose
-    // reduction hits both the span-one clearing and the direct kernel
-    // update. Reduced mode is off here, so the substitution loop is
-    // skipped; the direct update in the forward loop is what runs.
+    // Same width without propagation: absorb unit rows first so the pivot
+    // set is non-empty, then a dense full-support row whose reduction hits
+    // both the span-one clearing and the direct kernel update. Propagation
+    // is off here, so the substitution loop is skipped; the direct update
+    // in the forward loop is what runs.
     let cols = 68usize;
-    let mut echelon = Echelon::<Gf8B>::new(cols, 2, false).unwrap();
+    let mut echelon = Echelon::<Gf8B>::new(cols, 2, EchelonMode::Forward).unwrap();
     for c in [0usize, 2, 4] {
         let mut unit = vec![E::ZERO; cols];
         unit[c] = E::ONE;
@@ -832,7 +871,7 @@ fn wide_forward_absorb_matches_ple_rank() {
             m.set(i, j, e);
         }
     }
-    let ple = Ple::decompose(m, &mut PleScratch::new());
+    let ple = Ple::decompose(m);
     assert_eq!(echelon.rank(), ple.rank());
     assert_eq!(
         echelon.pivot_columns().collect::<Vec<_>>(),
@@ -841,16 +880,16 @@ fn wide_forward_absorb_matches_ple_rank() {
 }
 
 #[test]
-fn wide_reduced_absorb_matches_ple() {
+fn wide_propagation_matches_ple() {
     // Sixty-eight columns take the out-of-line row-kernel path in both the
-    // forward reduction and the recovered-column substitution, in reduced
-    // mode where recovered units propagate.
+    // forward reduction and the recovered-column substitution, in
+    // `PropagateUnits` mode where recovered units propagate.
     let (n, sym) = (68usize, 2usize);
     let x: Vec<Vec<E>> = (0..n)
         .map(|v| elems::<Gf8B>(sym, 0xE100 + v as u64))
         .collect();
     let coefficients = invertible_with_tail(n, 0xE101);
-    let mut echelon = Echelon::<Gf8B>::new(n, sym, true).unwrap();
+    let mut echelon = Echelon::<Gf8B>::new(n, sym, EchelonMode::PropagateUnits).unwrap();
     let mut a = Matrix::<Gf8B>::zeros(n, n).unwrap();
     let mut b = Matrix::<Gf8B>::zeros(n, sym).unwrap();
     for (i, row) in coefficients.iter().enumerate() {
@@ -871,7 +910,7 @@ fn wide_reduced_absorb_matches_ple() {
     }
     assert!(echelon.is_complete());
     assert_eq!(echelon.rank(), n);
-    let ple = Ple::decompose(a, &mut PleScratch::new());
+    let ple = Ple::decompose(a);
     assert_eq!(ple.rank(), n);
     assert_eq!(
         echelon.pivot_columns().collect::<Vec<_>>(),
@@ -891,15 +930,15 @@ fn wide_reduced_absorb_matches_ple() {
 }
 
 #[test]
-fn wide_reduced_substitution_drives_the_kernel_directly() {
-    // Reduced mode past sixty-four columns: recover two unit columns,
+fn wide_propagation_substitution_drives_the_kernel_directly() {
+    // `PropagateUnits` past sixty-four columns: recover two unit columns,
     // absorb a dense row pivoting at 0 with a nonzero entry at a column
     // that is recovered but has NO pivot. The substitution loop then
     // takes the `None` early-continue (the column is known but carries
     // no equation), and the direct kernel update still applies to the
     // other recovered column.
     let cols = 68usize;
-    let mut echelon = Echelon::<Gf8B>::new(cols, 2, true).unwrap();
+    let mut echelon = Echelon::<Gf8B>::new(cols, 2, EchelonMode::PropagateUnits).unwrap();
     let x0 = Gf8B::decode(&[0x17]);
     let x5 = Gf8B::decode(&[0x2B]);
     echelon.absorb_unit(5, &pack::<Gf8B>(&[x5, x5]));
@@ -935,4 +974,31 @@ fn wide_reduced_substitution_drives_the_kernel_directly() {
         echelon.recovered_value(5).unwrap(),
         &pack::<Gf8B>(&[x5, x5])[..]
     );
+}
+
+#[test]
+#[should_panic(expected = "is_pivot column out of range")]
+fn is_pivot_rejects_columns_past_the_window() {
+    let mut echelon = Echelon::<Gf8B>::new(3, 1, EchelonMode::PropagateUnits).unwrap();
+    assert_eq!(
+        echelon.absorb(&[0, 0, 1], &[1]),
+        Innovation::Innovative { pivot: 2 }
+    );
+    let _ = echelon.is_pivot(5);
+}
+
+#[test]
+#[should_panic(expected = "recovered_value column out of range")]
+fn recovered_value_rejects_columns_past_the_window() {
+    let echelon = Echelon::<Gf8B>::new(3, 1, EchelonMode::PropagateUnits).unwrap();
+    let _ = echelon.recovered_value(3);
+}
+
+#[test]
+fn zero_column_accumulator_decides_by_right_hand_side() {
+    let mut echelon = Echelon::<Gf8B>::new(0, 1, EchelonMode::PropagateUnits).unwrap();
+    assert_eq!(echelon.absorb(&[], &[0]), Innovation::Dependent);
+    assert_eq!(echelon.absorb(&[], &[1]), Innovation::Inconsistent);
+    assert_eq!(echelon.rank(), 0);
+    assert_eq!(echelon.recovered().count(), 0);
 }

@@ -24,24 +24,26 @@
 
 use alloc::vec::Vec;
 
-use fgf::FieldKernels;
-use fgf::field::Elem;
+use fgf::{Elem, FieldBuffer, FieldElem};
 
 /// Sentinel frozen ordinal for a column that is not (yet) inactivated.
 pub(crate) const NOT_FROZEN: u32 = u32::MAX;
 
-/// One sparse row over GF(2)-majority systems: unit coefficients on `cols`
-/// until a field operation touches the row.
+/// One sparse row: unit coefficients on `cols` until a field operation
+/// touches the row.
 ///
 /// A packed row (`binary == true`) carries implicit unit coefficients:
 /// `coeffs` is empty, `cols` holds exactly the active columns, and `frozen`
 /// holds one bit per inactivated column keyed by the global frozen ordinal
-/// (word `w` covers ordinals `[64w, 64w + 64)`, padding zero). A widened row
-/// (`binary == false`) carries explicit coefficients parallel to `cols`,
-/// which then lists every column — active and frozen alike.
-pub(crate) struct Row<F: FieldKernels> {
+/// (word `w` covers ordinals `[64w, 64w + 64)`, padding zero). Packing
+/// assumes characteristic two — combinations cancel entries pairwise and
+/// fold the bit words with XOR — so only a field of characteristic two
+/// creates or keeps a packed row. A widened row (`binary == false`) carries
+/// explicit coefficients parallel to `cols`, which then lists every column —
+/// active and frozen alike.
+pub(crate) struct Row<F: FieldBuffer> {
     pub cols: Vec<u32>,
-    pub coeffs: Vec<F::Elem>,
+    pub coeffs: Vec<Elem<F>>,
     /// Bit-packed inactivated-column support of a packed row; unused
     /// (empty) once the row widens.
     pub frozen: Vec<u64>,
@@ -56,9 +58,9 @@ pub(crate) struct Row<F: FieldKernels> {
 /// Per-row storage costs an allocation for every row that merges and widens
 /// the row header a probe touches; one shared pair costs a copy back into
 /// the row's own buffer, which is already sized for it.
-pub(crate) struct MergeScratch<F: FieldKernels> {
+pub(crate) struct MergeScratch<F: FieldBuffer> {
     pub cols: Vec<u32>,
-    pub coeffs: Vec<F::Elem>,
+    pub coeffs: Vec<Elem<F>>,
     /// The widest merge seen so far. A swap hands the row the scratch
     /// buffer and takes the row's, so without a high-water mark the
     /// scratch would shrink to whatever the last row happened to need and
@@ -66,7 +68,7 @@ pub(crate) struct MergeScratch<F: FieldKernels> {
     high_water: usize,
 }
 
-impl<F: FieldKernels> MergeScratch<F> {
+impl<F: FieldBuffer> MergeScratch<F> {
     pub(crate) const fn new() -> Self {
         Self {
             cols: Vec::new(),
@@ -94,9 +96,12 @@ impl<F: FieldKernels> MergeScratch<F> {
         }
     }
 }
-impl<F: FieldKernels> Row<F> {
+impl<F: FieldBuffer> Row<F> {
     /// A binary row: unit coefficients on `support` (assumed sorted, distinct,
     /// and all active — packing splits it later, in `prepare_work`).
+    ///
+    /// The caller owns the characteristic-two precondition; packed rows are
+    /// built only for fields where `1 + 1` is zero.
     pub(crate) fn binary(support: Vec<u32>) -> Self {
         Self {
             cols: support,
@@ -107,7 +112,7 @@ impl<F: FieldKernels> Row<F> {
     }
 
     /// A field row with explicit coefficients (parallel to `support`).
-    pub(crate) fn field(support: Vec<u32>, coeffs: Vec<F::Elem>) -> Self {
+    pub(crate) fn field(support: Vec<u32>, coeffs: Vec<Elem<F>>) -> Self {
         debug_assert_eq!(support.len(), coeffs.len());
         Self {
             cols: support,
@@ -146,33 +151,33 @@ impl<F: FieldKernels> Row<F> {
     /// answers a frozen column from its bits; everything else searches the
     /// list. Input rows must go through [`Self::get_input`]: a valid
     /// ordinal describes the *working* system, not the untouched input.
-    pub(crate) fn get(&self, col: u32, frozen_ordinal: u32) -> F::Elem {
+    pub(crate) fn get(&self, col: u32, frozen_ordinal: u32) -> Elem<F> {
         if self.binary && frozen_ordinal != NOT_FROZEN {
             return self.frozen_bit(frozen_ordinal);
         }
         match self.cols.binary_search(&col) {
             Ok(t) => {
                 if self.binary {
-                    F::Elem::ONE
+                    Elem::<F>::ONE
                 } else {
                     self.coeffs[t]
                 }
             }
-            Err(_) => F::Elem::ZERO,
+            Err(_) => Elem::<F>::ZERO,
         }
     }
 
     /// The coefficient at `col` of an input row: pure list lookup.
-    pub(crate) fn get_input(&self, col: u32) -> F::Elem {
+    pub(crate) fn get_input(&self, col: u32) -> Elem<F> {
         match self.cols.binary_search(&col) {
             Ok(t) => {
                 if self.binary {
-                    F::Elem::ONE
+                    Elem::<F>::ONE
                 } else {
                     self.coeffs[t]
                 }
             }
-            Err(_) => F::Elem::ZERO,
+            Err(_) => Elem::<F>::ZERO,
         }
     }
 
@@ -183,13 +188,13 @@ impl<F: FieldKernels> Row<F> {
         self.cols.binary_search(&col).is_ok()
     }
 
-    fn frozen_bit(&self, ordinal: u32) -> F::Elem {
+    fn frozen_bit(&self, ordinal: u32) -> Elem<F> {
         let word = ordinal as usize / 64;
         let bit = ordinal % 64;
         if word < self.frozen.len() && self.frozen[word] >> bit & 1 == 1 {
-            F::Elem::ONE
+            Elem::<F>::ONE
         } else {
-            F::Elem::ZERO
+            Elem::<F>::ZERO
         }
     }
 
@@ -227,7 +232,7 @@ impl<F: FieldKernels> Row<F> {
         if !self.binary {
             return false;
         }
-        debug_assert!(self.coeffs.is_empty());
+        debug_assert_eq!(self.coeffs.len(), 0, "packed rows carry no coefficients");
         for word in 0..self.frozen.len() {
             let mut bits = self.frozen[word];
             while bits != 0 {
@@ -237,7 +242,7 @@ impl<F: FieldKernels> Row<F> {
             }
         }
         self.cols.sort_unstable();
-        self.coeffs.resize(self.cols.len(), F::Elem::ONE);
+        self.coeffs.resize(self.cols.len(), Elem::<F>::ONE);
         self.frozen.clear();
         self.binary = false;
         true
@@ -263,17 +268,17 @@ impl<F: FieldKernels> Row<F> {
     /// the active list, then the frozen bits of a packed row, then (for a
     /// widened row) nothing further. Order is not column-sorted across the
     /// two parts; every consumer here folds commutatively.
-    pub(crate) fn for_each_entry(&self, frozen_cols: &[u32], mut f: impl FnMut(u32, F::Elem)) {
+    pub(crate) fn for_each_entry(&self, frozen_cols: &[u32], mut f: impl FnMut(u32, Elem<F>)) {
         if self.binary {
             for &col in &self.cols {
-                f(col, F::Elem::ONE);
+                f(col, Elem::<F>::ONE);
             }
             for (word, &bits) in self.frozen.iter().enumerate() {
                 let mut bits = bits;
                 while bits != 0 {
                     let bit = bits.trailing_zeros();
                     bits &= bits - 1;
-                    f(frozen_cols[word * 64 + bit as usize], F::Elem::ONE);
+                    f(frozen_cols[word * 64 + bit as usize], Elem::<F>::ONE);
                 }
             }
         } else {
@@ -372,9 +377,9 @@ impl<F: FieldKernels> Row<F> {
     #[allow(clippy::type_complexity, clippy::too_many_arguments)]
     pub(crate) fn axpy_coeffs_slices(
         &mut self,
-        factor: F::Elem,
+        factor: Elem<F>,
         src_cols: &[u32],
-        src_coeffs: &[F::Elem],
+        src_coeffs: &[Elem<F>],
         src_binary: bool,
         scratch: &mut MergeScratch<F>,
         mut added: impl FnMut(u32),
@@ -486,7 +491,7 @@ impl<F: FieldKernels> Row<F> {
     }
 }
 
-impl<F: FieldKernels> core::fmt::Debug for Row<F> {
+impl<F: FieldBuffer> core::fmt::Debug for Row<F> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("Row")
             .field("weight", &self.weight())

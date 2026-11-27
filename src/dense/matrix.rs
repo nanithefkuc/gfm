@@ -1,13 +1,13 @@
 //! The owning dense container [`Matrix<F>`] and its borrow views.
 //!
 //! Rows are stored contiguously in one buffer, `pitch` bytes apart, with the
-//! base [`crate::dense::layout::ALIGN`]-aligned and every padding byte zero (the layout invariants
-//! in [`crate::dense::layout`]). A logical-to-physical row map rides beside
+//! base [`ALIGN`]-aligned and every padding byte zero (the layout invariants
+//! in [`crate::dense`]). A logical-to-physical row map rides beside
 //! the buffer: exchanging rows is an index operation on the map, and the data
 //! does not move unless contiguous physical rows are required — then it moves
 //! once, through [`Matrix::compact_rows`].
 //!
-//! Views ([`View`], [`ViewMut`]) are cheap re-borrows of the same state, the
+//! [`ViewMut`] is a cheap mutable re-borrow of the same state, the
 //! borrow-only counterpart of the owning container.
 
 use alloc::boxed::Box;
@@ -15,24 +15,33 @@ use alloc::vec::Vec;
 use core::fmt;
 use core::marker::PhantomData;
 
-use fgf::{FieldKernels, field::Elem};
+use fgf::{Elem, FieldBuffer};
 
 use crate::GeometryError;
 use crate::dense::layout::{aligned_zeroed, pitch_for};
 use crate::dense::{Perm, invert_in_place};
 
-/// A dense, row-major matrix over GF(2^m), owning its storage.
+/// Byte alignment of a matrix base and row pitch: one AVX2/GFNI lane.
+pub const ALIGN: usize = 32;
+
+/// A dense, row-major matrix over an `fgf` field, owning its storage.
 ///
 /// Element `(r, c)` lives at `map[r] * pitch + c * F::BYTES` of the buffer,
-/// little-endian. The invariants of [`crate::dense::layout`] hold from
+/// little-endian. The invariants of [`crate::dense`] hold from
 /// construction through every mutating operation.
-pub struct Matrix<F: FieldKernels> {
+///
+/// Stored lanes are not required to be canonical: byte ingress accepts every
+/// lane `F`'s decoder accepts, and `fgf`'s zero and unit shortcuts can carry
+/// such bytes into results. Every algebraic decision, and `==`, compares
+/// decoded values. Callers that need canonical bytes normalize them at their
+/// own format boundary.
+pub struct Matrix<F: FieldBuffer> {
     buf: Box<[u8]>,
     /// Offset of the first aligned byte within `buf`.
     off: usize,
     rows: usize,
     cols: usize,
-    /// Bytes per row: a multiple of [`crate::dense::layout::ALIGN`] and at least `cols * F::BYTES`.
+    /// Bytes per row: a multiple of [`ALIGN`] and at least `cols * F::BYTES`.
     pitch: usize,
     /// Logical-to-physical row indirection; the data never moves for a row
     /// exchange, this map does.
@@ -40,7 +49,7 @@ pub struct Matrix<F: FieldKernels> {
     field: PhantomData<F>,
 }
 
-impl<F: FieldKernels> Matrix<F> {
+impl<F: FieldBuffer> Matrix<F> {
     /// Validates the geometry and returns `(cols_bytes, pitch)`.
     fn geometry(rows: usize, cols: usize) -> Result<(usize, usize), GeometryError> {
         let cols_bytes = cols.checked_mul(F::BYTES).ok_or(GeometryError::Overflow {
@@ -80,13 +89,15 @@ impl<F: FieldKernels> Matrix<F> {
     pub fn identity(n: usize) -> Result<Self, GeometryError> {
         let mut m = Self::zeros(n, n)?;
         for i in 0..n {
-            m.set(i, i, F::Elem::ONE);
+            m.set(i, i, Elem::<F>::ONE);
         }
         Ok(m)
     }
 
     /// Creates a matrix from packed row-major data: `rows * cols` elements,
-    /// little-endian, `rows * cols * F::BYTES` bytes in total.
+    /// little-endian, `rows * cols * F::BYTES` bytes in total. Lanes are
+    /// copied as given; noncanonical aliases are accepted and keep their
+    /// bytes.
     ///
     /// # Errors
     ///
@@ -129,7 +140,7 @@ impl<F: FieldKernels> Matrix<F> {
         self.cols
     }
 
-    /// Bytes per row: a multiple of [`crate::dense::layout::ALIGN`] and at least `cols * F::BYTES`.
+    /// Bytes per row: a multiple of [`ALIGN`] and at least `cols * F::BYTES`.
     #[must_use]
     pub const fn pitch(&self) -> usize {
         self.pitch
@@ -176,7 +187,7 @@ impl<F: FieldKernels> Matrix<F> {
     ///
     /// Panics if either index is out of bounds.
     #[must_use]
-    pub fn get(&self, row: usize, col: usize) -> F::Elem {
+    pub fn get(&self, row: usize, col: usize) -> Elem<F> {
         assert!(row < self.rows && col < self.cols, "index out of bounds");
         let start = self.map[row] * self.pitch + col * F::BYTES;
         F::decode(&self.region()[start..start + F::BYTES])
@@ -187,7 +198,7 @@ impl<F: FieldKernels> Matrix<F> {
     /// # Panics
     ///
     /// Panics if either index is out of bounds.
-    pub fn set(&mut self, row: usize, col: usize, value: F::Elem) {
+    pub fn set(&mut self, row: usize, col: usize, value: Elem<F>) {
         assert!(row < self.rows && col < self.cols, "index out of bounds");
         let start = self.map[row] * self.pitch + col * F::BYTES;
         F::encode(&mut self.region_mut()[start..start + F::BYTES], value);
@@ -206,7 +217,8 @@ impl<F: FieldKernels> Matrix<F> {
         &self.region()[start..start + self.live_bytes()]
     }
 
-    /// Mutably borrows logical row `r`'s live bytes.
+    /// Mutably borrows logical row `r`'s live bytes. Any lane `F`'s decoder
+    /// accepts may be written.
     ///
     /// # Panics
     ///
@@ -357,19 +369,6 @@ impl<F: FieldKernels> Matrix<F> {
         head[lo * pitch..(lo + 1) * pitch].swap_with_slice(&mut tail[..pitch]);
     }
 
-    /// Borrows the whole matrix as a read-only view.
-    #[must_use]
-    pub fn as_view(&self) -> View<'_, F> {
-        View {
-            data: self.region(),
-            map: &self.map,
-            rows: self.rows,
-            cols: self.cols,
-            pitch: self.pitch,
-            field: PhantomData,
-        }
-    }
-
     /// Borrows the whole matrix as a mutable view.
     #[must_use]
     pub fn as_view_mut(&mut self) -> ViewMut<'_, F> {
@@ -395,7 +394,7 @@ impl<F: FieldKernels> Matrix<F> {
     }
 }
 
-impl<F: FieldKernels> Clone for Matrix<F> {
+impl<F: FieldBuffer> Clone for Matrix<F> {
     fn clone(&self) -> Self {
         // The clone gets its own allocation, whose base alignment differs in
         // general; re-align rather than copy the offset.
@@ -414,20 +413,21 @@ impl<F: FieldKernels> Clone for Matrix<F> {
     }
 }
 
-impl<F: FieldKernels> PartialEq for Matrix<F> {
-    /// Logical content equality: shape and live bytes in logical row order.
-    /// Physical arrangement (row map, padding, allocation offset) is
-    /// incidental and not compared.
+impl<F: FieldBuffer> PartialEq for Matrix<F> {
+    /// Logical content equality: shape and element values in logical row
+    /// order. Lanes compare by decoded value, so a noncanonical alias equals
+    /// the canonical element it names. Physical arrangement (row map,
+    /// padding, allocation offset) is incidental and not compared.
     fn eq(&self, other: &Self) -> bool {
         self.rows == other.rows
             && self.cols == other.cols
-            && (0..self.rows).all(|r| self.row(r) == other.row(r))
+            && (0..self.rows).all(|r| crate::row_ops::rows_equal::<F>(self.row(r), other.row(r)))
     }
 }
 
-impl<F: FieldKernels> Eq for Matrix<F> {}
+impl<F: FieldBuffer> Eq for Matrix<F> {}
 
-impl<F: FieldKernels> fmt::Debug for Matrix<F> {
+impl<F: FieldBuffer> fmt::Debug for Matrix<F> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Matrix")
             .field("field", &F::NAME)
@@ -440,9 +440,9 @@ impl<F: FieldKernels> fmt::Debug for Matrix<F> {
 
 /// Physical-layout inspection, reached through the `internals` facade.
 #[allow(dead_code)]
-impl<F: FieldKernels> Matrix<F> {
+impl<F: FieldBuffer> Matrix<F> {
     /// Address of the first byte of the physical backing region. A multiple
-    /// of [`crate::dense::layout::ALIGN`] by construction.
+    /// of [`ALIGN`] by construction.
     pub(crate) fn base_addr(&self) -> usize {
         self.region().as_ptr() as usize
     }
@@ -464,96 +464,8 @@ impl<F: FieldKernels> Matrix<F> {
     }
 }
 
-/// A read-only borrow of a [`Matrix`]'s rows, with its geometry and row map.
-#[derive(Clone, Copy)]
-pub struct View<'a, F: FieldKernels> {
-    data: &'a [u8],
-    map: &'a [usize],
-    rows: usize,
-    cols: usize,
-    pitch: usize,
-    field: PhantomData<F>,
-}
-
-impl<'a, F: FieldKernels> View<'a, F> {
-    /// Number of rows.
-    #[must_use]
-    pub const fn rows(&self) -> usize {
-        self.rows
-    }
-
-    /// Number of columns.
-    #[must_use]
-    pub const fn cols(&self) -> usize {
-        self.cols
-    }
-
-    /// Bytes per row: a multiple of [`crate::dense::layout::ALIGN`] and at least `cols * F::BYTES`.
-    #[must_use]
-    pub const fn pitch(&self) -> usize {
-        self.pitch
-    }
-
-    /// The element at `(row, col)`.
-    ///
-    /// # Panics
-    ///
-    /// Panics if either index is out of bounds.
-    #[must_use]
-    pub fn get(&self, row: usize, col: usize) -> F::Elem {
-        assert!(row < self.rows && col < self.cols, "index out of bounds");
-        let start = self.map[row] * self.pitch + col * F::BYTES;
-        F::decode(&self.data[start..start + F::BYTES])
-    }
-
-    /// Borrows logical row `r`'s live bytes.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `r` is out of bounds.
-    #[must_use]
-    pub fn row(&self, r: usize) -> &'a [u8] {
-        assert!(r < self.rows, "row index out of bounds");
-        let start = self.map[r] * self.pitch;
-        &self.data[start..start + self.cols * F::BYTES]
-    }
-
-    /// Splits the view vertically into `[top | bottom]` at row `at`,
-    /// preserving logical row order. Either half may be empty.
-    ///
-    /// Returns `None` if `at > rows`.
-    #[must_use]
-    pub fn split_rows(&self, at: usize) -> Option<(View<'a, F>, View<'a, F>)> {
-        if at > self.rows {
-            return None;
-        }
-        let (top_map, bot_map) = self.map.split_at(at);
-        let half = |rows: usize, map: &'a [usize]| View {
-            data: self.data,
-            map,
-            rows,
-            cols: self.cols,
-            pitch: self.pitch,
-            field: PhantomData,
-        };
-        Some((half(at, top_map), half(self.rows - at, bot_map)))
-    }
-}
-
-impl<F: FieldKernels> fmt::Debug for View<'_, F> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("View")
-            .field("field", &F::NAME)
-            .field("rows", &self.rows)
-            .field("cols", &self.cols)
-            .field("pitch", &self.pitch)
-            .finish_non_exhaustive()
-    }
-}
-
-/// A mutable borrow of a [`Matrix`]'s rows, the write-capable counterpart of
-/// [`View`].
-pub struct ViewMut<'a, F: FieldKernels> {
+/// A mutable borrow of a [`Matrix`]'s rows.
+pub struct ViewMut<'a, F: FieldBuffer> {
     data: &'a mut [u8],
     map: &'a mut [usize],
     rows: usize,
@@ -562,7 +474,7 @@ pub struct ViewMut<'a, F: FieldKernels> {
     field: PhantomData<F>,
 }
 
-impl<F: FieldKernels> ViewMut<'_, F> {
+impl<F: FieldBuffer> ViewMut<'_, F> {
     /// Number of rows.
     #[must_use]
     pub const fn rows(&self) -> usize {
@@ -575,19 +487,13 @@ impl<F: FieldKernels> ViewMut<'_, F> {
         self.cols
     }
 
-    /// Bytes per row: a multiple of [`crate::dense::layout::ALIGN`] and at least `cols * F::BYTES`.
-    #[must_use]
-    pub const fn pitch(&self) -> usize {
-        self.pitch
-    }
-
     /// The element at `(row, col)`.
     ///
     /// # Panics
     ///
     /// Panics if either index is out of bounds.
     #[must_use]
-    pub fn get(&self, row: usize, col: usize) -> F::Elem {
+    pub fn get(&self, row: usize, col: usize) -> Elem<F> {
         assert!(row < self.rows && col < self.cols, "index out of bounds");
         let start = self.map[row] * self.pitch + col * F::BYTES;
         F::decode(&self.data[start..start + F::BYTES])
@@ -598,7 +504,7 @@ impl<F: FieldKernels> ViewMut<'_, F> {
     /// # Panics
     ///
     /// Panics if either index is out of bounds.
-    pub fn set(&mut self, row: usize, col: usize, value: F::Elem) {
+    pub fn set(&mut self, row: usize, col: usize, value: Elem<F>) {
         assert!(row < self.rows && col < self.cols, "index out of bounds");
         let start = self.map[row] * self.pitch + col * F::BYTES;
         F::encode(&mut self.data[start..start + F::BYTES], value);
@@ -628,33 +534,9 @@ impl<F: FieldKernels> ViewMut<'_, F> {
         let live = self.cols * F::BYTES;
         &mut self.data[start..start + live]
     }
-
-    /// Reborrows as an immutable [`View`].
-    #[must_use]
-    pub fn as_view(&self) -> View<'_, F> {
-        View {
-            data: self.data,
-            map: self.map,
-            rows: self.rows,
-            cols: self.cols,
-            pitch: self.pitch,
-            field: PhantomData,
-        }
-    }
-
-    /// Exchanges logical rows `a` and `b`. An index operation on the row
-    /// map: the data does not move.
-    ///
-    /// # Panics
-    ///
-    /// Panics if either index is out of bounds.
-    pub fn swap_rows(&mut self, a: usize, b: usize) {
-        assert!(a < self.rows && b < self.rows, "row index out of bounds");
-        self.map.swap(a, b);
-    }
 }
 
-impl<F: FieldKernels> fmt::Debug for ViewMut<'_, F> {
+impl<F: FieldBuffer> fmt::Debug for ViewMut<'_, F> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("ViewMut")
             .field("field", &F::NAME)

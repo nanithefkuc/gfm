@@ -5,9 +5,10 @@ use core::hint::black_box;
 use std::time::Duration;
 
 use criterion::{Criterion, criterion_group, criterion_main};
-use fgf::Gf8B;
-use fgf::field::Field;
-use gfm::{Hybrid, Matrix, Ple, PleScratch, SolveScratch};
+use fgf::Elem;
+type Gf8B = fgf::FiniteField<2, 8, fgf::binary::Polynomial<{ fgf::binary::AES }>>;
+use gfm::dense::{Matrix, Ple, SolveScratch};
+use gfm::hybrid::Hybrid;
 
 const DEGREE_THRESHOLDS: [u32; 31] = [
     0, 5_243, 529_531, 704_294, 791_675, 844_104, 879_057, 904_023, 922_747, 937_311, 948_962,
@@ -61,7 +62,7 @@ fn system(columns: usize, symbol_bytes: usize) -> (Hybrid<Gf8B>, Matrix<Gf8B>, M
         );
         hybrid.push_binary_row(&row_support, &zero_rhs);
         for &column in &row_support {
-            dense.set(row, column as usize, <Gf8B as Field>::Elem::ONE);
+            dense.set(row, column as usize, Elem::<Gf8B>::ONE);
         }
     }
     (hybrid, dense, rhs)
@@ -77,7 +78,6 @@ fn benchmark(c: &mut Criterion) {
         .solve_into(&mut hybrid_values, &mut determined)
         .unwrap();
 
-    let mut ple_scratch = PleScratch::new();
     let mut solve_scratch = SolveScratch::new();
     let mut dense_values = Matrix::<Gf8B>::zeros(K, SYMBOL_BYTES).unwrap();
 
@@ -95,7 +95,7 @@ fn benchmark(c: &mut Criterion) {
     });
     group.bench_function("dense_ple", |b| {
         b.iter(|| {
-            let ple = Ple::decompose(black_box(dense.clone()), &mut ple_scratch);
+            let ple = Ple::decompose(black_box(dense.clone()));
             ple.solve_into(&rhs, &mut dense_values, &mut solve_scratch)
                 .unwrap();
             black_box(&dense_values);

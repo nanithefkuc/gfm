@@ -8,9 +8,9 @@ use std::cell::RefCell;
 use std::time::{Duration, Instant};
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
-use fgf::Gf8B;
-use fgf::field::Field;
-use gfm::Hybrid;
+use fgf::{Elem, FieldBuffer};
+type Gf8B = fgf::FiniteField<2, 8, fgf::binary::Polynomial<{ fgf::binary::AES }>>;
+use gfm::hybrid::Hybrid;
 
 const DEGREE_THRESHOLDS: [u32; 31] = [
     0, 5_243, 529_531, 704_294, 791_675, 844_104, 879_057, 904_023, 922_747, 937_311, 948_962,
@@ -67,8 +67,8 @@ fn system(columns: usize, band: usize, symbol_bytes: usize, defer_band: bool) ->
         hybrid.push_binary_row(&row_support, &zero_rhs);
     }
     if band > 0 {
-        let alpha = <Gf8B as Field>::decode(&[2]);
-        let mut coefficient = <Gf8B as Field>::Elem::ONE;
+        let alpha = <Gf8B as FieldBuffer>::decode(&[2]);
+        let mut coefficient = Elem::<Gf8B>::ONE;
         let coeffs: Vec<_> = (0..columns)
             .map(|_| {
                 let c = coefficient;
@@ -89,7 +89,7 @@ fn system(columns: usize, band: usize, symbol_bytes: usize, defer_band: bool) ->
 }
 
 fn solve(hybrid: &mut Hybrid<Gf8B>, columns: usize, symbol_bytes: usize) {
-    let mut values = gfm::Matrix::<Gf8B>::zeros(columns, symbol_bytes).unwrap();
+    let mut values = gfm::dense::Matrix::<Gf8B>::zeros(columns, symbol_bytes).unwrap();
     let mut determined = vec![false; columns];
     let rank = hybrid.solve_into(&mut values, &mut determined).unwrap();
     black_box((rank, &values, &determined));
