@@ -207,6 +207,8 @@ checksum = "252afb9ae5eaa683babdc6a068b3f5726eb19e05070c731f9b2a23a7c3e8ed34"
 [[package]]
 name = "fgf"
 version = "1.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "85c11a21643361458f2cea458e02bd8f866f25e236f9d5831ddf4a9f70855a97"
 dependencies = [
  "archmage",
  "simdispatch",
@@ -220,7 +222,7 @@ checksum = "ef25905e51abafe4dcea6c15fec58c57b601cdbd0ee53d22ea1d3016c587d39b"
 
 [[package]]
 name = "gfm"
-version = "1.0.1"
+version = "1.0.2"
 dependencies = [
  "criterion",
  "fgf",
@@ -424,6 +426,8 @@ checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
 [[package]]
 name = "simdispatch"
 version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "51597eac7e0605fec8b81324c97c325a7fb59ecdd9f6f452eaadd06f625c725f"
 dependencies = [
  "archmage",
 ]
@@ -553,11 +557,3 @@ name = "zmij"
 version = "1.0.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "29666d0abbfad1e3dc4dcf6144730dd3a3ab225bbbdac83319345b1b44ccfc1b"
-
-[[patch.unused]]
-name = "poly-ring"
-version = "1.0.0"
-
-[[patch.unused]]
-name = "butterfly-fft"
-version = "1.0.0"

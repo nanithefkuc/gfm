@@ -317,7 +317,7 @@ fn factor_panel<F: FieldKernels>(
             let bytes = F::BYTES;
             crate::row_ops::mul_add::<F>(
                 &mut row_dst[(piv + 1) * bytes..wend * bytes],
-                factor,
+                factor.neg(),
                 &row_src[(piv + 1) * bytes..wend * bytes],
             );
         }
@@ -372,7 +372,7 @@ fn bulk_update<F: FieldKernels>(
             let bytes = F::BYTES;
             crate::row_ops::mul_add::<F>(
                 &mut row_dst[wend * bytes..cols * bytes],
-                factor,
+                factor.neg(),
                 &row_src[wend * bytes..cols * bytes],
             );
         }
@@ -402,7 +402,7 @@ fn update_trailing_axpy<F: FieldKernels>(
             let bytes = F::BYTES;
             crate::row_ops::mul_add::<F>(
                 &mut row_dst[wend * bytes..cols * bytes],
-                factor,
+                factor.neg(),
                 &row_src[wend * bytes..cols * bytes],
             );
         }
@@ -410,7 +410,8 @@ fn update_trailing_axpy<F: FieldKernels>(
 }
 
 /// One 256-entry multiplication table per pivot row. Table construction uses
-/// `fgf::ops`; applying a selected multiple is the field's XOR-add kernel.
+/// `fgf::ops`; applying a selected multiple is the field's addition kernel,
+/// with the negated factor selecting the entry, so the update subtracts.
 ///
 /// Reached through [`Ple::decompose_newton_john`], the `internals` facade's
 /// trailing-update candidate.
@@ -435,7 +436,7 @@ fn update_trailing_newton_john<F: FieldKernels>(
             ops::mul_assign::<F>(multiple, F::decode(&[coefficient]));
         }
         for row in (frontier + pivots)..rows {
-            let factor = mat.get(row, src);
+            let factor = mat.get(row, src).neg();
             if factor.is_zero() {
                 continue;
             }

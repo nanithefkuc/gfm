@@ -171,8 +171,13 @@ pub fn naive_det<F: FieldKernels>(a: &Naive<F>) -> F::Elem {
                     .collect()
             })
             .collect();
-        // Characteristic two: the cofactor sign is always one.
-        d = d.add(a[0][c].mul(naive_det::<F>(&minor)));
+        // The cofactor sign of column c is (-1)^c.
+        let sign = if c % 2 == 1 {
+            F::Elem::ONE.neg()
+        } else {
+            F::Elem::ONE
+        };
+        d = d.add(sign.mul(a[0][c]).mul(naive_det::<F>(&minor)));
     }
     d
 }
@@ -231,7 +236,7 @@ pub fn oracle_ple<F: FieldKernels>(a: &Naive<F>) -> OraclePle<F> {
             let factor = entry.mul(pivot_inv);
             lu[i2][r] = factor;
             for c in (r + 1)..n {
-                lu[i2][c] = lu[i2][c].add(factor.mul(lu[r][c]));
+                lu[i2][c] = lu[i2][c].sub(factor.mul(lu[r][c]));
             }
         }
         r += 1;
@@ -358,7 +363,11 @@ pub fn oracle_ple_packed<F: FieldKernels>(a: &Packed, cols: usize) -> PackedPle 
             F::encode(&mut lu[i2][r * b..(r + 1) * b], factor);
             let (head, tail) = lu.split_at_mut(i2);
             let (row_r, row_i) = (&head[r], &mut tail[0]);
-            ops::mul_add::<F>(&mut row_i[(r + 1) * b..], factor, &row_r[(r + 1) * b..]);
+            ops::mul_add::<F>(
+                &mut row_i[(r + 1) * b..],
+                factor.neg(),
+                &row_r[(r + 1) * b..],
+            );
         }
         r += 1;
     }
@@ -514,7 +523,7 @@ pub fn oracle_rref<F: FieldKernels>(a: &Naive<F>) -> Naive<F> {
                 continue;
             }
             for c in 0..n {
-                out[i][c] = out[i][c].add(f.mul(out[k][c]));
+                out[i][c] = out[i][c].sub(f.mul(out[k][c]));
             }
         }
     }

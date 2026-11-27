@@ -7,6 +7,17 @@
 > depend on input values, and field arithmetic comes from variable-time `fgf`.
 > Handling secret matrices, coefficients, or payloads requires a separate audit.
 
+> [!CAUTION]
+> **Advisory:** `gfm` 1.0.0 and 1.0.1 return wrong results in two cases. Over
+> fields of odd characteristic (`fgf`'s `Mersenne31`, `Goldilocks`, and
+> `QuadMersenne31`), elimination adds where it must subtract: solves, inverses,
+> and kernels of systems of order two or more can be wrong, and determinants
+> can have the wrong sign.
+> In every field, a `Hybrid` equation with an explicit zero coefficient can be
+> mis-solved or make the solve loop forever. Both are fixed in 1.0.2; upgrade.
+> Details: [#12](https://github.com/nanithefkuc/gfm/issues/12),
+> [#13](https://github.com/nanithefkuc/gfm/issues/13).
+
 # gfm — Galois Field Math
 
 `gfm` provides dense, bit-packed, and hybrid sparse/dense linear algebra over
@@ -38,7 +49,7 @@ same `fgf` release as the library so field types match:
 
 ```toml
 [dependencies]
-gfm = "=1.0.1"
+gfm = "=1.0.2"
 fgf = "=1.2.1"
 ```
 
@@ -46,7 +57,7 @@ For portable `no_std` execution, matrix storage still requires `alloc`:
 
 ```toml
 [dependencies]
-gfm = { version = "=1.0.1", default-features = false }
+gfm = { version = "=1.0.2", default-features = false }
 fgf = { version = "=1.2.1", default-features = false }
 ```
 

@@ -1,5 +1,5 @@
-//! The GF(2^m) storage domain: pitched, aligned, zero-padded matrices of
-//! packed field elements, the permutation type, and the elimination that
+//! The packed-element storage domain: pitched, aligned, zero-padded matrices
+//! over any `fgf` field, the permutation type, and the elimination that
 //! everything derives from.
 
 mod derive;

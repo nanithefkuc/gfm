@@ -21,7 +21,7 @@ use crate::GeometryError;
 use crate::dense::layout::{aligned_zeroed, pitch_for};
 use crate::dense::{Perm, invert_in_place};
 
-/// A dense, row-major matrix over GF(2^m), owning its storage.
+/// A dense, row-major matrix over an `fgf` field, owning its storage.
 ///
 /// Element `(r, c)` lives at `map[r] * pitch + c * F::BYTES` of the buffer,
 /// little-endian. The invariants of [`crate::dense::layout`] hold from
