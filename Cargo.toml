@@ -84,6 +84,9 @@ name = "prime"
 name = "diagnostics"
 
 [[test]]
+name = "fields"
+
+[[test]]
 name = "noncanonical"
 
 [[test]]
