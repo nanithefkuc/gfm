@@ -15,10 +15,10 @@ mod oracles;
 use common::{FanPaar8, FanPaar16, FanPaar32, FanPaar64, Gf8B, Gf16, Gf32, Gf64};
 use common::{draw, noise};
 use fgf::{Elem, FieldBuffer, FieldElem};
-use gfm::internals::PleInternals;
-use gfm::{
+use gfm::dense::{
     Matrix, Ple, SolveScratch, mul_add, mul_into, solve_lower_unit_assign, solve_upper_assign,
 };
+use gfm::internals::PleInternals;
 use oracles::{
     Naive, crate_matrix, matrix_of, naive_det, naive_identity, naive_mul, naive_noise, naive_of,
     naive_with_rank, oracle_ple, oracle_ple_packed, oracle_rref, packed_with_rank, reassemble,
@@ -677,14 +677,14 @@ fn gemm_matches_naive() {
     let a = naive_noise::<Gf16>(9, 7, 0x6E11);
     let b = naive_noise::<Gf16>(7, 5, 0x6E12);
     let mut out = Matrix::<Gf16>::zeros(9, 5).unwrap();
-    gfm::mul_into(
+    gfm::dense::mul_into(
         &mut out,
         &crate_matrix::<Gf16>(&a),
         &crate_matrix::<Gf16>(&b),
     );
     assert_eq!(naive_of::<Gf16>(&out), naive_mul::<Gf16>(&a, &b));
     // Accumulating form: A·B + A·B cancels in characteristic two.
-    gfm::mul_add(
+    gfm::dense::mul_add(
         &mut out,
         &crate_matrix::<Gf16>(&a),
         &crate_matrix::<Gf16>(&b),
@@ -709,7 +709,7 @@ fn trsm_matches_naive() {
     }
     let b = naive_noise::<Gf8B>(8, 3, 0x7A12);
     let mut x = crate_matrix::<Gf8B>(&b);
-    gfm::solve_lower_unit_assign(&mut x, &crate_matrix::<Gf8B>(&l));
+    gfm::dense::solve_lower_unit_assign(&mut x, &crate_matrix::<Gf8B>(&l));
     assert_eq!(
         naive_mul::<Gf8B>(&l, &naive_of::<Gf8B>(&x)),
         b,
@@ -727,7 +727,7 @@ fn trsm_matches_naive() {
         }
     }
     let mut x = crate_matrix::<Gf8B>(&b);
-    gfm::solve_upper_assign(&mut x, &crate_matrix::<Gf8B>(&u));
+    gfm::dense::solve_upper_assign(&mut x, &crate_matrix::<Gf8B>(&u));
     assert_eq!(
         naive_mul::<Gf8B>(&u, &naive_of::<Gf8B>(&x)),
         b,

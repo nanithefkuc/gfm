@@ -15,9 +15,10 @@ mod common;
 use common::Gf8B;
 use common::{draw, noise};
 
-use gfm::bits::{Ple, PleScratch, SolveScratch};
+use gfm::SolveError;
+use gfm::bits::{BitMatrix, Ple, PleScratch, SolveScratch};
+use gfm::dense::{Matrix, Ple as DensePle};
 use gfm::internals::{BitPleInternals, PleInternals};
-use gfm::{BitMatrix, Matrix, Ple as DensePle, SolveError};
 
 /// A GF(2) matrix as plain rows of bits.
 type Naive = Vec<Vec<bool>>;

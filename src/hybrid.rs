@@ -16,9 +16,10 @@
 mod colindex;
 mod deferred;
 mod schedule;
-mod solve;
+pub(crate) mod solve;
 mod source;
 mod sparse;
 
-pub use solve::{Hybrid, Solution, SolveStats};
+pub(crate) use solve::SolveStats;
+pub use solve::{Hybrid, Solution};
 pub use source::{SparseEquation, SparseEquationSource};

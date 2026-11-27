@@ -16,6 +16,22 @@ env:
   RUSTFLAGS: -D warnings
 
 jobs:
+  api:
+    name: api inventory
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: rustup toolchain install nightly-2026-09-30 --profile minimal
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-public-api@0.52.0
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: just
+      - uses: Swatinem/rust-cache@v2
+      - run: just api
+
   lint:
     name: lint + deps + doc
     runs-on: ubuntu-latest

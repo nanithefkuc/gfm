@@ -13,6 +13,24 @@ All notable changes to this project are documented here. The format follows
 
 ### Changed
 
+- **Breaking:** every stable item has one canonical module path; the crate-root
+  re-exports are removed. Import `Matrix`, `ViewMut`, `Perm`, `Ple`,
+  `SolveScratch`, `SmallMatrix`, `mul_into`, `mul_add`,
+  `solve_lower_unit_assign`, and `solve_upper_assign` from `gfm::dense`;
+  `BitMatrix` from `gfm::bits`; `Hybrid`, `Solution`, `SparseEquation`, and
+  `SparseEquationSource` from `gfm::hybrid`; and `Echelon`, `EchelonMode`,
+  `Innovation`, and `RetainedRow` from `gfm::incremental`. `GeometryError` and
+  `SolveError` stay at the crate root, and `SolveStats` moves behind
+  `internals`. Update imports, then remove any `gfm::` prefix that previously
+  named a root re-export.
+  [#21](https://github.com/nanithefkuc/gfm/issues/21).
+- **Breaking:** the `backend` module and its `Backend` and `backend_for`
+  re-exports are removed; the stable API exposes no backend query. Call
+  `fgf::backend_for::<F>()` and name `fgf::Backend` directly. The public
+  `dense::layout` module and its `pitch_for` helper leave the stable surface:
+  use `gfm::dense::ALIGN` and `gfm::bits::ALIGN` for the alignment constants
+  and obtain pitch through `Matrix::pitch` or `BitMatrix::pitch`.
+  [#21](https://github.com/nanithefkuc/gfm/issues/21).
 - **Breaking:** move to `fgf = "=4.0.1"`. Bounds are `F: fgf::FieldBuffer` and
   elements are `fgf::Elem<F>`; the dense, hybrid, and incremental domains hold
   over every `FieldBuffer` presentation, including generic prime residues and

@@ -7,7 +7,7 @@ use fgf::{Elem, FieldBuffer};
 /// Supports are sorted, strictly increasing column indices. Binary equations
 /// imply a unit coefficient at every support position; field equations carry
 /// parallel coefficients. The right-hand side uses the same packed
-/// field-element representation as [`crate::Matrix`].
+/// field-element representation as [`crate::dense::Matrix`].
 #[derive(Clone, Copy, Debug)]
 pub enum SparseEquation<'a, F: FieldBuffer> {
     /// A binary equation whose support coefficients are all one.

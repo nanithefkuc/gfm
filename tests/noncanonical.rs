@@ -6,7 +6,9 @@
 
 use fgf::prime::{Goldilocks, Mersenne31};
 use fgf::{Elem, FieldBuffer, FiniteField};
-use gfm::{Echelon, EchelonMode, Hybrid, Innovation, Matrix, Ple, SolveScratch};
+use gfm::dense::{Matrix, Ple, SolveScratch};
+use gfm::hybrid::Hybrid;
+use gfm::incremental::{Echelon, EchelonMode, Innovation};
 
 /// A one-byte residue row: lanes `251..=255` are aliases of `0..=4`.
 type Small = FiniteField<251, 1>;

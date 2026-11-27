@@ -14,7 +14,7 @@
 //!
 //! The reference layers are ground truth: nothing in them calls the crate.
 //! The conversions at the end of the module are the bridge between those
-//! rows and `gfm::Matrix`, shared so each suite does not restate them.
+//! rows and `gfm::dense::Matrix`, shared so each suite does not restate them.
 #![allow(dead_code)]
 // The loops below index several rows of several matrices by position; the
 // index arithmetic is the algorithm, and iterator rewrites obscure it.
@@ -22,7 +22,7 @@
 
 use fgf::{Elem, FieldElem};
 use fgf::{FieldBuffer, ops};
-use gfm::Matrix;
+use gfm::dense::Matrix;
 
 use super::common::noise;
 
@@ -541,7 +541,7 @@ pub fn oracle_rref<F: FieldBuffer>(a: &Naive<F>) -> Naive<F> {
 }
 
 /// Applies a swap list to a probe vector `(0..len)` in forward order, the
-/// same semantics as `gfm::Perm::apply`.
+/// same semantics as `gfm::dense::Perm::apply`.
 pub fn apply_swap_list(list: &[usize], len: usize) -> Vec<usize> {
     let mut probe: Vec<usize> = (0..len).collect();
     for (k, &j) in list.iter().enumerate() {

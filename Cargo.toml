@@ -13,6 +13,7 @@ categories = ["algorithms", "mathematics", "no-std"]
 keywords = ["galois", "finite-field", "matrix", "linear-algebra", "simd"]
 # Package the library, tests, benchmarks, and user-facing release documents.
 # Cargo also includes the manifest, lockfile, and generated package metadata.
+# The committed `api/` inventory and its tooling stay outside the package.
 include = [
     "/src/**",
     "/tests/**",

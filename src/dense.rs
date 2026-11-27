@@ -4,7 +4,7 @@
 
 mod derive;
 mod gemm;
-pub mod layout;
+mod layout;
 mod matrix;
 mod perm;
 mod ple;
@@ -13,7 +13,7 @@ mod trsm;
 
 pub use derive::SolveScratch;
 pub use gemm::{mul_add, mul_into};
-pub use matrix::{Matrix, ViewMut};
+pub use matrix::{ALIGN, Matrix, ViewMut};
 pub use perm::Perm;
 pub(crate) use perm::invert_in_place;
 pub use ple::Ple;

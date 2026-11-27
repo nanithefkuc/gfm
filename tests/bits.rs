@@ -6,8 +6,10 @@
 mod common;
 
 use common::{draw, noise, sample_dims};
+use gfm::GeometryError;
+use gfm::bits::BitMatrix;
+use gfm::dense::Perm;
 use gfm::internals::BitMatrixInternals;
-use gfm::{BitMatrix, GeometryError, Perm};
 
 /// `ceil(cols / 8)`, the live bytes of a row.
 fn row_bytes(cols: usize) -> usize {

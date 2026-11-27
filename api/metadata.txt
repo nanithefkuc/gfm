@@ -1,0 +1,8 @@
+nightly nightly-2026-09-30
+rustdoc-json-format 61
+cargo-public-api 0.52.0 (-s: blanket impls omitted)
+rustdocflags -Z unstable-options --document-hidden-items
+targets x86_64-unknown-linux-gnu
+config portable --no-default-features
+config default
+config all --no-default-features --features parallel,simd,simd512,std

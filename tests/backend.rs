@@ -1,15 +1,15 @@
 //! Public-surface test for the backend seam.
 //!
-//! `gfm::backend_for` is a pass-through to `fgf`'s per-field resolution; the
-//! property worth pinning is that gfm reports exactly the backend the field
-//! kernels will run on, and that the stack-wide `SIMD_BACKEND` override
-//! reaches it. There is no second resolver to drift.
+//! gfm resolves no backend of its own: its blocking policy reads
+//! `fgf::backend_for`'s per-field answer, so the property worth pinning is
+//! that the field kernels' backend and the stack-wide `SIMD_BACKEND` override
+//! are what gfm sees. There is no second resolver to drift.
 
 use common::{Gf8B, Gf16, Gf32, Gf64};
-use fgf::FieldBuffer;
+use fgf::{Backend, FieldBuffer, backend_for};
 mod common;
+use gfm::dense::{Matrix, Ple};
 use gfm::internals::PleInternals;
-use gfm::{Backend, Matrix, backend_for};
 
 #[test]
 fn reports_the_backend_the_kernels_run_on() {
@@ -36,7 +36,6 @@ fn scalar_override_forces_scalar() {
 
 #[test]
 fn backend_fingerprint_is_stable() {
-    use gfm::{Matrix, Ple};
     use std::io::Write;
 
     writeln!(
@@ -113,8 +112,6 @@ fn noise_matrix(rows: usize, cols: usize, seed: u64) -> Matrix<Gf8B> {
 
 #[test]
 fn panel_width_does_not_change_the_decomposition() {
-    use gfm::Ple;
-
     let a = noise_matrix(37, 41, 0x11);
     let reference = Ple::decompose(a.clone());
     for width in [1, 2, 7, 16, 64] {
@@ -128,8 +125,7 @@ fn panel_width_does_not_change_the_decomposition() {
 
 #[test]
 fn bit_ple_plain_and_m4ri_agree() {
-    use gfm::BitMatrix;
-    use gfm::bits::{Ple as BitPle, PleScratch as BitPleScratch};
+    use gfm::bits::{BitMatrix, Ple as BitPle, PleScratch as BitPleScratch};
     use gfm::internals::{BitMatrixInternals, BitPleInternals};
 
     // 61 x 67 straddles word and table boundaries.

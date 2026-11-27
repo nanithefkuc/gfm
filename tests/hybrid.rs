@@ -14,8 +14,10 @@ mod common;
 use common::draw;
 use common::{Gf8B, Gf16};
 use fgf::{Elem, FieldBuffer, FieldElem};
+use gfm::SolveError;
+use gfm::dense::{Matrix, Ple, SolveScratch};
+use gfm::hybrid::{Hybrid, SparseEquation, SparseEquationSource};
 use gfm::internals::HybridInternals;
-use gfm::{Hybrid, Matrix, Ple, SolveError, SolveScratch, SparseEquation, SparseEquationSource};
 
 type Equation<F> = (Vec<u32>, Vec<Elem<F>>, Vec<u8>);
 type E = Elem<Gf8B>;
@@ -222,7 +224,7 @@ fn ple_reference<F: FieldBuffer>(sys: &System<F>) -> (usize, bool, Option<Matrix
 /// reads that planted value back exactly.
 fn assert_solution_matches_ple<F: FieldBuffer>(
     sys: &System<F>,
-    solved: &Result<gfm::Solution<F>, SolveError>,
+    solved: &Result<gfm::hybrid::Solution<F>, SolveError>,
     planted: Option<&[Vec<Elem<F>>]>,
 ) {
     let (rank_p, consistent_p, sol_p, determined_p) = ple_reference(sys);
@@ -898,8 +900,8 @@ fn frozen_word_merge_matches_ple() {
 }
 
 fn assert_same_solution<F: FieldBuffer>(
-    left: &gfm::Solution<F>,
-    right: &gfm::Solution<F>,
+    left: &gfm::hybrid::Solution<F>,
+    right: &gfm::hybrid::Solution<F>,
     n: usize,
 ) {
     assert_eq!(left.rank(), right.rank());

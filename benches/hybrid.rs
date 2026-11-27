@@ -7,7 +7,8 @@ use std::time::Duration;
 use criterion::{Criterion, criterion_group, criterion_main};
 use fgf::Elem;
 type Gf8B = fgf::FiniteField<2, 8, fgf::binary::Polynomial<{ fgf::binary::AES }>>;
-use gfm::{Hybrid, Matrix, Ple, SolveScratch};
+use gfm::dense::{Matrix, Ple, SolveScratch};
+use gfm::hybrid::Hybrid;
 
 const DEGREE_THRESHOLDS: [u32; 31] = [
     0, 5_243, 529_531, 704_294, 791_675, 844_104, 879_057, 904_023, 922_747, 937_311, 948_962,

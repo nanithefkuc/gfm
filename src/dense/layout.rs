@@ -1,7 +1,7 @@
 //! Pitch, alignment, and zero-padding policy for the dense domain.
 //!
-//! The three layout properties are type invariants of [`crate::Matrix`], not
-//! conventions:
+//! The three layout properties are type invariants of [`crate::dense::Matrix`],
+//! not conventions:
 //!
 //! 1. the base of the row region is [`ALIGN`]-byte aligned;
 //! 2. the pitch (bytes per row) is a multiple of [`ALIGN`];
@@ -16,15 +16,14 @@ use crate::GeometryError;
 use alloc::boxed::Box;
 use alloc::vec;
 
-/// Byte alignment of a matrix base and row pitch: one AVX2/GFNI lane.
-pub const ALIGN: usize = 32;
+use super::matrix::ALIGN;
 
 /// The smallest multiple of [`ALIGN`] that holds `row_bytes` bytes.
 ///
 /// # Errors
 ///
 /// [`GeometryError::Overflow`] if rounding up would overflow `usize`.
-pub fn pitch_for(row_bytes: usize) -> Result<usize, GeometryError> {
+pub(crate) fn pitch_for(row_bytes: usize) -> Result<usize, GeometryError> {
     let rounded = row_bytes
         .checked_add(ALIGN - 1)
         .ok_or(GeometryError::Overflow {

@@ -25,7 +25,7 @@ use core::fmt;
 
 use fgf::{FieldBuffer, FieldElem};
 
-use crate::backend::panel_width;
+use crate::blocking::panel_width;
 use crate::dense::{Matrix, Perm, ViewMut};
 
 /// A rank-revealing `P·A·Q = L·U` decomposition.

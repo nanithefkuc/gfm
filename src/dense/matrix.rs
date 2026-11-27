@@ -1,8 +1,8 @@
 //! The owning dense container [`Matrix<F>`] and its borrow views.
 //!
 //! Rows are stored contiguously in one buffer, `pitch` bytes apart, with the
-//! base [`crate::dense::layout::ALIGN`]-aligned and every padding byte zero (the layout invariants
-//! in [`crate::dense::layout`]). A logical-to-physical row map rides beside
+//! base [`ALIGN`]-aligned and every padding byte zero (the layout invariants
+//! in [`crate::dense`]). A logical-to-physical row map rides beside
 //! the buffer: exchanging rows is an index operation on the map, and the data
 //! does not move unless contiguous physical rows are required — then it moves
 //! once, through [`Matrix::compact_rows`].
@@ -21,10 +21,13 @@ use crate::GeometryError;
 use crate::dense::layout::{aligned_zeroed, pitch_for};
 use crate::dense::{Perm, invert_in_place};
 
+/// Byte alignment of a matrix base and row pitch: one AVX2/GFNI lane.
+pub const ALIGN: usize = 32;
+
 /// A dense, row-major matrix over an `fgf` field, owning its storage.
 ///
 /// Element `(r, c)` lives at `map[r] * pitch + c * F::BYTES` of the buffer,
-/// little-endian. The invariants of [`crate::dense::layout`] hold from
+/// little-endian. The invariants of [`crate::dense`] hold from
 /// construction through every mutating operation.
 ///
 /// Stored lanes are not required to be canonical: byte ingress accepts every
@@ -38,7 +41,7 @@ pub struct Matrix<F: FieldBuffer> {
     off: usize,
     rows: usize,
     cols: usize,
-    /// Bytes per row: a multiple of [`crate::dense::layout::ALIGN`] and at least `cols * F::BYTES`.
+    /// Bytes per row: a multiple of [`ALIGN`] and at least `cols * F::BYTES`.
     pitch: usize,
     /// Logical-to-physical row indirection; the data never moves for a row
     /// exchange, this map does.
@@ -137,7 +140,7 @@ impl<F: FieldBuffer> Matrix<F> {
         self.cols
     }
 
-    /// Bytes per row: a multiple of [`crate::dense::layout::ALIGN`] and at least `cols * F::BYTES`.
+    /// Bytes per row: a multiple of [`ALIGN`] and at least `cols * F::BYTES`.
     #[must_use]
     pub const fn pitch(&self) -> usize {
         self.pitch
@@ -439,7 +442,7 @@ impl<F: FieldBuffer> fmt::Debug for Matrix<F> {
 #[allow(dead_code)]
 impl<F: FieldBuffer> Matrix<F> {
     /// Address of the first byte of the physical backing region. A multiple
-    /// of [`crate::dense::layout::ALIGN`] by construction.
+    /// of [`ALIGN`] by construction.
     pub(crate) fn base_addr(&self) -> usize {
         self.region().as_ptr() as usize
     }

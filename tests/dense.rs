@@ -9,9 +9,9 @@ mod oracles;
 use common::{FanPaar32, Gf8B, Gf16, Gf64};
 use common::{all_images, draw, noise, perm_from_image, sample_dims};
 use fgf::{Elem, FieldBuffer};
-use gfm::dense::layout::{ALIGN, pitch_for};
+use gfm::GeometryError;
+use gfm::dense::{ALIGN, Matrix, Perm, Ple, SmallMatrix, SolveScratch};
 use gfm::internals::MatrixInternals;
-use gfm::{GeometryError, Matrix, Perm, Ple, SmallMatrix, SolveScratch};
 use oracles::{crate_matrix, naive_mul, naive_noise, naive_of};
 
 /// Fills every row with deterministic noise, one seed per row.
@@ -654,7 +654,9 @@ const SUITE_ROW_BYTES: &[usize] = &[
 #[test]
 fn padding_cost_is_bounded() {
     for &w in SUITE_ROW_BYTES {
-        let pitch = pitch_for(w).unwrap();
+        // `Gf8B` packs one field element per byte, so a one-row matrix has
+        // exactly `w` live bytes and its pitched buffer exposes the pitch.
+        let pitch = Matrix::<Gf8B>::zeros(1, w).unwrap().pitched_buffer().len();
         // The absolute bound: less than one lane of padding per row.
         assert!(pitch < w + ALIGN, "row bytes {w}: pitch {pitch}");
         // The suite bound: under 5% for rows above 512 bytes (see
@@ -679,15 +681,15 @@ fn mul_into_and_mul_add_match_the_naive_product() {
     let b = oracles::crate_matrix(&b_naive);
 
     let mut out = Matrix::<Gf16>::zeros(7, 6).unwrap();
-    gfm::mul_into(&mut out, &a, &b);
+    gfm::dense::mul_into(&mut out, &a, &b);
     assert_eq!(oracles::naive_of(&out), expected);
 
     // Accumulation from a zeroed destination is the product; accumulating
     // again doubles it, so `mul_add` folds into the operand's prior value.
     let mut acc = Matrix::<Gf16>::zeros(7, 6).unwrap();
-    gfm::mul_add(&mut acc, &a, &b);
+    gfm::dense::mul_add(&mut acc, &a, &b);
     assert_eq!(oracles::naive_of(&acc), expected);
-    gfm::mul_add(&mut acc, &a, &b);
+    gfm::dense::mul_add(&mut acc, &a, &b);
     let doubled: oracles::Naive<Gf16> = expected
         .iter()
         .map(|row| row.iter().map(|&v| v.add(v)).collect())
@@ -701,7 +703,7 @@ fn mul_rejects_mismatched_shapes() {
     let a = Matrix::<Gf16>::zeros(3, 4).unwrap();
     let b = Matrix::<Gf16>::zeros(3, 4).unwrap();
     let mut out = Matrix::<Gf16>::zeros(3, 4).unwrap();
-    gfm::mul_into(&mut out, &a, &b);
+    gfm::dense::mul_into(&mut out, &a, &b);
 }
 
 #[test]
@@ -726,18 +728,18 @@ fn triangular_solves_round_trip_against_the_product() {
     let b_naive = oracles::naive_noise::<Gf8B>(k, s, 0x33);
     let b = oracles::crate_matrix(&b_naive);
     let mut x = b.clone();
-    gfm::solve_lower_unit_assign(&mut x, &l);
+    gfm::dense::solve_lower_unit_assign(&mut x, &l);
     let mut l_full = l.clone();
     for i in 0..k {
         l_full.set(i, i, Elem::<Gf8B>::ONE);
     }
     let mut prod = Matrix::<Gf8B>::zeros(k, s).unwrap();
-    gfm::mul_into(&mut prod, &l_full, &x);
+    gfm::dense::mul_into(&mut prod, &l_full, &x);
     assert_eq!(oracles::naive_of(&prod), b_naive, "L·X == B");
 
     let mut y = b;
-    gfm::solve_upper_assign(&mut y, &u);
-    gfm::mul_into(&mut prod, &u, &y);
+    gfm::dense::solve_upper_assign(&mut y, &u);
+    gfm::dense::mul_into(&mut prod, &u, &y);
     assert_eq!(oracles::naive_of(&prod), b_naive, "U·Y == B");
 }
 
@@ -747,7 +749,7 @@ fn upper_solve_rejects_a_zero_diagonal() {
     let mut u = Matrix::<Gf8B>::zeros(2, 2).unwrap();
     u.set(0, 1, Elem::<Gf8B>::ONE);
     let mut b = Matrix::<Gf8B>::zeros(2, 1).unwrap();
-    gfm::solve_upper_assign(&mut b, &u);
+    gfm::dense::solve_upper_assign(&mut b, &u);
 }
 
 #[test]
@@ -755,7 +757,7 @@ fn upper_solve_rejects_a_zero_diagonal() {
 fn triangular_solves_reject_a_row_mismatch() {
     let l = Matrix::<Gf8B>::zeros(2, 2).unwrap();
     let mut b = Matrix::<Gf8B>::zeros(3, 1).unwrap();
-    gfm::solve_lower_unit_assign(&mut b, &l);
+    gfm::dense::solve_lower_unit_assign(&mut b, &l);
 }
 
 #[test]
@@ -767,7 +769,7 @@ fn inverse_round_trips_through_the_product() {
     let mut inv = Matrix::<Gf8B>::zeros(5, 5).unwrap();
     ple.inverse_into(&mut inv).unwrap();
     let mut prod = Matrix::<Gf8B>::zeros(5, 5).unwrap();
-    gfm::mul_into(&mut prod, &m, &inv);
+    gfm::dense::mul_into(&mut prod, &m, &inv);
     let identity = Matrix::<Gf8B>::identity(5).unwrap();
     assert_eq!(oracles::naive_of(&prod), oracles::naive_of(&identity));
 }

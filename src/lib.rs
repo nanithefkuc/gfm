@@ -23,25 +23,16 @@
 
 extern crate alloc;
 
-pub mod backend;
 pub mod bits;
+mod blocking;
 pub mod dense;
 mod error;
 pub mod hybrid;
 pub mod incremental;
 // Compiled in every feature set; public reachability comes from `internals`.
-#[allow(dead_code)]
-mod internal_api;
+mod inspection;
 #[cfg(feature = "internals")]
 pub mod internals;
 mod row_ops;
 
-pub use backend::{Backend, backend_for};
-pub use bits::BitMatrix;
-pub use dense::{
-    Matrix, Perm, Ple, SmallMatrix, SolveScratch, ViewMut, mul_add, mul_into,
-    solve_lower_unit_assign, solve_upper_assign,
-};
 pub use error::{GeometryError, SolveError};
-pub use hybrid::{Hybrid, Solution, SolveStats, SparseEquation, SparseEquationSource};
-pub use incremental::{Echelon, EchelonMode, Innovation, RetainedRow};

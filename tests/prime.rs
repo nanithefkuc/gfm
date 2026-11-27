@@ -14,11 +14,13 @@ use fgf::extension::QuadMersenne31;
 use fgf::prime::{Goldilocks, Mersenne31, PrimeIdentity};
 use fgf::{Elem, FieldElem};
 use fgf::{Field, FieldBuffer};
-use gfm::dense::layout::ALIGN;
-use gfm::{
-    Echelon, EchelonMode, Hybrid, Innovation, Matrix, Ple, SmallMatrix, SolveError, SolveScratch,
-    mul_add, mul_into, solve_lower_unit_assign, solve_upper_assign,
+use gfm::SolveError;
+use gfm::dense::{
+    ALIGN, Matrix, Ple, SmallMatrix, SolveScratch, mul_add, mul_into, solve_lower_unit_assign,
+    solve_upper_assign,
 };
+use gfm::hybrid::Hybrid;
+use gfm::incremental::{Echelon, EchelonMode, Innovation};
 use oracles::{
     Naive, matrix_of, naive_det, naive_identity, naive_mul, naive_of, oracle_ple, oracle_rref,
     pack, reassemble,

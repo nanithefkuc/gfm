@@ -12,7 +12,8 @@ mod common;
 use common::{Gf8B, Gf16};
 use common::{draw, noise};
 use fgf::{Elem, FieldBuffer, FieldElem};
-use gfm::{Echelon, EchelonMode, Innovation, Matrix, Ple, SolveScratch};
+use gfm::dense::{Matrix, Ple, SolveScratch};
+use gfm::incremental::{Echelon, EchelonMode, Innovation};
 
 type E = Elem<Gf8B>;
 

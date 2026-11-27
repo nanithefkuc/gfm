@@ -9,9 +9,9 @@ use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use fgf::{Elem, FieldBuffer};
 type Gf8B = fgf::FiniteField<2, 8, fgf::binary::Polynomial<{ fgf::binary::AES }>>;
 type Gf16 = fgf::FiniteField<2, 16, fgf::extension::Extension<fgf::binary::Rijndael16, 2>>;
-use gfm::bits::{Ple as BitPle, PleScratch as BitPleScratch};
+use gfm::bits::{BitMatrix, Ple as BitPle, PleScratch as BitPleScratch};
+use gfm::dense::{Matrix, Ple, SmallMatrix, SolveScratch};
 use gfm::internals::{BitPleInternals, PleInternals};
-use gfm::{BitMatrix, Matrix, Ple, SmallMatrix, SolveScratch};
 
 fn next(state: &mut u64) -> u64 {
     *state = state

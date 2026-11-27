@@ -14,7 +14,7 @@
 //! retained row collapses to a lone unit — a sound subset of the determined
 //! coordinates, not reduced row echelon form. After `x + y + z = 1` and
 //! `y + z = 0`, `x = 1` is determined but not reported; an exact route such
-//! as [`crate::Ple::rref_into`] reports every determined coordinate.
+//! as [`crate::dense::Ple::rref_into`] reports every determined coordinate.
 //!
 //! `absorb` reuses two internal scratch rows, so a steady-state stream
 //! allocates nothing.
@@ -79,7 +79,7 @@ pub enum EchelonMode {
     /// This is not reduced row echelon form, and it does not report every
     /// determined coordinate. After `x + y + z = 1` and `y + z = 0`, `x = 1`
     /// is determined but not reported. Callers that need every determined
-    /// coordinate use an exact route such as [`crate::Ple::rref_into`].
+    /// coordinate use an exact route such as [`crate::dense::Ple::rref_into`].
     PropagateUnits,
 }
 

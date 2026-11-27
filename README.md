@@ -60,7 +60,7 @@ GF(256) with the AES reduction polynomial; addition is XOR:
 ```rust
 use fgf::FiniteField;
 use fgf::binary::{AES, Polynomial};
-use gfm::{Matrix, Ple, SolveScratch};
+use gfm::dense::{Matrix, Ple, SolveScratch};
 
 type Gf8 = FiniteField<2, 8, Polynomial<AES>>;
 
@@ -86,13 +86,13 @@ its storage for a new matrix of the same shape; its closure receives a zeroed
 
 | Surface | Contract |
 | --- | --- |
-| `Matrix<F>` | Owning dense matrix of packed field elements, with borrowed `ViewMut` access. |
-| `BitMatrix` | Owning GF(2) matrix with one element per bit. |
-| `Perm` | Index-vector permutations with application, inverse application, composition, and parity. |
-| `Ple<F>` / `bits::Ple` | Rank-revealing factorization in the dense or bit-packed storage domain. |
-| `SmallMatrix<F, K>` | Compact square matrices within the documented order bound. |
-| `solve_lower_unit_assign` / `solve_upper_assign` | Triangular solves in place, with the destination first. |
-| `mul_into` / `mul_add` | Matrix multiplication into an output or accumulated into it. |
+| `dense::Matrix<F>` | Owning dense matrix of packed field elements, with borrowed `dense::ViewMut` access. |
+| `bits::BitMatrix` | Owning GF(2) matrix with one element per bit. |
+| `dense::Perm` | Index-vector permutations with application, inverse application, composition, and parity. |
+| `dense::Ple<F>` / `bits::Ple` | Rank-revealing factorization in the dense or bit-packed storage domain. |
+| `dense::SmallMatrix<F, K>` | Compact square matrices within the documented order bound. |
+| `dense::solve_lower_unit_assign` / `dense::solve_upper_assign` | Triangular solves in place, with the destination first. |
+| `dense::mul_into` / `dense::mul_add` | Matrix multiplication into an output or accumulated into it. |
 
 A decomposition provides `rank`, `det`, `rref_into`, `right_kernel_into`,
 `solve_into`, `inverse_into`, its pivot rows, and the column rank profile. Rank deficiency
@@ -109,22 +109,22 @@ counterpart.
 
 ## Streaming and sparse systems
 
-`Echelon<F>` absorbs equations one at a time and returns an `Innovation`
-verdict: innovative, dependent, or inconsistent. The constructor takes
-coefficient and right-hand-side widths in field elements, while the packed
-buffers passed to `absorb` hold those widths times `F::BYTES`.
-`EchelonMode::Forward` retains forward-echelon rows for recoding;
-`EchelonMode::PropagateUnits` substitutes recovered unit rows and reports a
+`incremental::Echelon<F>` absorbs equations one at a time and returns an
+`incremental::Innovation` verdict: innovative, dependent, or inconsistent. The
+constructor takes coefficient and right-hand-side widths in field elements,
+while the packed buffers passed to `absorb` hold those widths times `F::BYTES`.
+`incremental::EchelonMode::Forward` retains forward-echelon rows for recoding;
+`incremental::EchelonMode::PropagateUnits` substitutes recovered unit rows and reports a
 sound subset of the determined coordinates. It is not RREF and need not
 report every determined coordinate; callers that need all of them use an
 exact route such as `Ple::rref_into`.
 
-`Hybrid<F>` accepts binary or field-valued sparse equations and reduces the
-residual system through a dense factorization. Initial inactive columns and
+`hybrid::Hybrid<F>` accepts binary or field-valued sparse equations and reduces
+the residual system through a dense factorization. Initial inactive columns and
 deferred dense rows describe which equations participate in sparse scheduling.
 A graph crate or codec feeds its own equation store through
-`SparseEquationSource`, whose `for_each_equation` method visits
-`SparseEquation` values.
+`hybrid::SparseEquationSource`, whose `for_each_equation` method visits
+`hybrid::SparseEquation` values.
 `solve_into` re-analyzes the system; `replace_rhs` and `resolve_into` explicitly
 reuse coefficient analysis for changed payloads.
 
@@ -150,11 +150,12 @@ or disappear in any release.
 
 ## Platforms and backends
 
-`backend_for::<F>()` reports `fgf`'s strategy summary for a particular field,
-not the tier serving every individual operation. `fgf` ships SIMD kernels for
-x86-64 only; every other target runs its portable scalar bodies, and not every
-field has a vector strategy. `gfm` owns no SIMD kernels and adds no separate
-CPU detector.
+`fgf::backend_for::<F>()` reports `fgf`'s strategy summary for a particular
+field, not the tier serving every individual operation. `gfm`'s stable API
+exposes no backend query and no backend type: its blocking policy reads
+`fgf`'s answer, adds no detector, and does not re-export the selector.
+`fgf` ships SIMD kernels for x86-64 only; every other target runs its portable
+scalar bodies, and not every field has a vector strategy.
 
 [`simdispatch`](https://github.com/nanithefkuc/simdispatch) owns detection and
 the downgrade-only `SIMD_BACKEND` override. It may request a weaker backend

@@ -12,8 +12,12 @@ use std::hint::black_box;
 use common::Gf8B;
 use common::noise;
 use fgf::Elem;
-use gfm::bits::{Ple as BitPle, PleScratch as BitPleScratch, SolveScratch as BitSolveScratch};
-use gfm::{BitMatrix, Echelon, EchelonMode, Hybrid, Matrix, Perm, Ple, SolveScratch};
+use gfm::bits::{
+    BitMatrix, Ple as BitPle, PleScratch as BitPleScratch, SolveScratch as BitSolveScratch,
+};
+use gfm::dense::{Matrix, Perm, Ple, SolveScratch};
+use gfm::hybrid::Hybrid;
+use gfm::incremental::{Echelon, EchelonMode};
 
 /// A global allocator that counts calls to `alloc` on the current thread.
 struct CountingAllocator;

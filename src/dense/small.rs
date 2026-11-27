@@ -7,7 +7,7 @@
 //! `fgf`'s; packed right-hand-side row operations use `fgf::ops`.
 //!
 //! The order bound makes this a second, deliberately bounded pivot loop in
-//! the dense domain, beside [`Ple`](crate::Ple)'s: it is retained on the
+//! the dense domain, beside [`Ple`](crate::dense::Ple)'s: it is retained on the
 //! comparison recorded in `BENCHMARKS.md`, and the carve-out is stated in
 //! the crate's `AGENTS.md`.
 
@@ -28,7 +28,7 @@ use crate::dense::Matrix;
 /// use fgf::binary::{AES, Polynomial};
 ///
 /// type Gf8 = FiniteField<2, 8, Polynomial<AES>>;
-/// let _ = gfm::SmallMatrix::<Gf8, 65>::zeros();
+/// let _ = gfm::dense::SmallMatrix::<Gf8, 65>::zeros();
 /// ```
 #[derive(Clone)]
 pub struct SmallMatrix<F: FieldBuffer, const K: usize> {

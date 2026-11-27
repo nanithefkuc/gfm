@@ -5,7 +5,7 @@
 use fgf::extension::{Components, Extension, ExtensionSpec, Relation};
 use fgf::prime::Goldilocks;
 use fgf::{Elem, FieldBuffer, FiniteField};
-use gfm::{Matrix, mul_add};
+use gfm::dense::{Matrix, mul_add};
 
 /// GF(p²) over Goldilocks as `t² = 7`; seven generates the multiplicative
 /// group, so it is a non-residue and the relation is irreducible.

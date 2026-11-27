@@ -43,9 +43,9 @@ pub fn draw(state: &mut u64, modulo: usize) -> usize {
 
 /// Builds the `Perm` whose explicit image is `img`: applying it to `(0..n)`
 /// yields `img`. `img` must be a permutation of `0..n`.
-pub fn perm_from_image(img: &[usize]) -> gfm::Perm {
+pub fn perm_from_image(img: &[usize]) -> gfm::dense::Perm {
     let mut cur: Vec<usize> = (0..img.len()).collect();
-    let mut p = gfm::Perm::identity(img.len());
+    let mut p = gfm::dense::Perm::identity(img.len());
     for (i, &want) in img.iter().enumerate() {
         let j = cur.iter().position(|&c| c == want).unwrap();
         p.record_swap(i, j);
