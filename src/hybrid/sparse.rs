@@ -233,7 +233,7 @@ impl<F: FieldKernels> Row<F> {
         if !self.binary {
             return false;
         }
-        debug_assert!(self.coeffs.is_empty());
+        debug_assert_eq!(self.coeffs.len(), 0, "packed rows carry no coefficients");
         for word in 0..self.frozen.len() {
             let mut bits = self.frozen[word];
             while bits != 0 {
