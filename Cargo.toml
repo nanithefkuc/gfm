@@ -81,6 +81,9 @@ name = "incremental"
 name = "prime"
 
 [[test]]
+name = "diagnostics"
+
+[[test]]
 name = "noncanonical"
 
 [[test]]
