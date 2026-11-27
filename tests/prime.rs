@@ -24,8 +24,9 @@ use oracles::{
     pack, reassemble,
 };
 
-/// A prime field with a deterministic canonical element stream. Packed
-/// kernels require canonical lanes, so every element enters through this.
+/// A prime field with a deterministic canonical element stream, so oracle
+/// comparisons see one spelling per value; aliases have their own suite in
+/// `tests/noncanonical.rs`.
 trait PrimeField: FieldBuffer {
     /// One canonical element, zero included, drawn from `state`.
     fn elem(state: &mut u64) -> Elem<Self>;

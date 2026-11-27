@@ -6,6 +6,65 @@ All notable changes to this project are documented here. The format follows
 
 ## Unreleased
 
+### Added
+
+- `simd512` feature, forwarding to `fgf`'s AVX-512 kernels on capable x86-64
+  hosts. [#29](https://github.com/nanithefkuc/gfm/issues/29).
+
+### Changed
+
+- **Breaking:** move to `fgf = "=4.0.1"`. Bounds are `F: fgf::FieldBuffer` and
+  elements are `fgf::Elem<F>`; the dense, hybrid, and incremental domains hold
+  over every `FieldBuffer` presentation, including generic prime residues and
+  custom extensions. Migrate field types and imports with `fgf`'s
+  [3.x guide](https://github.com/nanithefkuc/fgf/wiki/Migrating-from-3.x), then
+  pin `gfm = "=2.0.0"` with `fgf = "=4.0.1"`.
+  [#29](https://github.com/nanithefkuc/gfm/issues/29).
+- **Breaking:** `SmallMatrix` checks its order bound `K <= 64` at compile time
+  instead of panicking at construction; move larger orders to `Ple`.
+  [#16](https://github.com/nanithefkuc/gfm/issues/16).
+- `Hybrid` documents its answer as a particular solution: rank, consistency,
+  determinedness, and determined values match a dense solve, while
+  undetermined columns depend on the schedule. On `Err`, outputs hold no
+  valid solution. [#19](https://github.com/nanithefkuc/gfm/issues/19).
+
+### Fixed
+
+- Elimination subtracts elimination products and determinants include
+  permutation signs over odd-characteristic fields.
+  [#12](https://github.com/nanithefkuc/gfm/issues/12).
+- `Hybrid` drops explicit zero coefficients on entry instead of pivoting on
+  them. [#13](https://github.com/nanithefkuc/gfm/issues/13).
+- Consistency checks, `Echelon` dependence, `Hybrid` verification, and
+  `Matrix` equality compare decoded values, so noncanonical prime-field lanes
+  behave like the values they name.
+  [#14](https://github.com/nanithefkuc/gfm/issues/14).
+- The `parallel` row dispatcher no longer panics for lanes wider than eight
+  bytes. [#15](https://github.com/nanithefkuc/gfm/issues/15).
+- `SmallMatrix::solve_into` reports the matrix rank in `SolveError::Singular`
+  for every field width. [#16](https://github.com/nanithefkuc/gfm/issues/16).
+- `Echelon::is_pivot` and `recovered_value` panic on a column outside the
+  accumulator instead of answering for a wrapped column.
+  [#18](https://github.com/nanithefkuc/gfm/issues/18).
+
+## [1.0.2] - 2026-11-27
+
+Advisory: 1.0.0 and 1.0.1 return wrong results for the inputs below; upgrade
+to 1.0.2. No API change. [#28](https://github.com/nanithefkuc/gfm/issues/28).
+
+### Fixed
+
+- Dense, hybrid, and incremental elimination subtract elimination products
+  and determinants include permutation signs, so results hold over
+  odd-characteristic fields (`Mersenne31`, `Goldilocks`, `QuadMersenne31`).
+  Binary-field results are unchanged.
+  [#12](https://github.com/nanithefkuc/gfm/issues/12).
+- `Hybrid` drops explicit zero coefficients on entry; such equations could be
+  mis-solved or make the solve loop forever in any field.
+  [#13](https://github.com/nanithefkuc/gfm/issues/13).
+
+Release PR: [#30](https://github.com/nanithefkuc/gfm/pull/30).
+
 ## [1.0.1] - 2026-09-25
 
 ### Changed
