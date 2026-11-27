@@ -43,17 +43,16 @@ pub(crate) fn mul_add<F: FieldBuffer>(dst: &mut [u8], factor: Elem<F>, src: &[u8
         return;
     }
     assert_eq!(dst.len(), src.len(), "mul_add row length mismatch");
+    assert!(
+        dst.len().is_multiple_of(F::BYTES),
+        "mul_add row is not a whole number of lanes"
+    );
     let elements = dst.len() / F::BYTES;
-    let mut factor_bytes = [0u8; 8];
-    F::encode(&mut factor_bytes[..F::BYTES], factor);
     let chunk_elements = elements.div_ceil(threads);
     let chunk_bytes = chunk_elements * F::BYTES;
     dst.par_chunks_mut(chunk_bytes)
         .zip(src.par_chunks(chunk_bytes))
-        .for_each(|(dst_chunk, src_chunk)| {
-            let factor = F::decode(&factor_bytes[..F::BYTES]);
-            ops::mul_add::<F>(dst_chunk, factor, src_chunk);
-        });
+        .for_each(|(dst_chunk, src_chunk)| ops::mul_add::<F>(dst_chunk, factor, src_chunk));
 }
 #[cfg(not(feature = "parallel"))]
 #[inline]
