@@ -143,7 +143,8 @@ impl<F: FieldBuffer> Solution<F> {
     }
 
     /// The recovered symbol for column `col`, borrowed from the solution
-    /// store. Zero for an undetermined (free) column.
+    /// store. For an undetermined (free) column this is that column's entry
+    /// of a schedule-dependent particular solution, not necessarily zero.
     #[must_use]
     pub fn value(&self, col: usize) -> &[u8] {
         self.values.row(col)
@@ -259,12 +260,6 @@ pub struct Hybrid<F: FieldBuffer> {
 impl<F: FieldBuffer> Hybrid<F> {
     /// A system over `cols` unknowns whose payloads are `sym_len` bytes each.
     ///
-    /// # Errors
-    ///
-    /// [`SolveError::Inconsistent`] is never returned here; construction only
-    /// fails via the panic path if `sym_len` is not a whole number of field
-    /// elements.
-    ///
     /// # Panics
     ///
     /// Panics unless `sym_len` is a multiple of `F::BYTES`.
@@ -281,11 +276,6 @@ impl<F: FieldBuffer> Hybrid<F> {
     /// column goes straight to the dense block. This is the input
     /// permanently-inactive constructions need — RFC 6330 §5.4.2.2 starts
     /// its decoder with the last P columns already in U.
-    ///
-    /// # Errors
-    ///
-    /// [`SolveError::Inconsistent`] is never returned here; construction
-    /// only fails via the panic path on malformed input.
     ///
     /// # Panics
     ///
@@ -417,10 +407,10 @@ impl<F: FieldBuffer> Hybrid<F> {
     /// time-ordered pass. Dense rows (HDPC-style bands) pay `O(entries +
     /// fill)` once instead of one full-length merge per pivot they touch.
     ///
-    /// Deferral changes the schedule, never the answer: rank, solution,
-    /// and inconsistency verdicts are identical to pushing the same row
-    /// through [`Self::push_field_row`]. Zero coefficients are dropped as
-    /// there.
+    /// Deferral changes the schedule, never the verdicts: rank,
+    /// determinedness, determined values, and inconsistency are identical to
+    /// pushing the same row through [`Self::push_field_row`]. Zero
+    /// coefficients are dropped as there.
     ///
     /// # Panics
     ///
@@ -496,8 +486,9 @@ impl<F: FieldBuffer> Hybrid<F> {
         );
     }
 
-    /// Solves the system, matching a full dense [`Ple`] on rank, solution,
-    /// and inconsistency verdict.
+    /// Solves the system, matching a full dense [`Ple`] on rank,
+    /// determinedness, determined values, and inconsistency verdict.
+    /// Undetermined columns hold a schedule-dependent particular solution.
     ///
     /// # Errors
     ///
@@ -521,11 +512,14 @@ impl<F: FieldBuffer> Hybrid<F> {
     /// Solves into caller-owned storage. Reusing `values`, `determined`, and
     /// this solver after one warm-up solve performs no allocations.
     ///
-    /// Returns the system rank. Undetermined columns are written as zero.
+    /// Returns the system rank. On success `values` holds a particular
+    /// solution whose undetermined columns are schedule-dependent, and
+    /// `determined` marks the columns every solution shares.
     ///
     /// # Errors
     ///
-    /// [`SolveError::Inconsistent`] if the system has no solution.
+    /// [`SolveError::Inconsistent`] if the system has no solution. `values`
+    /// and `determined` may have been overwritten and hold no valid solution.
     ///
     /// # Panics
     ///
