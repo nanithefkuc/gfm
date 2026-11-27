@@ -418,10 +418,10 @@ impl<F: FieldBuffer> Echelon<F> {
         }
         // The first surviving non-pivot coefficient is the new pivot column.
         let Some(pivot) = pivot else {
-            return if self.scratch_rhs.iter().any(|&b| b != 0) {
-                Innovation::Inconsistent
-            } else {
+            return if crate::row_ops::is_zero::<F>(&self.scratch_rhs) {
                 Innovation::Dependent
+            } else {
+                Innovation::Inconsistent
             };
         };
 

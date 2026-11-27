@@ -26,6 +26,12 @@ use crate::dense::{Perm, invert_in_place};
 /// Element `(r, c)` lives at `map[r] * pitch + c * F::BYTES` of the buffer,
 /// little-endian. The invariants of [`crate::dense::layout`] hold from
 /// construction through every mutating operation.
+///
+/// Stored lanes are not required to be canonical: byte ingress accepts every
+/// lane `F`'s decoder accepts, and `fgf`'s zero and unit shortcuts can carry
+/// such bytes into results. Every algebraic decision, and `==`, compares
+/// decoded values. Callers that need canonical bytes normalize them at their
+/// own format boundary.
 pub struct Matrix<F: FieldBuffer> {
     buf: Box<[u8]>,
     /// Offset of the first aligned byte within `buf`.
@@ -86,7 +92,9 @@ impl<F: FieldBuffer> Matrix<F> {
     }
 
     /// Creates a matrix from packed row-major data: `rows * cols` elements,
-    /// little-endian, `rows * cols * F::BYTES` bytes in total.
+    /// little-endian, `rows * cols * F::BYTES` bytes in total. Lanes are
+    /// copied as given; noncanonical aliases are accepted and keep their
+    /// bytes.
     ///
     /// # Errors
     ///
@@ -206,7 +214,8 @@ impl<F: FieldBuffer> Matrix<F> {
         &self.region()[start..start + self.live_bytes()]
     }
 
-    /// Mutably borrows logical row `r`'s live bytes.
+    /// Mutably borrows logical row `r`'s live bytes. Any lane `F`'s decoder
+    /// accepts may be written.
     ///
     /// # Panics
     ///
@@ -415,13 +424,14 @@ impl<F: FieldBuffer> Clone for Matrix<F> {
 }
 
 impl<F: FieldBuffer> PartialEq for Matrix<F> {
-    /// Logical content equality: shape and live bytes in logical row order.
-    /// Physical arrangement (row map, padding, allocation offset) is
-    /// incidental and not compared.
+    /// Logical content equality: shape and element values in logical row
+    /// order. Lanes compare by decoded value, so a noncanonical alias equals
+    /// the canonical element it names. Physical arrangement (row map,
+    /// padding, allocation offset) is incidental and not compared.
     fn eq(&self, other: &Self) -> bool {
         self.rows == other.rows
             && self.cols == other.cols
-            && (0..self.rows).all(|r| self.row(r) == other.row(r))
+            && (0..self.rows).all(|r| crate::row_ops::rows_equal::<F>(self.row(r), other.row(r)))
     }
 }
 

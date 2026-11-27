@@ -228,7 +228,7 @@ impl<F: FieldBuffer> Ple<F> {
         }
         // Consistency: the eliminated tail rows must vanish on the right too.
         for row in rank..rows {
-            if ws.row(row).iter().any(|&v| v != 0) {
+            if !crate::row_ops::is_zero::<F>(ws.row(row)) {
                 return Err(SolveError::Inconsistent { row });
             }
         }

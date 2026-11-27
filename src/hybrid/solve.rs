@@ -1417,7 +1417,7 @@ impl<F: FieldBuffer> Hybrid<F> {
                     }
                 }
                 for (column, is_determined) in determined.iter_mut().enumerate() {
-                    *is_determined = dependencies.row(column).iter().all(|&byte| byte == 0);
+                    *is_determined = crate::row_ops::is_zero::<F>(dependencies.row(column));
                 }
             }
         }
@@ -1450,7 +1450,7 @@ impl<F: FieldBuffer> Hybrid<F> {
                     );
                 });
                 let expected = &self.work_rhs[row * self.sym_len..(row + 1) * self.sym_len];
-                if self.verify_rhs != expected {
+                if !crate::row_ops::rows_equal::<F>(&self.verify_rhs, expected) {
                     return Err(SolveError::Inconsistent { row });
                 }
                 continue;
@@ -1470,7 +1470,7 @@ impl<F: FieldBuffer> Hybrid<F> {
                 }
             }
             let expected = &self.rhs[row * self.sym_len..(row + 1) * self.sym_len];
-            if self.verify_rhs != expected {
+            if !crate::row_ops::rows_equal::<F>(&self.verify_rhs, expected) {
                 return Err(SolveError::Inconsistent { row });
             }
         }

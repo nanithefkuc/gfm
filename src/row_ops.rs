@@ -1,6 +1,26 @@
-//! Internal dispatch for contiguous field row updates.
+//! Internal row helpers: contiguous field row updates, and the value-level
+//! row predicates every algebraic decision uses.
+//!
+//! `fgf` decoders accept every width-correct lane, including noncanonical
+//! aliases of prime-field residues, and its zero/unit shortcuts can carry
+//! those bytes into results. Raw byte comparisons therefore do not decide
+//! field equality; [`is_zero`] and [`rows_equal`] compare decoded values.
 
-use fgf::{Elem, FieldBuffer, ops};
+use fgf::{Elem, FieldBuffer, FieldElem, ops};
+
+/// Whether every lane of `row` decodes to zero.
+pub(crate) fn is_zero<F: FieldBuffer>(row: &[u8]) -> bool {
+    row.chunks_exact(F::BYTES)
+        .all(|lane| lane.iter().all(|&byte| byte == 0) || F::decode(lane).is_zero())
+}
+
+/// Whether two rows of equal length hold the same elements, lane by lane.
+pub(crate) fn rows_equal<F: FieldBuffer>(a: &[u8], b: &[u8]) -> bool {
+    a.len() == b.len()
+        && a.chunks_exact(F::BYTES)
+            .zip(b.chunks_exact(F::BYTES))
+            .all(|(x, y)| x == y || F::decode(x) == F::decode(y))
+}
 
 /// Minimum contiguous update assigned to Rayon. The serial and parallel
 /// boundary measurements are recorded in `BENCHMARKS.md`.

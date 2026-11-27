@@ -2,6 +2,10 @@
 //! rank and recovered payloads maintained incrementally. This is on-the-fly
 //! Gaussian elimination — the decode completes the instant rank fills, with no
 //! batch phase — and it is the general form of the two bases `ccrlnc` keeps.
+//!
+//! Packed inputs accept every lane the field decoder accepts; dependence and
+//! consistency are decided on decoded values, and retained rows and recovered
+//! payloads may keep noncanonical input bytes.
 
 mod echelon;
 mod innovation;

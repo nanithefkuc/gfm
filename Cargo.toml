@@ -77,6 +77,9 @@ name = "incremental"
 name = "prime"
 
 [[test]]
+name = "noncanonical"
+
+[[test]]
 name = "ple"
 required-features = ["internals"]
 
