@@ -28,6 +28,21 @@ All notable changes to this project are documented here. The format follows
   lexicographic row rank profile. Rename call sites; code that relied on the
   lexicographic property needs its own query.
   [#17](https://github.com/nanithefkuc/gfm/issues/17).
+- **Breaking:** `DenseRow` is renamed `SparseEquation`, `DenseRows` is renamed
+  `SparseEquationSource` (its `for_each_row` method becomes
+  `for_each_equation`), and `Hybrid::extend_rows` becomes
+  `Hybrid::extend_equations`. `kernel_into` becomes `right_kernel_into` on
+  dense and bit `Ple`, writing one right-kernel basis vector (`A·x = 0`) per
+  output column. Rename call sites, trait implementations, and methods.
+  [#23](https://github.com/nanithefkuc/gfm/issues/23).
+- **Breaking:** `Echelon::new` takes `(cols, rhs_cols, mode)`, counts the
+  right-hand side in field elements instead of bytes, and accepts
+  `EchelonMode::Forward` or `EchelonMode::PropagateUnits` instead of a
+  `reduced` flag. `PropagateUnits` reports a sound subset of determined
+  coordinates, not RREF; use `Ple::rref_into` when every determined coordinate
+  is needed. Pass element counts, choose the mode, and keep packed `absorb`
+  buffers at `* F::BYTES` bytes.
+  [#18](https://github.com/nanithefkuc/gfm/issues/18).
 - `Hybrid` documents its answer as a particular solution: rank, consistency,
   determinedness, and determined values match a dense solve, while
   undetermined columns depend on the schedule. On `Err`, outputs hold no
@@ -41,9 +56,6 @@ All notable changes to this project are documented here. The format follows
 - **Breaking:** the `View` type and its operations (`Matrix::as_view`,
   `ViewMut::as_view`, `View::split_rows`) are removed; use `ViewMut` for view
   access. [#20](https://github.com/nanithefkuc/gfm/issues/20).
-- **Breaking:** the Newton–John trailing-update candidate is removed from
-  `Ple`'s internals. Delete calls to `decompose_newton_john` and the
-  `TrailingMode` enum. [#20](https://github.com/nanithefkuc/gfm/issues/20).
 
 ### Fixed
 

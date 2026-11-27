@@ -94,7 +94,7 @@ its storage for a new matrix of the same shape; its closure receives a zeroed
 | `solve_lower_unit_assign` / `solve_upper_assign` | Triangular solves in place, with the destination first. |
 | `mul_into` / `mul_add` | Matrix multiplication into an output or accumulated into it. |
 
-A decomposition provides `rank`, `det`, `rref_into`, `kernel_into`,
+A decomposition provides `rank`, `det`, `rref_into`, `right_kernel_into`,
 `solve_into`, `inverse_into`, its pivot rows, and the column rank profile. Rank deficiency
 is a normal result, not a decomposition error. Dense `solve_into` chooses the
 solution with free variables zero; an inconsistent system returns
@@ -110,13 +110,21 @@ counterpart.
 ## Streaming and sparse systems
 
 `Echelon<F>` absorbs equations one at a time and returns an `Innovation`
-verdict: innovative, dependent, or inconsistent. Its reduced mode propagates
-recovered unit rows so determined variables can be read during the stream;
-forward-echelon mode retains equations for recoding.
+verdict: innovative, dependent, or inconsistent. The constructor takes
+coefficient and right-hand-side widths in field elements, while the packed
+buffers passed to `absorb` hold those widths times `F::BYTES`.
+`EchelonMode::Forward` retains forward-echelon rows for recoding;
+`EchelonMode::PropagateUnits` substitutes recovered unit rows and reports a
+sound subset of the determined coordinates. It is not RREF and need not
+report every determined coordinate; callers that need all of them use an
+exact route such as `Ple::rref_into`.
 
-`Hybrid<F>` accepts binary or field-valued sparse rows and reduces the residual
-system through a dense factorization. Initial inactive columns and deferred
-dense rows describe which equations participate in sparse scheduling.
+`Hybrid<F>` accepts binary or field-valued sparse equations and reduces the
+residual system through a dense factorization. Initial inactive columns and
+deferred dense rows describe which equations participate in sparse scheduling.
+A graph crate or codec feeds its own equation store through
+`SparseEquationSource`, whose `for_each_equation` method visits
+`SparseEquation` values.
 `solve_into` re-analyzes the system; `replace_rhs` and `resolve_into` explicitly
 reuse coefficient analysis for changed payloads.
 

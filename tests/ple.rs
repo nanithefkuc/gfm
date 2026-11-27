@@ -408,7 +408,7 @@ fn kernel_basis_is_a_kernel() {
         let a = naive_with_rank::<Gf8B>(rows, cols, rank, 0xBE00 + case);
         let ple = Ple::decompose(crate_matrix::<Gf8B>(&a));
         let mut kernel = Matrix::<Gf8B>::zeros(cols, cols - rank).unwrap();
-        ple.kernel_into(&mut kernel);
+        ple.right_kernel_into(&mut kernel);
         // A·K == 0, by naive multiply.
         let product = naive_mul::<Gf8B>(&a, &naive_of::<Gf8B>(&kernel));
         assert!(
@@ -595,7 +595,7 @@ fn solve_undoes_multiple_column_swaps_in_reverse() {
     assert_eq!(naive_mul::<Gf8B>(&a, &naive_of::<Gf8B>(&x)), b);
 
     let mut kernel = Matrix::<Gf8B>::zeros(4, 2).unwrap();
-    ple.kernel_into(&mut kernel);
+    ple.right_kernel_into(&mut kernel);
     assert!(
         naive_mul::<Gf8B>(&a, &naive_of::<Gf8B>(&kernel))
             .iter()

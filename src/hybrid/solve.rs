@@ -21,7 +21,7 @@
 use alloc::vec;
 use alloc::vec::Vec;
 
-use super::{DenseRow, DenseRows};
+use super::{SparseEquation, SparseEquationSource};
 use crate::SolveError;
 use crate::dense::{Matrix, Ple, SmallMatrix, SolveScratch};
 use crate::hybrid::colindex::ColumnIndex;
@@ -455,17 +455,18 @@ impl<F: FieldBuffer> Hybrid<F> {
     /// Appends every equation exposed by `rows`, preserving source order.
     ///
     /// This is the dependency-direction seam for graph crates and codecs:
-    /// they implement [`DenseRows`] for their local row store, then feed it
-    /// into `gfm` without `gfm` depending on the producer.
+    /// they implement [`SparseEquationSource`] for their local equation
+    /// store, then feed it into `gfm` without `gfm` depending on the
+    /// producer.
     ///
     /// # Panics
     ///
     /// Panics under the same conditions as [`Self::push_binary_row`] and
     /// [`Self::push_field_row`].
-    pub fn extend_rows<R: DenseRows<F> + ?Sized>(&mut self, rows: &R) {
-        rows.for_each_row(&mut |row| match row {
-            DenseRow::Binary { support, rhs } => self.push_binary_row(support, rhs),
-            DenseRow::Field {
+    pub fn extend_equations<R: SparseEquationSource<F> + ?Sized>(&mut self, equations: &R) {
+        equations.for_each_equation(&mut |equation| match equation {
+            SparseEquation::Binary { support, rhs } => self.push_binary_row(support, rhs),
+            SparseEquation::Field {
                 support,
                 coeffs,
                 rhs,
@@ -1350,7 +1351,7 @@ impl<F: FieldBuffer> Hybrid<F> {
                 self.solve_ple.as_ref()
             }
             .expect("prepared");
-            dense_ple.kernel_into(self.dense_kernel.as_mut().expect("prepared"));
+            dense_ple.right_kernel_into(self.dense_kernel.as_mut().expect("prepared"));
             Self::prepare_matrix(&mut self.dependencies, n, free);
             {
                 let dense_kernel = self.dense_kernel.as_ref().expect("prepared");

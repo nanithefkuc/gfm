@@ -6,7 +6,7 @@
 
 use fgf::prime::{Goldilocks, Mersenne31};
 use fgf::{Elem, FieldBuffer, FiniteField};
-use gfm::{Echelon, Hybrid, Innovation, Matrix, Ple, SolveScratch};
+use gfm::{Echelon, EchelonMode, Hybrid, Innovation, Matrix, Ple, SolveScratch};
 
 /// A one-byte residue row: lanes `251..=255` are aliases of `0..=4`.
 type Small = FiniteField<251, 1>;
@@ -44,7 +44,7 @@ fn dense_zero_alias_is_consistent<F: FieldBuffer>(modulus: u64) {
 
 fn echelon_zero_alias_is_dependent<F: FieldBuffer>(modulus: u64) {
     let zero = alias_of_zero::<F>(modulus);
-    let mut echelon = Echelon::<F>::new(1, F::BYTES, true).unwrap();
+    let mut echelon = Echelon::<F>::new(1, 1, EchelonMode::PropagateUnits).unwrap();
     assert_eq!(
         echelon.absorb(&lane(Elem::<F>::ZERO), &zero),
         Innovation::Dependent

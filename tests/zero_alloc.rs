@@ -13,7 +13,7 @@ use common::Gf8B;
 use common::noise;
 use fgf::Elem;
 use gfm::bits::{Ple as BitPle, PleScratch as BitPleScratch, SolveScratch as BitSolveScratch};
-use gfm::{BitMatrix, Echelon, Hybrid, Matrix, Perm, Ple, SolveScratch};
+use gfm::{BitMatrix, Echelon, EchelonMode, Hybrid, Matrix, Perm, Ple, SolveScratch};
 
 /// A global allocator that counts calls to `alloc` on the current thread.
 struct CountingAllocator;
@@ -143,7 +143,7 @@ fn steady_state_ops_do_not_allocate() {
     let start = alloc_count();
 
     ple.rref_into(&mut rref_out);
-    ple.kernel_into(&mut kernel_out);
+    ple.right_kernel_into(&mut kernel_out);
     black_box(ple.det());
     black_box(ple.pivot_rows());
     black_box(ple.col_rank_profile());
@@ -186,7 +186,7 @@ fn steady_state_ops_do_not_allocate() {
     let start = alloc_count();
 
     bple.rref_into(&mut brref);
-    bple.kernel_into(&mut bkernel);
+    bple.right_kernel_into(&mut bkernel);
     black_box(bple.det());
     black_box(bple.pivot_rows());
     black_box(bple.col_rank_profile());
@@ -203,7 +203,7 @@ fn steady_state_ops_do_not_allocate() {
     // state and scratch once; steady-state absorb must not allocate.
     let cols = 24;
     let s = 4;
-    let mut ech = Echelon::<Gf8B>::new(cols, s, true).unwrap();
+    let mut ech = Echelon::<Gf8B>::new(cols, s, EchelonMode::PropagateUnits).unwrap();
     // Wire rows: coefficients and payload as packed bytes.
     let rows: Vec<Vec<u8>> = (0..cols).map(|r| noise(cols, 0x700 + r as u64)).collect();
     let payloads: Vec<Vec<u8>> = (0..cols).map(|r| noise(s, 0x900 + r as u64)).collect();

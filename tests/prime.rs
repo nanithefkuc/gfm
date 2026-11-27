@@ -16,8 +16,8 @@ use fgf::{Elem, FieldElem};
 use fgf::{Field, FieldBuffer};
 use gfm::dense::layout::ALIGN;
 use gfm::{
-    Echelon, Hybrid, Innovation, Matrix, Ple, SmallMatrix, SolveError, SolveScratch, mul_add,
-    mul_into, solve_lower_unit_assign, solve_upper_assign,
+    Echelon, EchelonMode, Hybrid, Innovation, Matrix, Ple, SmallMatrix, SolveError, SolveScratch,
+    mul_add, mul_into, solve_lower_unit_assign, solve_upper_assign,
 };
 use oracles::{
     Naive, matrix_of, naive_det, naive_identity, naive_mul, naive_of, oracle_ple, oracle_rref,
@@ -209,7 +209,7 @@ fn hybrid_reference<F: PrimeField>(
     let ple = Ple::decompose(to_matrix::<F>(&dense, n));
     let rank = ple.rank();
     let mut kernel = Matrix::<F>::zeros(n, n - rank).unwrap();
-    ple.kernel_into(&mut kernel);
+    ple.right_kernel_into(&mut kernel);
     let determined = (0..n)
         .map(|c| (0..n - rank).all(|j| kernel.get(c, j).is_zero()))
         .collect();
@@ -325,7 +325,7 @@ fn check_ple<F: PrimeField>() {
 
             if rows > 0 && cols > rank {
                 let mut kernel = Matrix::<F>::zeros(cols, cols - rank).unwrap();
-                ple.kernel_into(&mut kernel);
+                ple.right_kernel_into(&mut kernel);
                 let product = naive_mul::<F>(&a, &naive_of::<F>(&kernel));
                 assert!(
                     product
@@ -742,17 +742,16 @@ fn check_hybrid<F: PrimeField>() {
 
 // ── Streaming echelon ────────────────────────────────────────────────────────
 
-/// Absorbs a nonsingular system into a reduced echelon and checks the
+/// Absorbs a nonsingular system into a propagating echelon and checks the
 /// recovered payloads, then probes the dependent and inconsistent verdicts,
 /// the forward mode, the wide-coefficient path, and the unit shortcut.
 fn check_echelon<F: PrimeField>() {
     for n in [1usize, 2, 3, 6, 12] {
         let sym_cols = 2;
-        let sym_len = sym_bytes::<F>(sym_cols);
         let c = naive_invertible::<F>(n, 0xEC10 ^ n as u64);
         let x = naive_field::<F>(n, sym_cols, 0xEC20 ^ n as u64);
         let rhs = naive_mul::<F>(&c, &x);
-        let mut ech = Echelon::<F>::new(n, sym_len, true).unwrap();
+        let mut ech = Echelon::<F>::new(n, sym_cols, EchelonMode::PropagateUnits).unwrap();
         for i in 0..n {
             let verdict = ech.absorb(&pack_row::<F>(&c[i]), &pack_row::<F>(&rhs[i]));
             assert!(
@@ -779,7 +778,7 @@ fn check_echelon<F: PrimeField>() {
     let r1 = naive_field::<F>(1, n, 0xECA1);
     let sum: Naive<F> = vec![r0[0].iter().zip(&r1[0]).map(|(a, b)| a.add(*b)).collect()];
     let zero = vec![0u8; sym_len];
-    let mut ech = Echelon::<F>::new(n, sym_len, true).unwrap();
+    let mut ech = Echelon::<F>::new(n, 1, EchelonMode::PropagateUnits).unwrap();
     ech.absorb(&pack_row::<F>(&r0[0]), &zero);
     ech.absorb(&pack_row::<F>(&r1[0]), &zero);
     assert!(matches!(
@@ -796,11 +795,10 @@ fn check_echelon<F: PrimeField>() {
     // still evaluates to its payload against the true solution.
     let n = 5;
     let sym_cols = 2;
-    let sym_len = sym_bytes::<F>(sym_cols);
     let c = naive_invertible::<F>(n, 0xECB0);
     let x = naive_field::<F>(n, sym_cols, 0xECB1);
     let rhs = naive_mul::<F>(&c, &x);
-    let mut ech = Echelon::<F>::new(n, sym_len, false).unwrap();
+    let mut ech = Echelon::<F>::new(n, sym_cols, EchelonMode::Forward).unwrap();
     for i in 0..n {
         assert!(matches!(
             ech.absorb(&pack_row::<F>(&c[i]), &pack_row::<F>(&rhs[i])),
@@ -832,11 +830,10 @@ fn check_echelon<F: PrimeField>() {
     // Wide coefficient rows exercise the per-pivot right-hand-side path past
     // the stack gather window.
     let n = 70;
-    let sym_len = sym_bytes::<F>(1);
     let c = naive_invertible::<F>(n, 0xECC0);
     let x = naive_field::<F>(n, 1, 0xECC1);
     let rhs = naive_mul::<F>(&c, &x);
-    let mut ech = Echelon::<F>::new(n, sym_len, true).unwrap();
+    let mut ech = Echelon::<F>::new(n, 1, EchelonMode::PropagateUnits).unwrap();
     for i in 0..n {
         ech.absorb(&pack_row::<F>(&c[i]), &pack_row::<F>(&rhs[i]));
     }
@@ -846,7 +843,7 @@ fn check_echelon<F: PrimeField>() {
     }
 
     // The systematic unit path.
-    let mut ech = Echelon::<F>::new(4, sym_bytes::<F>(1), true).unwrap();
+    let mut ech = Echelon::<F>::new(4, 1, EchelonMode::PropagateUnits).unwrap();
     let payload = pack_row::<F>(&naive_field::<F>(1, 1, 0xECD0)[0]);
     assert!(matches!(
         ech.absorb_unit(2, &payload),

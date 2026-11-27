@@ -21,4 +21,4 @@ mod source;
 mod sparse;
 
 pub use solve::{Hybrid, Solution, SolveStats};
-pub use source::{DenseRow, DenseRows};
+pub use source::{SparseEquation, SparseEquationSource};

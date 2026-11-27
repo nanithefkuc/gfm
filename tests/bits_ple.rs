@@ -200,9 +200,9 @@ fn check_case(rows: usize, cols: usize, rank: usize, seed: u64) {
     // Kernel: agrees with dense, is a kernel, and has the right dimension.
     let kdim = cols - rank;
     let mut k_bits = zeros(cols, kdim);
-    bits.kernel_into(&mut k_bits);
+    bits.right_kernel_into(&mut k_bits);
     let mut k_dense = Matrix::<Gf8B>::zeros(cols, kdim).unwrap();
-    dense.kernel_into(&mut k_dense);
+    dense.right_kernel_into(&mut k_dense);
     for i in 0..cols {
         for j in 0..kdim {
             assert_eq!(

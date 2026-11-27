@@ -137,8 +137,8 @@ impl<F: FieldBuffer> Ple<F> {
         }
     }
 
-    /// A basis of the right kernel, written into `out` (`n × (n - rank)`),
-    /// one basis vector per column.
+    /// A basis of the right kernel `A·x = 0`, written into `out`
+    /// (`n × (n - rank)`), one basis vector per output column.
     ///
     /// Basis column `j` corresponds to the `(rank + j)`-th column of the
     /// permuted system: it has a one at the original index of that column
@@ -148,7 +148,7 @@ impl<F: FieldBuffer> Ple<F> {
     /// # Panics
     ///
     /// Panics unless `out` is `n × (n - rank)`.
-    pub fn kernel_into(&self, out: &mut Matrix<F>) {
+    pub fn right_kernel_into(&self, out: &mut Matrix<F>) {
         let (cols, rank) = (self.cols(), self.rank());
         assert_eq!(
             (out.rows(), out.cols()),

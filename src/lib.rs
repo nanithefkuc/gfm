@@ -42,5 +42,5 @@ pub use dense::{
     solve_lower_unit_assign, solve_upper_assign,
 };
 pub use error::{GeometryError, SolveError};
-pub use hybrid::{DenseRow, DenseRows, Hybrid, Solution, SolveStats};
-pub use incremental::{Echelon, Innovation, RetainedRow};
+pub use hybrid::{Hybrid, Solution, SolveStats, SparseEquation, SparseEquationSource};
+pub use incremental::{Echelon, EchelonMode, Innovation, RetainedRow};

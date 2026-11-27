@@ -7,10 +7,14 @@
 //! whole of on-the-fly decoding — the rank reaches full the instant the last
 //! innovative packet arrives, with no batch phase.
 //!
-//! The `reduced` flag collapses `ccrlnc`'s two bases into one type: a decoder
-//! sets it to substitute every recovered unit row and propagate new unit rows
-//! backward, so a variable's value is readable as soon as it is determined; a
-//! recoder clears it and keeps forward echelon only.
+//! The two [`EchelonMode`] variants collapse `ccrlnc`'s two bases into one
+//! type. A recoder keeps [`EchelonMode::Forward`] echelon rows only.
+//! [`EchelonMode::PropagateUnits`] also substitutes recovered unit rows and
+//! propagates new unit rows backward, so a coordinate is reported once its
+//! retained row collapses to a lone unit — a sound subset of the determined
+//! coordinates, not reduced row echelon form. After `x + y + z = 1` and
+//! `y + z = 0`, `x = 1` is determined but not reported; an exact route such
+//! as [`crate::Ple::rref_into`] reports every determined coordinate.
 //!
 //! `absorb` reuses two internal scratch rows, so a steady-state stream
 //! allocates nothing.
@@ -61,6 +65,24 @@ fn mul_add_cyclic<F: FieldBuffer>(
     }
 }
 
+/// Retention policy for [`Echelon`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EchelonMode {
+    /// Keeps forward-echelon rows for recoding: every retained row is zero
+    /// before its pivot and is not reduced against later pivots.
+    Forward,
+    /// Additionally substitutes recovered unit rows and propagates newly
+    /// recovered units backward, so [`Echelon::recovered`] and
+    /// [`Echelon::recovered_value`] report a sound subset of the determined
+    /// coordinates.
+    ///
+    /// This is not reduced row echelon form, and it does not report every
+    /// determined coordinate. After `x + y + z = 1` and `y + z = 0`, `x = 1`
+    /// is determined but not reported. Callers that need every determined
+    /// coordinate use an exact route such as [`crate::Ple::rref_into`].
+    PropagateUnits,
+}
+
 /// A streaming echelon accumulator over `cols` coefficient columns, carrying a
 /// right-hand-side payload of `rhs_cols` field elements per row.
 pub struct Echelon<F: FieldBuffer> {
@@ -78,7 +100,7 @@ pub struct Echelon<F: FieldBuffer> {
     cols: usize,
     rhs_cols: usize,
     column_offset: usize,
-    reduced: bool,
+    mode: EchelonMode,
     scratch_coeffs: Vec<u8>,
     scratch_rhs: Vec<u8>,
     recovered: Vec<bool>,
@@ -159,23 +181,15 @@ impl<F: FieldBuffer> core::fmt::Debug for RetainedRow<'_, F> {
 
 impl<F: FieldBuffer> Echelon<F> {
     /// A fresh accumulator over `cols` coefficient columns and a right-hand
-    /// side of `rhs_len` bytes per row.
+    /// side of `rhs_cols` field elements per row.
     ///
-    /// `reduced` selects recovered-unit substitution and propagation
-    /// (decoder) versus forward echelon only (recoder).
+    /// `mode` selects forward-echelon retention ([`EchelonMode::Forward`]) or
+    /// recovered-unit propagation ([`EchelonMode::PropagateUnits`]).
     ///
     /// # Errors
     ///
-    /// [`GeometryError::Ragged`] if `rhs_len` is not a whole number of
-    /// elements, [`GeometryError::Overflow`] if the state geometry overflows.
-    pub fn new(cols: usize, rhs_len: usize, reduced: bool) -> Result<Self, GeometryError> {
-        if !rhs_len.is_multiple_of(F::BYTES) {
-            return Err(GeometryError::Ragged {
-                len: rhs_len,
-                element_bytes: F::BYTES,
-            });
-        }
-        let rhs_cols = rhs_len / F::BYTES;
+    /// [`GeometryError::Overflow`] if the state geometry overflows.
+    pub fn new(cols: usize, rhs_cols: usize, mode: EchelonMode) -> Result<Self, GeometryError> {
         let pivots = Matrix::<F>::zeros(cols, cols)?;
         let rhs = Matrix::<F>::zeros(cols, rhs_cols)?;
         Ok(Self {
@@ -190,7 +204,7 @@ impl<F: FieldBuffer> Echelon<F> {
             cols,
             rhs_cols,
             column_offset: 0,
-            reduced,
+            mode,
             scratch_coeffs: vec![0u8; cols * F::BYTES],
             scratch_rhs: vec![0u8; rhs_cols * F::BYTES],
             recovered: vec![false; cols],
@@ -255,7 +269,7 @@ impl<F: FieldBuffer> Echelon<F> {
     /// New columns opened at the right are zero in every retained equation.
     /// Rows pivoted in the discarded prefix are removed. Every surviving row
     /// is already zero before its pivot, so dropping the prefix preserves the
-    /// represented equations in both forward and reduced modes.
+    /// represented equations in either mode.
     ///
     /// This is the storage operation sliding-window codecs need; absolute
     /// source numbering and window validation remain caller policy.
@@ -294,12 +308,13 @@ impl<F: FieldBuffer> Echelon<F> {
     /// Retains a unit equation at a currently free pivot column.
     ///
     /// This is the allocation-free systematic-packet path: it avoids building
-    /// and reducing a dense coefficient scratch row.
+    /// and reducing a dense coefficient scratch row. `rhs` holds `rhs_cols`
+    /// packed field elements (`rhs_cols * F::BYTES` bytes).
     ///
     /// # Panics
     ///
-    /// Panics if `column` is out of range, already pivoted, or `rhs` has the
-    /// wrong length.
+    /// Panics if `column` is out of range, already pivoted, or `rhs` is not
+    /// `rhs_cols * F::BYTES` bytes.
     pub fn absorb_unit(&mut self, column: usize, rhs: &[u8]) -> Innovation {
         assert!(column < self.cols, "pivot column out of range");
         assert!(
@@ -319,15 +334,16 @@ impl<F: FieldBuffer> Echelon<F> {
         self.rhs.row_mut(slot).copy_from_slice(rhs);
         self.pivot_of_col[physical] = Some(slot);
 
-        if self.reduced {
+        if matches!(self.mode, EchelonMode::PropagateUnits) {
             self.propagate_unit(physical);
         }
         self.rank += 1;
         Innovation::Innovative { pivot: column }
     }
 
-    /// Absorbs one equation: coefficients (`cols` elements) and a right-hand
-    /// side (`rhs_cols` elements), both packed little-endian.
+    /// Absorbs one equation: coefficients (`cols` elements, `cols * F::BYTES`
+    /// bytes) and a right-hand side (`rhs_cols` elements,
+    /// `rhs_cols * F::BYTES` bytes), both packed little-endian.
     ///
     /// # Panics
     ///
@@ -384,7 +400,7 @@ impl<F: FieldBuffer> Echelon<F> {
                 crate::row_ops::mul_add::<F>(&mut self.scratch_rhs, factor, self.rhs.row(slot));
             }
         }
-        if self.reduced
+        if matches!(self.mode, EchelonMode::PropagateUnits)
             && let Some(pivot_column) = pivot
         {
             for (_, physical) in (self.column_offset..self.cols)
@@ -432,7 +448,7 @@ impl<F: FieldBuffer> Echelon<F> {
 
         let (slot, pivot_physical, span) = self.retain_scratch_row(pivot);
 
-        if self.reduced && span == 1 {
+        if matches!(self.mode, EchelonMode::PropagateUnits) && span == 1 {
             self.unit_physical[slot] = Some(pivot_physical);
             self.propagate_unit(pivot_physical);
         }
@@ -535,8 +551,10 @@ impl<F: FieldBuffer> Echelon<F> {
 
     /// The variables that are fully recovered: pivot columns whose retained
     /// row has collapsed to a lone unit entry, paired with the recovered
-    /// payload borrowed from that row. Meaningful only for a `reduced`
-    /// accumulator; a forward-echelon one recovers nothing until complete.
+    /// payload borrowed from that row. A [`EchelonMode::Forward`] accumulator
+    /// retains no recovered units and reports nothing; a
+    /// [`EchelonMode::PropagateUnits`] accumulator reports a sound subset of
+    /// the determined coordinates.
     pub fn recovered(&self) -> impl Iterator<Item = (usize, &[u8])> + '_ {
         (0..self.cols).filter_map(move |column| {
             let physical = self.logical_to_physical(column);
@@ -591,7 +609,7 @@ impl<F: FieldBuffer> core::fmt::Debug for Echelon<F> {
             .field("cols", &self.cols)
             .field("rhs_cols", &self.rhs_cols)
             .field("rank", &self.rank)
-            .field("reduced", &self.reduced)
+            .field("mode", &self.mode)
             .finish_non_exhaustive()
     }
 }

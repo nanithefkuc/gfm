@@ -15,7 +15,7 @@ use common::draw;
 use common::{Gf8B, Gf16};
 use fgf::{Elem, FieldBuffer, FieldElem};
 use gfm::internals::HybridInternals;
-use gfm::{DenseRow, DenseRows, Hybrid, Matrix, Ple, SolveError, SolveScratch};
+use gfm::{Hybrid, Matrix, Ple, SolveError, SolveScratch, SparseEquation, SparseEquationSource};
 
 type Equation<F> = (Vec<u32>, Vec<Elem<F>>, Vec<u8>);
 type E = Elem<Gf8B>;
@@ -70,7 +70,7 @@ impl<F: FieldBuffer> System<F> {
     fn build_hybrid_with(&self, initial_inactive: &[u32]) -> Hybrid<F> {
         let mut hybrid =
             Hybrid::<F>::with_initial_inactive(self.n, self.sym_len(), initial_inactive);
-        hybrid.extend_rows(self);
+        hybrid.extend_equations(self);
         hybrid
     }
 
@@ -104,13 +104,13 @@ impl<F: FieldBuffer> System<F> {
         true
     }
 }
-impl<F: FieldBuffer> DenseRows<F> for System<F> {
-    fn for_each_row(&self, visit: &mut impl FnMut(DenseRow<'_, F>)) {
+impl<F: FieldBuffer> SparseEquationSource<F> for System<F> {
+    fn for_each_equation(&self, visit: &mut impl FnMut(SparseEquation<'_, F>)) {
         for (support, coeffs, rhs) in &self.rows {
             if coeffs.iter().all(|coefficient| coefficient.is_one()) {
-                visit(DenseRow::Binary { support, rhs });
+                visit(SparseEquation::Binary { support, rhs });
             } else {
-                visit(DenseRow::Field {
+                visit(SparseEquation::Field {
                     support,
                     coeffs,
                     rhs,
@@ -203,7 +203,7 @@ fn ple_reference<F: FieldBuffer>(sys: &System<F>) -> (usize, bool, Option<Matrix
     let ple = Ple::decompose(a);
     let rank = ple.rank();
     let mut kernel = Matrix::<F>::zeros(sys.n, sys.n - rank).unwrap();
-    ple.kernel_into(&mut kernel);
+    ple.right_kernel_into(&mut kernel);
     let determined = (0..sys.n)
         .map(|row| kernel.row(row).iter().all(|&byte| byte == 0))
         .collect();
@@ -1624,7 +1624,7 @@ fn narrow_binary_system_merges_through_the_packed_xor_path() {
 }
 
 /// Pushes `rows` (support, coefficients, one-byte payload) eagerly, deferred,
-/// or through the `DenseRows` seam.
+/// or through the `SparseEquationSource` seam.
 fn zero_coefficient_hybrid(rows: &[(&[u32], &[u8], u8)], ingress: usize) -> Hybrid<Gf8B> {
     let mut hybrid = Hybrid::<Gf8B>::new(2, 1);
     let mut sys = System::<Gf8B>::new(2, 1);
@@ -1637,7 +1637,7 @@ fn zero_coefficient_hybrid(rows: &[(&[u32], &[u8], u8)], ingress: usize) -> Hybr
         }
     }
     if ingress == 2 {
-        hybrid.extend_rows(&sys);
+        hybrid.extend_equations(&sys);
     }
     hybrid
 }
