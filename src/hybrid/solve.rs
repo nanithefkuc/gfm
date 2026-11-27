@@ -400,19 +400,15 @@ impl<F: FieldBuffer> Hybrid<F> {
 
     /// Adds a field-valued equation with `coeffs` parallel to `support`.
     ///
+    /// Zero coefficients are dropped from the support on entry, so they never
+    /// take part in scheduling; an equation left with no coefficient is
+    /// `0 = rhs` and is checked for consistency like any dependent row.
+    ///
     /// # Panics
     ///
     /// Panics if the shapes are wrong or `support` is not sorted/in range.
     pub fn push_field_row(&mut self, support: &[u32], coeffs: &[Elem<F>], rhs: &[u8]) {
-        self.check_support(support);
-        assert_eq!(support.len(), coeffs.len(), "coefficient count");
-        assert_eq!(rhs.len(), self.sym_len, "payload length");
-        self.rows
-            .push(Row::field(support.to_vec(), coeffs.to_vec()));
-        self.rhs.extend_from_slice(rhs);
-        self.deferred.push(false);
-        self.index_layout_dirty = true;
-        self.analysis.valid = false;
+        self.push_field(support, coeffs, rhs, false);
     }
 
     /// Adds a field-valued equation that is **deferred**: excluded from
@@ -423,19 +419,29 @@ impl<F: FieldBuffer> Hybrid<F> {
     ///
     /// Deferral changes the schedule, never the answer: rank, solution,
     /// and inconsistency verdicts are identical to pushing the same row
-    /// through [`Self::push_field_row`].
+    /// through [`Self::push_field_row`]. Zero coefficients are dropped as
+    /// there.
     ///
     /// # Panics
     ///
     /// Panics under the same conditions as [`Self::push_field_row`].
     pub fn push_deferred_field_row(&mut self, support: &[u32], coeffs: &[Elem<F>], rhs: &[u8]) {
+        self.push_field(support, coeffs, rhs, true);
+    }
+
+    fn push_field(&mut self, support: &[u32], coeffs: &[Elem<F>], rhs: &[u8], deferred: bool) {
         self.check_support(support);
         assert_eq!(support.len(), coeffs.len(), "coefficient count");
         assert_eq!(rhs.len(), self.sym_len, "payload length");
-        self.rows
-            .push(Row::field(support.to_vec(), coeffs.to_vec()));
+        let (cols, coeffs): (Vec<u32>, Vec<Elem<F>>) = support
+            .iter()
+            .zip(coeffs)
+            .filter(|(_, coeff)| !coeff.is_zero())
+            .map(|(&col, &coeff)| (col, coeff))
+            .unzip();
+        self.rows.push(Row::field(cols, coeffs));
         self.rhs.extend_from_slice(rhs);
-        self.deferred.push(true);
+        self.deferred.push(deferred);
         self.index_layout_dirty = true;
         self.analysis.valid = false;
     }

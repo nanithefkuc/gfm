@@ -1622,3 +1622,50 @@ fn narrow_binary_system_merges_through_the_packed_xor_path() {
     let solved = hybrid.solve();
     assert_solution_matches_ple(&system_of(n, sym, &rows, &x), &solved, Some(&x));
 }
+
+/// Pushes `rows` (support, coefficients, one-byte payload) eagerly, deferred,
+/// or through the `DenseRows` seam.
+fn zero_coefficient_hybrid(rows: &[(&[u32], &[u8], u8)], ingress: usize) -> Hybrid<Gf8B> {
+    let mut hybrid = Hybrid::<Gf8B>::new(2, 1);
+    let mut sys = System::<Gf8B>::new(2, 1);
+    for &(support, coeffs, rhs) in rows {
+        let coeffs: Vec<E> = coeffs.iter().map(|&c| E::from_raw(c)).collect();
+        match ingress {
+            0 => hybrid.push_field_row(support, &coeffs, &[rhs]),
+            1 => hybrid.push_deferred_field_row(support, &coeffs, &[rhs]),
+            _ => sys.rows.push((support.to_vec(), coeffs, vec![rhs])),
+        }
+    }
+    if ingress == 2 {
+        hybrid.extend_rows(&sys);
+    }
+    hybrid
+}
+
+#[test]
+fn zero_coefficients_never_pivot() {
+    for ingress in 0..3 {
+        // `0 · x0 = 5` has no solution.
+        let mut hybrid = zero_coefficient_hybrid(&[(&[0], &[0], 5)], ingress);
+        assert!(matches!(
+            hybrid.solve(),
+            Err(SolveError::Inconsistent { .. })
+        ));
+
+        // `0 · x0 + x1 = 3` determines x1 alone.
+        let mut hybrid = zero_coefficient_hybrid(&[(&[0, 1], &[0, 1], 3)], ingress);
+        let solution = hybrid.solve().unwrap();
+        assert_eq!(solution.rank(), 1);
+        assert!(!solution.is_determined(0));
+        assert!(solution.is_determined(1));
+        assert_eq!(solution.value(1), &[3]);
+
+        // Adding `x0 = 9` completes the system.
+        let mut hybrid =
+            zero_coefficient_hybrid(&[(&[0, 1], &[0, 1], 3), (&[0], &[1], 9)], ingress);
+        let solution = hybrid.solve().unwrap();
+        assert_eq!(solution.rank(), 2);
+        assert_eq!(solution.value(0), &[9]);
+        assert_eq!(solution.value(1), &[3]);
+    }
+}
