@@ -1161,7 +1161,7 @@ impl<F: FieldBuffer> Hybrid<F> {
             self.rank_ple
                 .as_ref()
                 .expect("prepared")
-                .row_rank_profile()
+                .pivot_rows()
                 .iter()
                 .map(|&i| self.residual[i]),
         );

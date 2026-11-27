@@ -97,7 +97,7 @@ reusable factorization.
 | `mul_into` / `mul_add` | Matrix multiplication into an output or accumulated into it. |
 
 A decomposition provides `rank`, `det`, `rref_into`, `kernel_into`,
-`solve_into`, `inverse_into`, and row and column rank profiles. Rank deficiency
+`solve_into`, `inverse_into`, its pivot rows, and the column rank profile. Rank deficiency
 is a normal result, not a decomposition error. Dense `solve_into` chooses the
 solution with free variables zero; an inconsistent system returns
 `SolveError::Inconsistent` without changing its output. Each operation documents

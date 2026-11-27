@@ -80,7 +80,7 @@ fn backend_fingerprint_is_stable() {
             hash_bytes(&mut hash, &(index as u64).to_le_bytes());
         }
     }
-    for profile in [ple.row_rank_profile(), ple.col_rank_profile()] {
+    for profile in [ple.pivot_rows(), ple.col_rank_profile()] {
         for &index in profile {
             hash_bytes(&mut hash, &(index as u64).to_le_bytes());
         }

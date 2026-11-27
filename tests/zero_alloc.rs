@@ -151,7 +151,7 @@ fn steady_state_ops_do_not_allocate() {
     ple.rref_into(&mut rref_out);
     ple.kernel_into(&mut kernel_out);
     black_box(ple.det());
-    black_box(ple.row_rank_profile());
+    black_box(ple.pivot_rows());
     black_box(ple.col_rank_profile());
     let _ = ple.inverse_into(&mut inv_out);
     let _ = ple.solve_into(&rhs, &mut sol, &mut solve_scratch);
@@ -194,7 +194,7 @@ fn steady_state_ops_do_not_allocate() {
     bple.rref_into(&mut brref);
     bple.kernel_into(&mut bkernel);
     black_box(bple.det());
-    black_box(bple.row_rank_profile());
+    black_box(bple.pivot_rows());
     black_box(bple.col_rank_profile());
     let _ = bple.inverse_into(&mut binv);
     let _ = bple.solve_into(&brhs, &mut bsol, &mut bscratch);

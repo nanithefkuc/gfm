@@ -154,11 +154,7 @@ fn check_case(rows: usize, cols: usize, rank: usize, seed: u64) {
 
     assert_eq!(bits.rank(), rank, "constructed rank");
     assert_eq!(bits.rank(), dense.rank(), "rank vs dense");
-    assert_eq!(
-        bits.row_rank_profile(),
-        dense.row_rank_profile(),
-        "row rank profile"
-    );
+    assert_eq!(bits.pivot_rows(), dense.pivot_rows(), "pivot rows");
     assert_eq!(
         bits.col_rank_profile(),
         dense.col_rank_profile(),
@@ -517,7 +513,7 @@ fn empty_and_zero_matrices() {
         let a = vec![vec![false; n]; m];
         let ple = Ple::decompose(bit_matrix(&a, n), &mut PleScratch::new());
         assert_eq!(ple.rank(), 0);
-        assert!(ple.row_rank_profile().is_empty());
+        assert!(ple.pivot_rows().is_empty());
         assert!(ple.col_rank_profile().is_empty());
         let mut r = zeros(m, n);
         ple.rref_into(&mut r);
@@ -572,7 +568,7 @@ fn narrow_window_reports_last_column_rank() {
     let ple = Ple::decompose_with_panel_width(matrix, &mut PleScratch::new(), 3);
     assert_eq!(ple.rank(), 1);
     assert_eq!(ple.col_rank_profile(), &[cols - 1]);
-    assert_eq!(ple.row_rank_profile(), &[0]);
+    assert_eq!(ple.pivot_rows(), &[0]);
 }
 
 #[test]
@@ -584,7 +580,7 @@ fn empty_window_reports_no_pivot() {
     let (rows, cols) = (6usize, 8usize);
     let ple = Ple::decompose_with_panel_width(zeros(rows, cols), &mut PleScratch::new(), 4);
     assert_eq!(ple.rank(), 0);
-    assert!(ple.row_rank_profile().is_empty());
+    assert!(ple.pivot_rows().is_empty());
     assert!(ple.col_rank_profile().is_empty());
     let ple = Ple::decompose_with_panel_width(zeros(rows, cols), &mut PleScratch::new(), 1);
     assert_eq!(ple.rank(), 0);
@@ -698,7 +694,7 @@ mod byte_for_byte {
                     width,
                 );
                 assert_eq!(bits.rank(), dense.rank(), "rank at width {width}");
-                assert_eq!(bits.row_rank_profile(), dense.row_rank_profile());
+                assert_eq!(bits.pivot_rows(), dense.pivot_rows());
                 assert_eq!(bits.col_rank_profile(), dense.col_rank_profile());
                 // lu agrees one-bit-per-byte with the dense twin.
                 for i in 0..m {
@@ -737,7 +733,7 @@ mod byte_for_byte {
             let table = Ple::decompose_m4ri(bit_matrix(&a, n), &mut PleScratch::new());
             assert_eq!(naive_of(plain.lu()), naive_of(table.lu()));
             assert_eq!(plain.rank(), table.rank());
-            assert_eq!(plain.row_rank_profile(), table.row_rank_profile());
+            assert_eq!(plain.pivot_rows(), table.pivot_rows());
             assert_eq!(plain.col_rank_profile(), table.col_rank_profile());
             let mut plain_rows: Vec<_> = (0..m).collect();
             let mut table_rows = plain_rows.clone();

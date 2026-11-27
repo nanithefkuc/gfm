@@ -23,6 +23,11 @@ All notable changes to this project are documented here. The format follows
 - **Breaking:** `SmallMatrix` checks its order bound `K <= 64` at compile time
   instead of panicking at construction; move larger orders to `Ple`.
   [#16](https://github.com/nanithefkuc/gfm/issues/16).
+- **Breaking:** `row_rank_profile` is renamed `pivot_rows` on dense and bit
+  `Ple`: it returns the factorization's pivot rows, which need not be the
+  lexicographic row rank profile. Rename call sites; code that relied on the
+  lexicographic property needs its own query.
+  [#17](https://github.com/nanithefkuc/gfm/issues/17).
 - `Hybrid` documents its answer as a particular solution: rank, consistency,
   determinedness, and determined values match a dense solve, while
   undetermined columns depend on the schedule. On `Err`, outputs hold no

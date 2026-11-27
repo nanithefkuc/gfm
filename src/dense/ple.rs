@@ -238,10 +238,12 @@ impl<F: FieldBuffer> Ple<F> {
         self.lu.cols()
     }
 
-    /// The row rank profile: the lexicographically smallest set of
-    /// independent row indices, ascending.
+    /// The rows holding the factorization's pivots, ascending: `rank()`
+    /// independent row indices of the decomposed matrix. This is the pivot
+    /// set the elimination chose, not necessarily the lexicographically
+    /// smallest independent row set.
     #[must_use]
-    pub fn row_rank_profile(&self) -> &[usize] {
+    pub fn pivot_rows(&self) -> &[usize] {
         &self.row_profile
     }
 

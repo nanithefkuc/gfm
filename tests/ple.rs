@@ -238,7 +238,7 @@ fn narrow_trailing_window_reports_last_column_rank() {
     let ple = Ple::decompose_with_panel_width(matrix, &mut PleScratch::new(), 3);
     assert_eq!(ple.rank(), 1);
     assert_eq!(ple.col_rank_profile(), &[cols - 1]);
-    assert_eq!(ple.row_rank_profile(), &[0]);
+    assert_eq!(ple.pivot_rows(), &[0]);
 }
 
 #[test]
@@ -299,7 +299,7 @@ fn empty_window_reports_no_pivot() {
     let zero = Matrix::<Gf8B>::zeros(rows, cols).unwrap();
     let ple = Ple::decompose_with_panel_width(zero, &mut PleScratch::new(), 4);
     assert_eq!(ple.rank(), 0);
-    assert!(ple.row_rank_profile().is_empty());
+    assert!(ple.pivot_rows().is_empty());
     assert!(ple.col_rank_profile().is_empty());
     let zero = Matrix::<Gf8B>::zeros(rows, cols).unwrap();
     let ple = Ple::decompose_with_panel_width(zero, &mut PleScratch::new(), 1);
@@ -822,9 +822,9 @@ mod byte_for_byte {
         ple.q().apply(&mut probe);
         assert_eq!(probe, apply_swap_list(&o.q, n), "column permutation");
         assert_eq!(
-            ple.row_rank_profile(),
+            ple.pivot_rows(),
             &profile_of(&o.p, m, o.rank)[..],
-            "row rank profile"
+            "pivot rows"
         );
         assert_eq!(
             ple.col_rank_profile(),
@@ -974,4 +974,54 @@ fn redecompose_scratch_matches_a_fresh_decomposition() {
     for row in 0..3 {
         assert_eq!(reused_inverse.row(row), fresh_inverse.row(row));
     }
+}
+
+/// The lexicographically first independent columns, by greedy extension
+/// against the naive oracle's rank.
+fn greedy_column_profile<F: FieldBuffer>(a: &Naive<F>) -> Vec<usize> {
+    let mut chosen: Vec<usize> = Vec::new();
+    for col in 0..a.first().map_or(0, Vec::len) {
+        let mut trial = chosen.clone();
+        trial.push(col);
+        let sub: Naive<F> = a
+            .iter()
+            .map(|row| trial.iter().map(|&c| row[c]).collect())
+            .collect();
+        if oracle_ple::<F>(&sub).rank == trial.len() {
+            chosen = trial;
+        }
+    }
+    chosen
+}
+
+#[test]
+fn pivot_rows_and_column_profile_match_independent_oracles() {
+    fn check<F: FieldBuffer>(rows: usize, cols: usize, rank: usize, seed: u64) {
+        let a = naive_with_rank::<F>(rows, cols, rank, seed);
+        let ple = Ple::decompose(crate_matrix(&a), &mut PleScratch::new());
+        assert_eq!(ple.col_rank_profile(), &greedy_column_profile(&a)[..]);
+        let pivots = ple.pivot_rows();
+        assert_eq!(pivots.len(), rank);
+        assert!(pivots.windows(2).all(|pair| pair[0] < pair[1]));
+        let selected: Naive<F> = pivots.iter().map(|&row| a[row].clone()).collect();
+        assert_eq!(
+            oracle_ple::<F>(&selected).rank,
+            rank,
+            "pivot rows are independent"
+        );
+    }
+    for (rows, cols, rank, seed) in [(6, 5, 3, 1), (5, 9, 5, 2), (8, 8, 0, 3), (7, 4, 4, 4)] {
+        check::<Gf8B>(rows, cols, rank, seed);
+        check::<Gf16>(rows, cols, rank, seed);
+    }
+
+    // Rows 0 and 1 are equal, so {0, 2} is the lexicographic row profile;
+    // `pivot_rows` only promises an independent set of the right size.
+    let one = Elem::<Gf8B>::ONE;
+    let zero = Elem::<Gf8B>::ZERO;
+    let a: Naive<Gf8B> = vec![vec![zero, one], vec![zero, one], vec![one, zero]];
+    let ple = Ple::decompose(crate_matrix(&a), &mut PleScratch::new());
+    assert_eq!(ple.col_rank_profile(), &[0, 1]);
+    let selected: Naive<Gf8B> = ple.pivot_rows().iter().map(|&row| a[row].clone()).collect();
+    assert_eq!(oracle_ple::<Gf8B>(&selected).rank, 2);
 }
