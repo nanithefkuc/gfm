@@ -18,7 +18,18 @@ use fgf::{Elem, FieldBuffer, FieldElem, ops};
 use crate::SolveError;
 use crate::dense::Matrix;
 
-/// A compact, stack-owned `K × K` matrix, intended for `K <= 64`.
+/// A compact, stack-owned `K × K` matrix of order at most 64.
+///
+/// The order bound is checked at compile time: constructing a
+/// `SmallMatrix` with `K > 64` does not build.
+///
+/// ```compile_fail
+/// use fgf::FiniteField;
+/// use fgf::binary::{AES, Polynomial};
+///
+/// type Gf8 = FiniteField<2, 8, Polynomial<AES>>;
+/// let _ = gfm::SmallMatrix::<Gf8, 65>::zeros();
+/// ```
 #[derive(Clone)]
 pub struct SmallMatrix<F: FieldBuffer, const K: usize> {
     data: [[Elem<F>; K]; K],
@@ -26,14 +37,12 @@ pub struct SmallMatrix<F: FieldBuffer, const K: usize> {
 }
 
 impl<F: FieldBuffer, const K: usize> SmallMatrix<F, K> {
+    const ORDER_WITHIN_BOUND: () = assert!(K <= 64, "SmallMatrix order exceeds 64");
+
     /// A zero matrix.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `K > 64`.
     #[must_use]
     pub fn zeros() -> Self {
-        assert!(K <= 64, "SmallMatrix order exceeds 64");
+        let () = Self::ORDER_WITHIN_BOUND;
         Self {
             data: [[Elem::<F>::ZERO; K]; K],
             one_byte: [[0; K]; K],
@@ -44,7 +53,7 @@ impl<F: FieldBuffer, const K: usize> SmallMatrix<F, K> {
     ///
     /// # Panics
     ///
-    /// Panics unless `matrix` is `K × K` or if `K > 64`.
+    /// Panics unless `matrix` is `K × K`.
     #[must_use]
     pub fn from_matrix(matrix: &Matrix<F>) -> Self {
         assert_eq!(matrix.rows(), K, "small-matrix row count");
@@ -196,7 +205,7 @@ impl<F: FieldBuffer, const K: usize> SmallMatrix<F, K> {
         for pivot in 0..K {
             let Some(found) = (pivot..K).find(|&row| !a[row][pivot].is_zero()) else {
                 return Err(SolveError::Singular {
-                    rank: pivot,
+                    rank: self.rank(),
                     order: K,
                 });
             };

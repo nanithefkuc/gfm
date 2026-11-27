@@ -873,3 +873,22 @@ fn prime_field_operations_match_oracles() {
     run_all::<Goldilocks>();
     run_all::<QuadMersenne31>();
 }
+
+#[test]
+fn small_matrix_singular_error_reports_rank() {
+    fn check<F: FieldBuffer>() {
+        // [[0, 1], [0, 0]] has rank one; its first column has no pivot.
+        let mut a = SmallMatrix::<F, 2>::zeros();
+        a.set(0, 1, Elem::<F>::ONE);
+        assert_eq!(a.rank(), 1);
+        let rhs = Matrix::<F>::zeros(2, 1).unwrap();
+        let mut out = Matrix::<F>::zeros(2, 1).unwrap();
+        assert_eq!(
+            a.solve_into(&rhs, &mut out),
+            Err(SolveError::Singular { rank: 1, order: 2 })
+        );
+    }
+    check::<Mersenne31>();
+    check::<Goldilocks>();
+    check::<QuadMersenne31>();
+}
